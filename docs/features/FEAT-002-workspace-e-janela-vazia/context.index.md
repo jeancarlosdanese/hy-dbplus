@@ -1,4 +1,4 @@
-<!-- FEAT_EM_ANDAMENTO — docs, workspace e xtask layers em 21/10/2026; próximo: janela com tema -->
+<!-- FEAT_EM_ANDAMENTO — docs, workspace, xtask layers e janela em 21/10/2026; falta push, CI e a conferência do Jean -->
 <!-- PRIO_ALTA -->
 # @file: docs/features/FEAT-002-workspace-e-janela-vazia/context.index.md
 
@@ -40,8 +40,10 @@ cargo-deny, layers).
 Cargo.toml                    workspace: membros, [workspace.package], [workspace.dependencies], [workspace.lints]
 clippy.toml                   unwrap/expect/panic/indexação liberados só em teste
 .cargo/config.toml            alias `cargo xtask`
-crates/<nome>/                driver, catalog, sql, engine, automation, ui-egui (cascas no M0)
-apps/hy-dbplus/               app desktop (eframe): cria a janela, aplica o tema
+crates/<nome>/                driver, catalog, sql, engine, automation (cascas no M0)
+crates/ui-egui/src/theme.rs   tokens claro/escuro, visuals do egui, apply (segue o sistema)
+crates/ui-egui/src/app.rs     App: new (aplica o tema) e ui (CentralPanel com o fundo do tema)
+apps/hy-dbplus/               app desktop (eframe): cria a janela (viewport, glow) e entrega à ui-egui
 apps/hy-dbplus-cli/           CLI: uso e versão no M0
 xtask/src/layers.rs           tabela de camadas e motor de regras (testado sem cargo)
 xtask/src/main.rs             `cargo xtask layers`

@@ -21,14 +21,14 @@
 
 ## Janela
 
-- [ ] `cargo run -p hy-dbplus` abre uma janela com título "hy-dbplus", tamanho inicial definido e fundo no tema
+- [x] `cargo run -p hy-dbplus` abre uma janela com título "hy-dbplus", tamanho inicial definido e fundo no tema
       (claro ou escuro conforme o sistema), sem painel nem widget além de um texto de boas-vindas.
-- [ ] Nenhum `unwrap`/`expect` no caminho de inicialização: erro do eframe vira mensagem no stderr e saída 1.
+- [x] Nenhum `unwrap`/`expect` no caminho de inicialização: erro do eframe vira mensagem no stderr e saída 1.
 - [x] `hy-dbplus-cli` sem argumentos imprime uso e versão e sai com 0.
 
 ## Portão e CI
 
-- [ ] `scripts/quality-gate.sh --full` verde na máquina do Jean (fmt, clippy, testes, cargo-deny, gitleaks,
+- [x] `scripts/quality-gate.sh --full` verde na máquina do Jean (fmt, clippy, testes, cargo-deny, gitleaks,
       CLAUDE.md, layers).
 - [ ] Workflow verde no push: `gate` em macOS, `build` em Linux (com as bibliotecas do egui) e Windows.
 

@@ -7,9 +7,10 @@
 _Atualizado em 21/10/2026._
 
 - **Feito:** documentação; workspace com lints, seis crates e dois apps como cascas (`921208b`); `cargo xtask
-  layers` com o motor de regras testado e ligado ao portão.
+  layers` (`86e3ebc`); tema claro e escuro e janela vazia com eframe; portão `--full` verde com 299 pacotes
+  no lock.
 - **Em curso:** nada.
-- **Falta:** janela com tema; CI verde; verificação do Jean.
+- **Falta:** push e CI verde nos três sistemas; verificação do Jean (janela e tema).
 - **Depende de:** nada.
 - **Para retomar:** esta pasta, o `CLAUDE.md` da raiz e o BRIEF §5 a §7.
 
@@ -84,4 +85,23 @@ _Atualizado em 21/10/2026._
   da CLI (pânico com byte inválido); virou `args_os` com `run(args)` e o mesmo teste de `0xff`. Crate de camada
   dependendo de app ou xtask passava calada (inalcançável hoje, só binários; abriria com um `lib.rs` num app):
   virou a violação `OnExempt`, com teste. Doc e mensagem da regra de UI dizem "ui-egui, apps e xtask", como o
-  código faz. `cargo xtask layers` entrou na seção Comandos do `CLAUDE.md`.
+  código faz. `cargo xtask layers` entrou na seção Comandos do `CLAUDE.md`. Commit `86e3ebc`.
+
+### 21/10/2026 — Janela com tema
+
+- [x] `crates/ui-egui/src/theme.rs`: `Tokens` por papel, indexados por `egui::Theme` (painel, cartão, campo, texto,
+  borda, divisor, hover, pressionado, destaque), `visuals(kind)` monta os `Visuals` do egui a partir dos tokens,
+  `apply(ctx)` registra as duas variantes e deixa a preferência em "sistema", `current(ctx)` devolve os tokens
+  da variante em uso. Três testes sem janela (`egui::Context::default()`). Revisor: o enum `Kind` espelhava
+  `egui::Theme` 1:1 e saiu. Nota: em Linux sem sinal de tema (X11, Wayland sem portal) o egui cai no escuro
+  em silêncio; no macOS o winit informa a aparência e o `ThemeChanged` ao vivo.
+- [x] `crates/ui-egui/src/app.rs`: `App` com `new(cc)` aplicando o tema e `ui(&mut Ui)` separado da trait, para
+  o `egui_kittest` no M2. O `eframe` 0.36 trocou `update(ctx)` por `ui(ui)`: o `Ui` raiz vem sem margem nem
+  fundo, e é o `CentralPanel` que pinta o fundo do tema.
+- [x] `apps/hy-dbplus/src/main.rs`: `ViewportBuilder` com título, app id, tamanho inicial 1200×780 e mínimo
+  800×500; `Renderer::Glow` explícito; erro do `run_native` vira mensagem no stderr e saída 1.
+- [x] Dependências novas: `egui` e `eframe` 0.36.2 (MIT OR Apache-2.0), eframe sem as features padrão
+  (`default_fonts`, `glow`, `wayland`, `x11`). Lock foi de 20 para 299 pacotes; cargo-deny verde (licenças,
+  bans, fontes), com a exceção da fonte padrão do egui já prevista na FEAT-001.
+- [x] Prova: janela aberta por 6 s a partir do binário do repositório, sem erro no stderr; 21 testes no
+  workspace; portão `--full` verde (fmt, clippy, layers, test, cargo-deny, scripts, CLAUDE.md, gitleaks).

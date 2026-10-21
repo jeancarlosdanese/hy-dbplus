@@ -13,3 +13,4 @@ workspace = true
 
 [dependencies]
 hy-dbplus-ui-egui = { workspace = true }
+eframe = { workspace = true }
