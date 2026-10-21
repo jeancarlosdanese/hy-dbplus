@@ -1,0 +1,7 @@
+# @file: clippy.toml
+# Os lints de never-panic de [workspace.lints] do Cargo.toml valem fora de teste;
+# dentro de #[cfg(test)] e #[test] o unwrap é a forma certa de falhar.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true

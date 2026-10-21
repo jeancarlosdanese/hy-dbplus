@@ -1,0 +1,15 @@
+[package]
+name = "hy-dbplus-catalog"
+description = "Modelo neutro de schemas, tabelas, colunas, índices e FKs, carregado por driver"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hy-dbplus-driver = { workspace = true }

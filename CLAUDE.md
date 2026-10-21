@@ -21,9 +21,11 @@ rigor: PdfCraft e VectorCraft (storytold).
 ## Regras de engenharia (não negociáveis)
 
 - **Never panic.** Toda resposta do banco, todo arquivo de configuração, toda query digitada e toda tecla é
-  entrada não confiável. `unwrap`, `expect`, `panic!`, `unreachable!`, `todo!` e indexação com posição vinda de
-  entrada são proibidos fora de teste (lints do Clippy em `[workspace.lints]`, reprovam o portão).
-  `unsafe_code = "forbid"`. Erro vira `Result` com o enum de erro da crate e sobe com `?`.
+  entrada não confiável. `unwrap`, `expect`, `panic!`, `unreachable!`, `todo!`, `unimplemented!` e indexação
+  com posição vinda de entrada são proibidos fora de teste, e `dbg!` em qualquer lugar (lints do Clippy em
+  `[workspace.lints]` do `Cargo.toml`, dono da lista; reprovam o portão). `unsafe_code = "forbid"`. Erro vira
+  `Result` com o enum de erro da crate e sobe com `?`. Argumento e variável de ambiente entram por `args_os`
+  e `var_os`: a versão `String` da `std` entra em pânico com byte inválido.
 - **Layering.** Nada abaixo da UI depende de `egui`, `eframe` ou `winit`. O engine é a fachada de todos os
   frontends (app, CLI, MCP). A divisão de crates está no BRIEF §5.
 - **Async fora da UI.** Consultas rodam no runtime `tokio` e devolvem eventos por canal; nenhuma chamada de rede

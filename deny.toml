@@ -45,6 +45,9 @@ allow = ["OFL-1.1", "Ubuntu-font-1.0"]
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# Dependência interna é só `path`, sem `version` (nada é publicado: `publish = false`
+# herdado do workspace); sem isto o cargo-deny a trataria como curinga.
+allow-wildcard-paths = true
 highlight = "all"
 deny = [
   # TLS é por rustls: binário estático, sem libssl do sistema.

@@ -1,4 +1,4 @@
-<!-- FEAT_EM_ANDAMENTO — docs criados em 21/10/2026; próximo: workspace com lints e cascas -->
+<!-- FEAT_EM_ANDAMENTO — docs e workspace com cascas em 21/10/2026; próximo: xtask layers -->
 <!-- PRIO_ALTA -->
 # @file: docs/features/FEAT-002-workspace-e-janela-vazia/context.index.md
 

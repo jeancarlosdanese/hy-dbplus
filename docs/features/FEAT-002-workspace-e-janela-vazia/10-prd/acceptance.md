@@ -4,12 +4,12 @@
 
 ## Workspace e lints
 
-- [ ] `cargo build --workspace --locked` e `cargo test --workspace --locked` verdes em macOS.
-- [ ] Toda crate e app tem `license.workspace = true` e `[lints] workspace = true`; `cargo deny check licenses
+- [x] `cargo build --workspace --locked` e `cargo test --workspace --locked` verdes em macOS.
+- [x] Toda crate e app tem `license.workspace = true` e `[lints] workspace = true`; `cargo deny check licenses
       bans sources` verde.
-- [ ] Um `unwrap()` fora de teste em qualquer crate faz `cargo clippy --workspace --all-targets -- -D warnings`
+- [x] Um `unwrap()` fora de teste em qualquer crate faz `cargo clippy --workspace --all-targets -- -D warnings`
       reprovar; o mesmo `unwrap()` dentro de `#[cfg(test)]` passa (provado uma vez, registrado no impl-notes).
-- [ ] `unsafe` em qualquer crate não compila (`unsafe_code = "forbid"`).
+- [x] `unsafe` em qualquer crate não compila (`unsafe_code = "forbid"`).
 
 ## `xtask layers`
 
@@ -23,7 +23,7 @@
 - [ ] `cargo run -p hy-dbplus` abre uma janela com título "hy-dbplus", tamanho inicial definido e fundo no tema
       (claro ou escuro conforme o sistema), sem painel nem widget além de um texto de boas-vindas.
 - [ ] Nenhum `unwrap`/`expect` no caminho de inicialização: erro do eframe vira mensagem no stderr e saída 1.
-- [ ] `hy-dbplus-cli` sem argumentos imprime uso e versão e sai com 0.
+- [x] `hy-dbplus-cli` sem argumentos imprime uso e versão e sai com 0.
 
 ## Portão e CI
 

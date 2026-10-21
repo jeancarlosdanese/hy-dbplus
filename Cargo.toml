@@ -1,0 +1,56 @@
+# @file: Cargo.toml
+# Workspace do hy-dbplus (docs/BRIEF.md §5). Camadas: driver 0, catalog 1, sql 2, engine 3,
+# automation e ui-egui 4; apps e xtask isentos. `cargo xtask layers` confere (passo seguinte
+# da FEAT-002).
+
+[workspace]
+resolver = "3"
+members = ["crates/*", "apps/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+# Toda crate herda a licença: o cargo-deny reprova crate sem ela.
+license = "MIT"
+# Nenhuma crate vai para o crates.io; o app é distribuído como binário (M8).
+publish = false
+rust-version = "1.99"
+repository = "https://github.com/jeancarlosdanese/hy-dbplus"
+
+[workspace.dependencies]
+# Crates internas: só por aqui, com `workspace = true` em cada Cargo.toml. Sem `version`:
+# nada é publicado, e a versão do workspace sobe sem tocar estas linhas.
+hy-dbplus-driver = { path = "crates/driver" }
+hy-dbplus-catalog = { path = "crates/catalog" }
+hy-dbplus-sql = { path = "crates/sql" }
+hy-dbplus-engine = { path = "crates/engine" }
+hy-dbplus-automation = { path = "crates/automation" }
+hy-dbplus-ui-egui = { path = "crates/ui-egui" }
+
+# Never panic (CLAUDE.md): toda resposta do banco, arquivo e tecla é entrada não
+# confiável. Em teste o clippy.toml libera unwrap, expect, panic e indexação.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unreachable = "deny"
+todo = "deny"
+unimplemented = "deny"
+indexing_slicing = "deny"
+dbg_macro = "deny"
+
+# Dependências otimizadas mesmo em dev (egui e o driver são pesados sem isso);
+# o código nosso fica em opt-level 1 para compilar rápido.
+[profile.dev.package."*"]
+opt-level = 2
+debug = "line-tables-only"
+
+[profile.dev]
+opt-level = 1
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
