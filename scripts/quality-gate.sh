@@ -130,15 +130,19 @@ else
 fi
 
 # --- o próprio portão ---------------------------------------------------------
-# Mudou o portão (scripts ou pre-commit): sintaxe dos shells e testes do
-# verificador de coerência. O workflow só o GitHub valida, no primeiro push.
+# Mudou o portão (scripts ou pre-commit): sintaxe dos shells e os testes de
+# scripts/quality_*_test.py. O workflow só o GitHub valida, no primeiro push.
 if printf '%s\n' "$CHANGED" | grep -qE '^(scripts/quality-gate.*\.sh|\.githooks/.*)$'; then
   for f in scripts/quality-gate.sh scripts/quality-gate-tools.sh .githooks/pre-commit; do
     [ -f "$f" ] && run "bash -n $f" bash -n "$f"
   done
 fi
-if printf '%s\n' "$CHANGED" | grep -qE '^scripts/quality_.*\.py$'; then
-  run "testes do verificador dos CLAUDE.md" python3 -m unittest scripts/quality_claude_docs_test.py
+# Cada scripts/quality_*_test.py existente (verificador dos CLAUDE.md e o teste do
+# próprio portão, que roda este script num repositório temporário sem este teste).
+if printf '%s\n' "$CHANGED" | grep -qE '^scripts/quality.*\.(py|sh)$'; then
+  for t in scripts/quality_*_test.py; do
+    [ -f "$t" ] && run "testes: $t" python3 -m unittest "$t"
+  done
 fi
 
 # --- CLAUDE.md e regras do Claude Code coerentes ------------------------------

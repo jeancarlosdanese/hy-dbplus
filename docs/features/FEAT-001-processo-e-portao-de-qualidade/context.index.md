@@ -1,4 +1,4 @@
-<!-- FEAT_EM_ANDAMENTO — primeiro commit feito em 21/10/2026; fix(process) com os achados do revisor; falta decisão sobre dados de cliente no BRIEF e teste do portão shell -->
+<!-- FEAT_CONCLUIDA — commits de 21/10/2026: processo, fix(process) e teste do portão; CI verde no primeiro push -->
 <!-- PRIO_ALTA -->
 # @file: docs/features/FEAT-001-processo-e-portao-de-qualidade/context.index.md
 
@@ -43,9 +43,10 @@ kit e o CI no GitHub Actions. Sem linha de base: o projeto é estrito desde o pr
 scripts/quality-gate.sh               o portão (--fast, --full, --all --base)
 scripts/quality-gate-tools.sh         instala cargo-deny e gitleaks em tmp/tools/bin
 scripts/quality_claude_docs.py        verificador de coerência dos CLAUDE.md (cópia do kit, raízes Rust) + _test.py
+scripts/quality_gate_test.py          teste do portão num repositório temporário (gitleaks sem base, --base "", stage)
 .gitignore                            target/, tmp/, .env*, chaves, settings.local.json
 deny.toml                             licenças permitidas, crates proibidas, fontes
-.github/workflows/quality-gate.yml    CI: portão em máquina limpa + build macOS/Windows
+.github/workflows/quality-gate.yml    CI: portão em macOS + build Linux/Windows
 ```
 
 ## Workflow Claude Code

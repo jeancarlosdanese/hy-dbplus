@@ -12,6 +12,8 @@
 - [x] `scripts/quality-gate.sh` (`--fast`, `--full`, `--all --base`), compatível com bash 3.2, sintaxe conferida,
   verde em `--fast` no estado atual (etapas Rust puladas com aviso até o M0).
 - [x] `scripts/quality-gate-tools.sh` com cargo-deny 0.20.2 e gitleaks v8.30.1 fixados.
+- [x] `scripts/quality_gate_test.py`: o portão roda num repositório temporário; os consertos de gitleaks sem base e
+  `--base ""` têm teste que falha com o código antigo; o portão roda todo `scripts/quality_*_test.py`.
 - [x] `scripts/quality_claude_docs.py` e teste copiados do kit, raízes trocadas para `crates/`, `apps/`,
   `xtask/`; testes passando; `CLAUDE.md` verde no verificador.
 - [x] `deny.toml`: licenças permitivas, `openssl`/`native-tls` proibidos, só crates.io como fonte.
@@ -21,12 +23,12 @@
 
 ## Do Jean
 
-- [ ] Abrir uma sessão nova no projeto e conferir `claude plugin list`: `process@hyberica` ligado no escopo
-  project (a sessão grava `.git/claude-plugin-root`, que o pre-commit usa).
-- [ ] `git config core.hooksPath .githooks` (a trava recusa esse comando vindo da IA).
-- [ ] `scripts/quality-gate-tools.sh` (instala cargo-deny e gitleaks em `tmp/tools/bin`).
-- [ ] Primeiro commit com "pode commitar" (a IA sugere a mensagem); conferir que o pre-commit rodou o portão.
-- [ ] Criar o repositório `jeancarlosdanese/hy-dbplus` no GitHub, push e conferir o workflow verde.
+- [x] Abrir uma sessão nova no projeto e conferir `claude plugin list`: `process@hyberica` ligado no escopo
+  project (a sessão grava `.git/claude-plugin-root`, que o pre-commit usa). Feito em 21/10/2026.
+- [x] `git config core.hooksPath .githooks` (a trava recusa esse comando vindo da IA).
+- [x] `scripts/quality-gate-tools.sh` (instala cargo-deny e gitleaks em `tmp/tools/bin`).
+- [x] Primeiro commit com "pode commitar" (`854dd01`); o pre-commit rodou o portão `--full`.
+- [x] Repositório `jeancarlosdanese/hy-dbplus` no GitHub, push e workflow verde em 21/10/2026.
 
 ## Verificação real (depois do M0)
 

@@ -75,5 +75,13 @@ _Atualizado em 21/10/2026._
   máquina de desenvolvimento); Linux e Windows ficaram no job `build`, com as bibliotecas do egui só no Linux.
 - [x] 3ª rodada do revisor neste diff: `libpq-sys` e `libpq` juntaram-se ao `pq-sys` nos bans; a base de
   sensível do plugin descrita por inteiro no `CLAUDE.md` (app, regras, skills, agentes e migrations).
-- [ ] Teste do portão shell (`scripts/quality_gate_test.py`) para os consertos de gitleaks sem base e
-  `--base ""`: tarefa própria antes do M0.
+- [x] Teste do portão shell (`scripts/quality_gate_test.py`): 10 testes, cada um roda o portão num repositório git
+  temporário com o gitleaks real (pulados se ele não estiver em `tmp/tools/bin`). Provado revertendo os
+  consertos: `--all` sem base, `--base ""` e base igual ao HEAD voltam a falhar. Segredo montado em tempo
+  de execução, nunca inteiro no fonte. Aprendido: `gitleaks git` sem intervalo varre todas as refs, não só
+  a branch atual. O portão agora roda todo `scripts/quality_*_test.py` quando `scripts/quality*` muda.
+- [x] Primeiro push em 21/10/2026: workflow verde (gate em macOS 3m32s, build Linux e Windows).
+- [x] Revisor no teste do portão (achado alto): rodando dentro do pre-commit, o teste herdava `GIT_INDEX_FILE`;
+  num `git commit -a` ou com caminhos a variável é absoluta e o `git add` do repositório temporário
+  reescreveria o índice do commit em curso do repositório real. Os subprocessos do teste rodam sem `GIT_*`,
+  com teste de regressão que aponta `GIT_INDEX_FILE` para outro repositório e confere que ele não muda.
