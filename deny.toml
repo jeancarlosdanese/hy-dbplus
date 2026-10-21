@@ -1,0 +1,54 @@
+# @file: deny.toml
+# Configuração do cargo-deny (scripts/quality-gate.sh --full). Dependência nova é
+# decisão, não conveniência: licença fora da lista, crate proibida ou fonte
+# desconhecida reprovam o portão. Advisories (RustSec) só reprovam no CI (--all).
+
+[graph]
+all-features = true
+
+[advisories]
+yanked = "deny"
+unmaintained = "workspace"
+ignore = []
+
+[licenses]
+# Permissivas e compatíveis com o MIT deste projeto. MPL-2.0 entra por ser
+# file-level copyleft (não contamina o binário). GPL/AGPL ficam de fora.
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Zlib",
+  "Unicode-3.0",
+  "Unicode-DFS-2016",
+  "CC0-1.0",
+  "MPL-2.0",
+  "OFL-1.1",
+  "0BSD",
+  "BSL-1.0",
+]
+confidence-threshold = 0.8
+exceptions = []
+
+# Sem [[licenses.clarify]] por enquanto: a necessidade (ex.: ring, do rustls)
+# se decide no M0 com a versão real da dependência e o hash do LICENSE dela.
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+deny = [
+  # TLS é por rustls: binário estático, sem libssl do sistema.
+  { crate = "openssl", reason = "TLS por rustls (docs/BRIEF.md §6)" },
+  { crate = "openssl-sys", reason = "TLS por rustls (docs/BRIEF.md §6)" },
+  { crate = "native-tls", reason = "TLS por rustls (docs/BRIEF.md §6)" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

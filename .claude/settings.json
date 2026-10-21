@@ -1,0 +1,28 @@
+{
+  "extraKnownMarketplaces": {
+    "hyberica": {
+      "source": { "source": "github", "repo": "jeancarlosdanese/hyberica-claude-kit" }
+    }
+  },
+  "enabledPlugins": {
+    "process@hyberica": true
+  },
+  "permissions": {
+    "allow": [
+      "Bash(cargo build *)",
+      "Bash(cargo check *)",
+      "Bash(cargo clippy *)",
+      "Bash(cargo fmt *)",
+      "Bash(cargo test *)",
+      "Bash(cargo run *)",
+      "Bash(cargo doc *)",
+      "Bash(cargo tree *)",
+      "Bash(cargo metadata *)",
+      "Bash(cargo xtask *)",
+      "Bash(scripts/quality-gate.sh --fast)",
+      "Bash(scripts/quality-gate.sh --full)",
+      "Bash(python3 scripts/quality_claude_docs.py)",
+      "Bash(python3 -m unittest scripts/quality_claude_docs_test.py)"
+    ]
+  }
+}

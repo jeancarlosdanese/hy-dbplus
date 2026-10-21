@@ -1,0 +1,24 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Ferramentas e saídas do portão de qualidade (scripts/quality-gate-tools.sh)
+/tmp/
+
+# Python dos scripts do portão
+__pycache__/
+
+# Sistema e editores
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Segredos: nunca commitar
+.env
+.env.*
+*.pem
+*.key
+
+# Claude Code local
+.claude/settings.local.json

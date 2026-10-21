@@ -1,0 +1,75 @@
+#!/bin/bash
+# @file: .githooks/pre-commit
+# Pre-commit do plugin process@hyberica (copiado de templates/githooks/pre-commit do
+# hyberica-claude-kit; FEAT-001).
+#
+#   - Commit do Claude Code (CLAUDECODE=1 no ambiente, ou um processo claude entre os
+#     ancestrais: tirar a variavel do ambiente nao basta para pular a conferencia;
+#     plugin 0.4.0): segunda camada da trava. Aqui o indice ja
+#     tem o que vai no commit, inclusive stage parcial e o que o mesmo comando criou
+#     antes do "git add". Confere revisor e versao com o bash_guard.py do plugin em
+#     uso, cuja pasta o hook SessionStart grava em .git/claude-plugin-root.
+#   - Portao de qualidade do projeto, se existir (scripts/quality-gate.sh --full).
+#
+# Commit seu pelo terminal nao passa pela trava, so pelo portao. Commit pelo "!" dentro
+# do Claude Code conta como do Claude (o claude e ancestral): pede revisor se sensivel.
+#
+# Ativar (Jean, uma vez por clone):
+#   git config core.hooksPath .githooks
+
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+# Um processo do Claude Code acima deste: binario nativo (claude, inclusive o do Claude
+# Desktop, cujo caminho tem espaco: por isso o comm, que traz o caminho inteiro no macOS
+# e o nome no Linux) ou o pacote npm (node .../bin/claude, @anthropic-ai/claude-code, no
+# args). /bin/ps e /bin/bash com caminho absoluto: um ps ou bash falso no PATH esconderia
+# o ancestral (a trava tambem recusa commit com PATH mexido). Sem /bin/ps utilizavel, avisa.
+claude_ancestor() {
+  local pid=$PPID comm args
+  if [ ! -x /bin/ps ] || ! /bin/ps -o comm= -p "$pid" >/dev/null 2>&1; then
+    echo "pre-commit: /bin/ps indisponível; não consigo ver se o commit é do Claude Code." >&2
+    return 1
+  fi
+  while [ -n "$pid" ] && [ "$pid" -gt 1 ] 2>/dev/null; do
+    comm="$(/bin/ps -o comm= -p "$pid" 2>/dev/null)" || return 1
+    case "${comm##*/}" in claude) return 0 ;; esac
+    args="$(/bin/ps -o args= -p "$pid" 2>/dev/null)" || return 1
+    case "$args" in *@anthropic-ai/claude-code*|*/bin/claude|*/bin/claude\ *) return 0 ;; esac
+    pid="$(/bin/ps -o ppid= -p "$pid" 2>/dev/null)" || return 1
+    pid="${pid//[[:space:]]/}"
+  done
+  return 1
+}
+
+if [ "${CLAUDECODE:-}" = "1" ] || claude_ancestor; then
+  # O hook roda na raiz do repositorio; --git-common-dir relativo vale a partir dela.
+  POINTER="$(cd "$(git rev-parse --git-common-dir)" && pwd)/claude-plugin-root"
+  # Linha 1: pasta do plugin; linha 2: o Python dos hooks, com caminho absoluto (um
+  # python3 falso no PATH enganaria a trava). Lido com o read do bash, sem cat/sed do PATH.
+  PLUGIN="" PY=""
+  if [ -f "$POINTER" ]; then
+    { IFS= read -r PLUGIN || true; IFS= read -r PY || true; } < "$POINTER"
+  fi
+  GUARD="$PLUGIN/hooks/bash_guard.py"
+  if [ -z "$PLUGIN" ] || [ ! -f "$GUARD" ] || [ "${PY:0:1}" != "/" ] || [ ! -x "$PY" ]; then
+    echo "pre-commit: não achei a trava do plugin process (${POINTER})." >&2
+    echo "  Abra uma sessão nova do Claude Code no projeto (ela grava o caminho) e confira com" >&2
+    echo "  'claude plugin list' se o process@hyberica está ligado." >&2
+    exit 1
+  fi
+  CLAUDECODE=1 "$PY" "$GUARD" --precommit
+fi
+
+GATE="$REPO_ROOT/scripts/quality-gate.sh"
+if [ -e "$GATE" ]; then
+  if [ ! -x "$GATE" ]; then
+    echo "pre-commit: $GATE existe mas não é executável; o portão não rodou. chmod +x nele (Jean)." >&2
+    exit 1
+  fi
+  if ! "$GATE" --full; then
+    echo "pre-commit: portão de qualidade vermelho. Corrija antes de commitar." >&2
+    exit 1
+  fi
+fi
