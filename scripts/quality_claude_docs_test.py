@@ -96,6 +96,16 @@ class TestCoerencia(Base):
         self.write("CLAUDE.md", "# raiz\n\n[regra](.claude/rules/r.md)\n")
         self.assertTrue(any("não lista apps/web/CLAUDE.md" in p for p in self.problems()))
 
+    def test_claude_md_de_crate_e_de_xtask_entram_no_indice(self):
+        # Antes, so apps/*/CLAUDE.md era visto: um CLAUDE.md em crates/ ou xtask/ ficava
+        # fora do indice e fora de toda conferencia.
+        self.write("crates/driver/CLAUDE.md", "# crate\n")
+        self.write("xtask/CLAUDE.md", "# xtask\n")
+        problems = self.problems()
+        for rel in ("crates/driver/CLAUDE.md", "xtask/CLAUDE.md"):
+            self.assertTrue(any(p.startswith(f"{rel}: não aponta para o CLAUDE.md da raiz") for p in problems), rel)
+            self.assertTrue(any(f"não lista {rel}" in p for p in problems), rel)
+
     def test_limite_de_linhas(self):
         self.write("CLAUDE.md", ROOT_OK + "x\n" * 201)
         self.assertTrue(any("limite 200" in p for p in self.problems()))

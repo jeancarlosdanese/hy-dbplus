@@ -22,7 +22,7 @@ Instalar o processo antes do primeiro código: a parte genérica vem do plugin s
    de never-panic do workspace) e coerência dos CLAUDE.md; `--full` soma testes, cargo-deny (licenças, bans,
    fontes) e gitleaks no stage; `--all` no CI soma advisories e gitleaks no intervalo do push.
 3. **Pre-commit** copiado do template do kit, sem alteração; **CI** no GitHub Actions com o portão em máquina
-   limpa e build nas plataformas secundárias.
+   limpa (macOS, alvo principal) e build com testes em Linux e Windows.
 4. **`CLAUDE.md`** do projeto com a seção Processo (dona das regras), as regras de engenharia e os comandos.
 5. **Esta FEAT** documentada no padrão reduzido do kit (brief, aceite, notas, índice).
 

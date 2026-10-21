@@ -26,15 +26,21 @@ allow = [
   "Unicode-DFS-2016",
   "CC0-1.0",
   "MPL-2.0",
-  "OFL-1.1",
   "0BSD",
   "BSL-1.0",
 ]
 confidence-threshold = 0.8
-exceptions = []
 
-# Sem [[licenses.clarify]] por enquanto: a necessidade (ex.: ring, do rustls)
-# se decide no M0 com a versão real da dependência e o hash do LICENSE dela.
+# A fonte padrão do egui (epaint_default_fonts, via a feature default_fonts, que
+# o all-features acima liga) vem com OFL-1.1 e Ubuntu-font-1.0. Licença de fonte
+# vale só para essa crate, não para o workspace inteiro (mesma solução do PdfCraft).
+[[licenses.exceptions]]
+crate = "epaint_default_fonts"
+allow = ["OFL-1.1", "Ubuntu-font-1.0"]
+
+# Sem [[licenses.clarify]]: o ring 0.17 já declara "Apache-2.0 AND ISC" no
+# Cargo.toml. Dependência sem licença legível se decide no M0, com a versão real
+# e o hash do LICENSE dela.
 
 [bans]
 multiple-versions = "warn"
@@ -45,6 +51,11 @@ deny = [
   { crate = "openssl", reason = "TLS por rustls (docs/BRIEF.md §6)" },
   { crate = "openssl-sys", reason = "TLS por rustls (docs/BRIEF.md §6)" },
   { crate = "native-tls", reason = "TLS por rustls (docs/BRIEF.md §6)" },
+  # PostgreSQL é por tokio-postgres puro: sem libpq do sistema. pq-sys é o binding
+  # do diesel; libpq-sys e libpq, o outro caminho até a biblioteca.
+  { crate = "pq-sys", reason = "sem libpq (docs/BRIEF.md §6)" },
+  { crate = "libpq-sys", reason = "sem libpq (docs/BRIEF.md §6)" },
+  { crate = "libpq", reason = "sem libpq (docs/BRIEF.md §6)" },
 ]
 
 [sources]

@@ -70,7 +70,7 @@ Dona das regras de commit e revisão neste repositório. Vale aqui:
   na tela, com ou sem "pode commitar". `git push` é recusado: é do Jean. Versão só quando o Jean pedir.
 - Mudança sensível pendente na árvore não commita sem o agente `process:reviewer` rodar depois do último commit
   (`/code-review` não conta). O que é sensível aqui está em `.claude/process.json`, somado à base do plugin
-  (este arquivo, regras, skills e agentes).
+  (este arquivo e o `CLAUDE.md` de cada app, regras, skills, agentes e migrations).
 - A caixa de aprovação é rede de segurança, não caminho do commit. Sempre que ela for aparecer, dizer antes ao
   Jean o que ela faz e se é para aprovar.
 - **Portão de qualidade** (`scripts/quality-gate.sh`): no fim de cada resposta (`--fast`), no pre-commit

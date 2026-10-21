@@ -27,12 +27,12 @@ Princípios:
 | Projeto | O que copiamos |
 |---|---|
 | TablePlus | Fluxo de uso, layout de três painéis, abas Data/Structure/Index, editor SQL com "Run Current" |
-| PdfCraft / VectorCraft | Workspace Cargo em camadas, engine independente da UI, `egui`, regra "never panic", CLI + MCP, docs para agentes (`CLAUDE.md`, `AGENTS.md`) |
+| PdfCraft / VectorCraft | Workspace Cargo em camadas, engine independente da UI, `egui`, regra "never panic", CLI + MCP, docs para agentes (aqui só `CLAUDE.md`, dono único das instruções) |
 
 ## 3. Referência de telas (TablePlus)
 
 Capturas feitas em 2026-10-21 no TablePlus 27.0.2, conexão `pg-localhost`,
-banco `go_marketing_dev`. Servem como especificação visual e funcional.
+num banco de desenvolvimento local. Servem como especificação visual e funcional.
 
 ### 3.1 Lista de conexões
 - Lista vertical com ícone do tipo de banco (Pg, Ms, Re, Sl, Mg), nome,
@@ -71,7 +71,7 @@ banco `go_marketing_dev`. Servem como especificação visual e funcional.
   `condition`, `include`, `storage_parameters`, `comment`.
 
 ### 3.7 Editor SQL
-- Aba própria ao lado das abas de tabela (`strategies | SQL Query`).
+- Aba própria ao lado das abas de tabela (`<tabela> | SQL Query`).
 - Syntax highlight, numeração de linhas, várias queries no mesmo buffer.
 - Barra de status `line, column, location`.
 - Controles: **No limit** (limite de linhas), **Beautify ⌘I**,
@@ -162,11 +162,11 @@ portão de qualidade têm um dono só: o [CLAUDE.md](../CLAUDE.md) da raiz. Este
 |---|---|---|
 | **M0** | Workspace com lints de never-panic, `xtask layers`, app abre uma janela vazia com tema | `cargo run -p hy-dbplus` abre; `scripts/quality-gate.sh --full` verde |
 | **M1** | `driver` PostgreSQL + lista de conexões + conectar | Cria conexão `pg-localhost`, senha no Keychain, conecta e lista bancos |
-| **M2** | `catalog` + árvore de objetos + seletor de banco e schema | Abre `go_marketing_dev`, vê tabelas, views, functions e colunas |
-| **M3** | Aba Data: grid virtualizado, paginação, ordenação, painel lateral | Abre `strategies`, vê 24 linhas, tamanhos e comentário |
-| **M4** | Abas Structure e Index somente leitura, DDL | Estrutura e índices de `strategies` batem com o TablePlus |
+| **M2** | `catalog` + árvore de objetos + seletor de banco e schema | Abre um banco local, vê tabelas, views, functions e colunas |
+| **M3** | Aba Data: grid virtualizado, paginação, ordenação, painel lateral | Abre uma tabela, vê as linhas, os tamanhos e o comentário |
+| **M4** | Abas Structure e Index somente leitura, DDL | Estrutura e índices de uma tabela batem com o TablePlus |
 | **M5** | Editor SQL: abas, highlight, Run Current, limite, Beautify, resultado | Executa as queries da tela 3.7 e vê o resultado |
-| **M6** | Autocomplete por schema | Digita `select * from str` e recebe `strategies`; `s.` lista colunas do alias |
+| **M6** | Autocomplete por schema | Digita `select * from` e o prefixo de uma tabela e recebe o nome; `alias.` lista as colunas |
 | **M7** | Filtros, navegação por FK, histórico de queries, busca na árvore | Fluxo diário completo sem sair do app |
 | **M8** | CLI + MCP opt-in, empacotamento macOS (`.app`), README | Um agente lista tabelas e roda uma query via MCP |
 
@@ -181,7 +181,7 @@ como a FEAT-001.
 | Editor SQL com autocomplete em `egui` não existe pronto | Alto | Construir sobre `TextEdit` com layouter customizado para highlight e popup próprio. Começar simples (keywords + tabelas), evoluir. Prototipar em M5/M6 cedo. |
 | Grid com milhares de linhas e colunas largas | Médio | `egui_extras::TableBuilder` virtualizado; paginação server-side (`LIMIT/OFFSET` ou keyset); truncar células longas. |
 | Query longa travando a UI | Médio | Execução em `tokio`, cancelamento via `pg_cancel_backend`/`CancelToken`, UI por eventos. |
-| Usuário não conhece Rust | Médio | Projeto desenvolvido por agentes com `CLAUDE.md`/`AGENTS.md` detalhados; usuário valida comportamento, não código. Commits pequenos. |
+| Usuário não conhece Rust | Médio | Projeto desenvolvido por agentes com `CLAUDE.md` detalhado; usuário valida comportamento, não código. Commits pequenos. |
 | Visual não nativo do macOS | Baixo | Aceito. Tema inspirado no TablePlus, atalhos de teclado iguais (⌘K, ⌘↩, ⌘I). |
 
 ## 9. Decisões tomadas

@@ -15,7 +15,7 @@
 - [x] `scripts/quality_claude_docs.py` e teste copiados do kit, raízes trocadas para `crates/`, `apps/`,
   `xtask/`; testes passando; `CLAUDE.md` verde no verificador.
 - [x] `deny.toml`: licenças permitivas, `openssl`/`native-tls` proibidos, só crates.io como fonte.
-- [x] `.github/workflows/quality-gate.yml`: portão em ubuntu com base de comparação; build em macOS e Windows
+- [x] `.github/workflows/quality-gate.yml`: portão em macOS com base de comparação; build em Linux e Windows
   quando houver `Cargo.toml`.
 - [x] `CLAUDE.md` da raiz com seção Processo, regras de engenharia e comandos, até 200 linhas.
 

@@ -1,7 +1,8 @@
 # @file: scripts/quality_claude_docs.py
 # Coerencia dos CLAUDE.md e das regras do Claude Code (FEAT-219 fase 7). O
-# CLAUDE.md da raiz carrega sempre; o de cada app (apps/*/CLAUDE.md) e as regras
-# (.claude/rules/*.md, com "paths:") carregam quando o trabalho chega la. Um
+# CLAUDE.md da raiz carrega sempre; o de cada app ou crate (apps/*/CLAUDE.md,
+# crates/*/CLAUDE.md, xtask/CLAUDE.md) e as regras (.claude/rules/*.md, com
+# "paths:") carregam quando o trabalho chega la. Um
 # complementa o outro, entao nada pode se repetir nem apontar para o que nao
 # existe mais (o CLAUDE.md antigo citava arquivo movido e funcao renomeada).
 #
@@ -79,7 +80,10 @@ def glob_matches(pattern, path):
 
 def docs(root):
     found = [("root", "CLAUDE.md")]
-    found += [("app", os.path.relpath(p, root)) for p in sorted(glob.glob(os.path.join(root, "apps", "*", "CLAUDE.md")))]
+    # Num workspace Rust o CLAUDE.md por modulo mora em crates/<nome>/ (e em xtask/), com
+    # o mesmo papel e limite do de um app.
+    for pattern in (("apps", "*", "CLAUDE.md"), ("crates", "*", "CLAUDE.md"), ("xtask", "CLAUDE.md")):
+        found += [("app", os.path.relpath(p, root)) for p in sorted(glob.glob(os.path.join(root, *pattern)))]
     found += [("rule", os.path.relpath(p, root)) for p in sorted(glob.glob(os.path.join(root, ".claude", "rules", "*.md")))]
     return [(k, p) for k, p in found if os.path.exists(os.path.join(root, p))]
 

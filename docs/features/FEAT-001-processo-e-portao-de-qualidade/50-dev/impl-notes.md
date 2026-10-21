@@ -56,3 +56,24 @@ _Atualizado em 21/10/2026._
   do sensível em quatro redações (dono único: `process.json`); ids do workflow em português.
 - [x] Verificação: `bash -n` nos shells, `python3 -m unittest` no verificador, `scripts/quality-gate.sh --fast`
   verde, `CLAUDE.md` com 80 linhas e verde no verificador.
+
+### 21/10/2026 — Primeiro commit e `fix(process)`
+
+- [x] Primeiro commit (`854dd01`) só saiu depois de o plugin process ser corrigido para repositório sem commit
+  (`git rev-parse HEAD` falhava e o registro do revisor não era gravado; process 0.4.1, lido da pasta do kit
+  em modo dev, usa a árvore vazia como HEAD). Ficou para a 0.4.2: repositório com `--object-format=sha256`.
+- [x] Achados do `process:reviewer` (2ª e 3ª rodadas) corrigidos: regex de sensível aceita módulo em diretório
+  (`query/mod.rs`, `statements/mod.rs`) e cobre `crates/*/CLAUDE.md`; `deny.toml` com exceção por crate para a
+  fonte padrão do egui (`epaint_default_fonts`: OFL-1.1 e Ubuntu-font-1.0, que reprovariam no M0), `OFL-1.1`
+  fora do allow global, `pq-sys` nos bans (o `CLAUDE.md` já prometia "sem libpq") e comentário do `ring`
+  reescrito; verificador dos CLAUDE.md enxerga `crates/*/CLAUDE.md` e `xtask/CLAUDE.md` (teste novo falha
+  com o `docs()` antigo); `rust-cache` do job `gate` guardado por `Cargo.toml` como no `build`; comentários
+  do portão (gatilho da autochecagem), do workflow (cálculo da base, macOS como alvo principal) e do brief
+  desta FEAT; `AGENTS.md` fora do BRIEF (`CLAUDE.md` é o dono único); índice sem caminho local da máquina.
+- [x] Decisão do Jean: o BRIEF citava um banco e uma tabela de outro projeto como referência de aceite;
+  trocados por "um banco local" e "uma tabela". Portão do CI passou do Linux para o macOS (alvo principal e
+  máquina de desenvolvimento); Linux e Windows ficaram no job `build`, com as bibliotecas do egui só no Linux.
+- [x] 3ª rodada do revisor neste diff: `libpq-sys` e `libpq` juntaram-se ao `pq-sys` nos bans; a base de
+  sensível do plugin descrita por inteiro no `CLAUDE.md` (app, regras, skills, agentes e migrations).
+- [ ] Teste do portão shell (`scripts/quality_gate_test.py`) para os consertos de gitleaks sem base e
+  `--base ""`: tarefa própria antes do M0.

@@ -1,16 +1,17 @@
 {
-  "comment": "Plugin process@hyberica no hy-dbplus (FEAT-001). protected: a IA so altera com aprovacao, alem da base do plugin (settings, process.json, githooks, portao, workflow). Aqui: deny.toml (licencas e advisories das dependencias) e o empacotamento. sensitive: mudanca que exige o agente process:reviewer antes do commit, alem da base (CLAUDE.md, .claude/rules|skills|agents, migrations). Sensivel neste projeto = o que toca credencial, rede, execucao de SQL e a superficie exposta a agentes: driver (conexao, TLS, cancelamento), credenciais e armazenamento de conexoes no engine, execucao de query, o servidor MCP e a tabela de tools, os apps (CLI e desktop, pequenos e expostos), o split de statements em crates/sql (decide o que o Run Current executa), dependencias do workspace (supply chain: Cargo.toml, Cargo.lock, deny.toml), xtask e empacotamento. version: entra quando o workspace tiver arquivo de versao e tags (M8).",
+  "comment": "Plugin process@hyberica no hy-dbplus (FEAT-001). protected: a IA so altera com aprovacao, alem da base do plugin (settings, process.json, githooks, portao, workflow). Aqui: deny.toml (licencas e advisories das dependencias) e o empacotamento. sensitive: mudanca que exige o agente process:reviewer antes do commit, alem da base (CLAUDE.md, .claude/rules|skills|agents, migrations). Sensivel neste projeto = o que toca credencial, rede, execucao de SQL e a superficie exposta a agentes: driver (conexao, TLS, cancelamento), credenciais e armazenamento de conexoes no engine, execucao de query, o servidor MCP e a tabela de tools, os apps (CLI e desktop, pequenos e expostos), o split de statements em crates/sql (decide o que o Run Current executa), dependencias do workspace (supply chain: Cargo.toml, Cargo.lock, deny.toml), xtask, empacotamento e o CLAUDE.md de cada crate (muda o comportamento da IA; o de apps/ e o da raiz ja estao na base). Modulo em diretorio (query/mod.rs) conta como o arquivo (query.rs): por isso o (/.*)? no fim. version: entra quando o workspace tiver arquivo de versao e tags (M8).",
   "protected": [
     "deny.toml",
     "packaging/"
   ],
   "sensitive": [
     "^crates/driver/src/",
-    "^crates/engine/src/(.*[/_])?(credential|keyring|secret|store|connection|session)s?([_./][^/]*)?$",
-    "^crates/engine/src/(.*[/_])?(quer|exec|run)[^/]*$",
+    "^crates/engine/src/(.*[/_])?(credential|keyring|secret|store|connection|session)s?([_./][^/]*)?(/.*)?$",
+    "^crates/engine/src/(.*[/_])?(quer|exec|run)[^/]*(/.*)?$",
     "^crates/automation/src/",
     "^apps/[^/]+/src/",
-    "^crates/sql/src/(.*[/_])?(split|statement)[^/]*$",
+    "^crates/sql/src/(.*[/_])?(split|statement)[^/]*(/.*)?$",
+    "^crates/[^/]+/CLAUDE\\.md$",
     "^(Cargo\\.toml|Cargo\\.lock|deny\\.toml|rust-toolchain\\.toml|clippy\\.toml)$",
     "^crates/[^/]+/Cargo\\.toml$",
     "^apps/[^/]+/Cargo\\.toml$",

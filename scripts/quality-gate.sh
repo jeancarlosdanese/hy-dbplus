@@ -130,8 +130,8 @@ else
 fi
 
 # --- o próprio portão ---------------------------------------------------------
-# Mudou o portão (scripts, pre-commit, workflow): sintaxe dos shells e testes
-# do verificador de coerência.
+# Mudou o portão (scripts ou pre-commit): sintaxe dos shells e testes do
+# verificador de coerência. O workflow só o GitHub valida, no primeiro push.
 if printf '%s\n' "$CHANGED" | grep -qE '^(scripts/quality-gate.*\.sh|\.githooks/.*)$'; then
   for f in scripts/quality-gate.sh scripts/quality-gate-tools.sh .githooks/pre-commit; do
     [ -f "$f" ] && run "bash -n $f" bash -n "$f"

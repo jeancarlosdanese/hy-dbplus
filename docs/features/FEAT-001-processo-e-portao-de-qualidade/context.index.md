@@ -1,4 +1,4 @@
-<!-- FEAT_EM_ANDAMENTO — arquivos criados em 21/10/2026; falta o Jean ligar plugin, pre-commit, ferramentas e fazer o primeiro commit -->
+<!-- FEAT_EM_ANDAMENTO — primeiro commit feito em 21/10/2026; fix(process) com os achados do revisor; falta decisão sobre dados de cliente no BRIEF e teste do portão shell -->
 <!-- PRIO_ALTA -->
 # @file: docs/features/FEAT-001-processo-e-portao-de-qualidade/context.index.md
 
@@ -31,7 +31,7 @@ kit e o CI no GitHub Actions. Sem linha de base: o projeto é estrito desde o pr
 2. 10-prd/acceptance.md       → o que precisa ser verdade, e o que é do Jean
 3. 50-dev/impl-notes.md       → estado atual, decisões e log
 4. CLAUDE.md (raiz)           → seção Processo (dona das regras de commit e revisão)
-5. ~/dados/workspaces-clientes/hyberica-claude-kit/README.md → como o plugin funciona
+5. README do kit (github.com/jeancarlosdanese/hyberica-claude-kit) → como o plugin funciona
 ```
 
 ## Onde está o quê

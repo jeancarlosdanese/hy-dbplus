@@ -2,8 +2,10 @@
 # Portão de qualidade em máquina limpa: a rede de segurança final, no push e
 # no PR. Roda scripts/quality-gate.sh --full --all --base <commit de antes>:
 # só aqui o cargo-deny confere advisories (vulnerabilidade publicada hoje não
-# trava commit local, mas aparece no primeiro push). O job "build" confirma
-# que o workspace compila em macOS e Windows (plataformas secundárias).
+# trava commit local, mas aparece no primeiro push). O portão roda no macOS,
+# o alvo principal e a máquina de desenvolvimento (docs/BRIEF.md decisão 5).
+# O job "build" confirma que o workspace compila e passa nos testes em Linux e
+# Windows, os builds secundários.
 
 name: Portão de qualidade
 
@@ -32,7 +34,7 @@ env:
 
 jobs:
   gate:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -46,17 +48,14 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: Cache do cargo
-        uses: Swatinem/rust-cache@v2
+      # Até o M0 não há Cargo.toml: o cache do cargo é pulado (como no job build).
+      - name: Cargo.toml existe?
+        id: cargo
+        run: echo "present=$([ -f Cargo.toml ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
-      # Bibliotecas de sistema que o eframe/winit precisam no Linux.
-      - name: Dependências de sistema (egui)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libgtk-3-dev libxkbcommon-dev libwayland-dev libasound2-dev \
-            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
-            libxinerama-dev libxcursor-dev libxrandr-dev libxi-dev
+      - name: Cache do cargo
+        if: steps.cargo.outputs.present == 'true'
+        uses: Swatinem/rust-cache@v2
 
       # O gitleaks é instalado por go install (scripts/quality-gate-tools.sh).
       - name: Go (para o gitleaks)
@@ -83,10 +82,10 @@ jobs:
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           BEFORE: ${{ github.event.before }}
         run: |
-          # PR: a base do PR. Push: o commit de antes. Branch nova (before
-          # zerado): o merge-base com a main. Primeiro push da main, disparo
-          # manual ou execução semanal: base vazia, e o portão varre o
-          # histórico inteiro em vez de fingir que nada mudou.
+          # PR: a base do PR. Push na main: o commit de antes. Disparo manual
+          # em outra branch: o merge-base com a main. Primeiro push da main,
+          # disparo manual na main ou execução semanal: base vazia, e o portão
+          # varre o histórico inteiro em vez de fingir que nada mudou.
           if [ "$EVENT" = "pull_request" ]; then
             base="$PR_BASE"
           elif [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
@@ -103,14 +102,15 @@ jobs:
         run: scripts/quality-gate.sh --full --all --base "${{ steps.base.outputs.sha }}"
 
   build:
-    # Plataformas secundárias (docs/BRIEF.md §9): só compilação e testes.
+    # Linux e Windows (builds secundários, docs/BRIEF.md decisão 5): compilação
+    # e testes; clippy e cargo-deny ficam no job gate, no macOS.
     # hashFiles só vale em steps.if (não em jobs.if): até o M0, sem
     # Cargo.toml, os passos são pulados e o job fica verde.
     needs: gate
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
@@ -118,6 +118,15 @@ jobs:
       - id: cargo
         shell: bash
         run: echo "present=$([ -f Cargo.toml ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      # Bibliotecas de sistema que o eframe/winit precisam no Linux.
+      - if: steps.cargo.outputs.present == 'true' && runner.os == 'Linux'
+        name: Dependências de sistema (egui)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-3-dev libxkbcommon-dev libwayland-dev libasound2-dev \
+            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libxinerama-dev libxcursor-dev libxrandr-dev libxi-dev
       - if: steps.cargo.outputs.present == 'true'
         uses: dtolnay/rust-toolchain@stable
       - if: steps.cargo.outputs.present == 'true'
