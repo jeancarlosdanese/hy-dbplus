@@ -6,10 +6,10 @@
 
 _Atualizado em 21/10/2026._
 
-- **Feito:** documentação; workspace com lints, seis crates e dois apps como cascas; portão `--full` verde com
-  as etapas Rust de verdade.
+- **Feito:** documentação; workspace com lints, seis crates e dois apps como cascas (`921208b`); `cargo xtask
+  layers` com o motor de regras testado e ligado ao portão.
 - **Em curso:** nada.
-- **Falta:** `xtask layers`; janela com tema; CI verde; verificação do Jean.
+- **Falta:** janela com tema; CI verde; verificação do Jean.
 - **Depende de:** nada.
 - **Para retomar:** esta pasta, o `CLAUDE.md` da raiz e o BRIEF §5 a §7.
 
@@ -62,4 +62,26 @@ _Atualizado em 21/10/2026._
   workspace quebraria o `--locked`), o que exigiu `publish = false` herdado e `allow-wildcard-paths` no
   `deny.toml` (sem isso o cargo-deny trata `path` sem `version` como curinga). `LICENSE` MIT na raiz, que o
   metadado já declarava. Lista de lints do `CLAUDE.md` alinhada ao `Cargo.toml` (`unimplemented!`, `dbg!`,
-  regra do `args_os`). Uso da CLI não anuncia mais comandos que ela recusa.
+  regra do `args_os`). Uso da CLI não anuncia mais comandos que ela recusa. Commit `921208b`.
+
+### 21/10/2026 — `xtask layers`
+
+- [x] `xtask/src/layers.rs`: tabela (driver 0, catalog 1, sql 2, engine 3, automation 4, ui-egui 4 UI; apps e
+  xtask isentos) e motor de regras sobre um modelo sem cargo; `from_metadata` lê `cargo metadata --no-deps`.
+  Oito testes: grafo do BRIEF passa; para cima reprova; mesma camada reprova nos dois sentidos (automation e
+  ui-egui não se conhecem); crate de UI fora da `ui-egui` reprova mesmo como dependência de teste ou de build;
+  UI na `ui-egui` e nos apps passa; crate fora da tabela reprova; leitura do metadata.
+- [x] `xtask/src/main.rs`: tabela de comandos (só `layers`), erro como `String`, sem `anyhow`; alias em
+  `.cargo/config.toml`. `cargo xtask layers` imprime as 9 crates e sai com 0.
+- [x] Portão `--fast` roda `cargo run -p xtask --locked --quiet -- layers` depois do clippy; o `run()` do portão
+  pinta vermelho quando o comando sai com erro (provado em `scripts/quality_gate_test.py` para o portão em
+  geral). Provar o layers reprovando no repositório real exige mudar o grafo, o que muda o `Cargo.lock` e faz
+  o `--locked` falhar antes: a prova fica nos testes do motor.
+- [x] Dependência nova: `serde_json` 1 (com `serde`, `serde_core`, `serde_derive`, `syn`, `quote`,
+  `proc-macro2`, `unicode-ident`, `itoa`, `memchr`, `zmij` no lock, todas MIT OR Apache-2.0 ou equivalentes;
+  cargo-deny verde). Primeira atualização do `Cargo.lock` feita de propósito, sem `--locked`.
+- [x] Revisor (quatro achados, corrigidos antes do commit): o `main.rs` do xtask repetia o `std::env::args()`
+  da CLI (pânico com byte inválido); virou `args_os` com `run(args)` e o mesmo teste de `0xff`. Crate de camada
+  dependendo de app ou xtask passava calada (inalcançável hoje, só binários; abriria com um `lib.rs` num app):
+  virou a violação `OnExempt`, com teste. Doc e mensagem da regra de UI dizem "ui-egui, apps e xtask", como o
+  código faz. `cargo xtask layers` entrou na seção Comandos do `CLAUDE.md`.

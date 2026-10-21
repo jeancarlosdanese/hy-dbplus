@@ -1,4 +1,4 @@
-<!-- FEAT_EM_ANDAMENTO — docs e workspace com cascas em 21/10/2026; próximo: xtask layers -->
+<!-- FEAT_EM_ANDAMENTO — docs, workspace e xtask layers em 21/10/2026; próximo: janela com tema -->
 <!-- PRIO_ALTA -->
 # @file: docs/features/FEAT-002-workspace-e-janela-vazia/context.index.md
 
@@ -34,7 +34,7 @@ cargo-deny, layers).
 5. CLAUDE.md (raiz)           → regras de engenharia e processo
 ```
 
-## Onde está o quê (quando existir)
+## Onde está o quê
 
 ```
 Cargo.toml                    workspace: membros, [workspace.package], [workspace.dependencies], [workspace.lints]

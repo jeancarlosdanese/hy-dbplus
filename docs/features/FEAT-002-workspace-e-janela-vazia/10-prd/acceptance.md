@@ -13,10 +13,11 @@
 
 ## `xtask layers`
 
-- [ ] `cargo xtask layers` imprime a tabela de crates e camadas e sai com 0.
-- [ ] Testes do motor de regras (sem cargo): dependência para cima reprova; crate fora da tabela reprova; `egui`
+- [x] `cargo xtask layers` imprime a tabela de crates e camadas e sai com 0.
+- [x] Testes do motor de regras (sem cargo): dependência para cima reprova; crate fora da tabela reprova; `egui`
       em `engine` reprova; `egui` em `ui-egui` e nos apps passa; dependência de teste segue a mesma regra.
-- [ ] `scripts/quality-gate.sh --fast` roda `cargo xtask layers` e fica vermelho quando ele reprova.
+- [x] `scripts/quality-gate.sh --fast` roda `cargo xtask layers` e fica vermelho quando ele reprova (pelo `run()`
+      do portão; ver impl-notes sobre a prova).
 
 ## Janela
 

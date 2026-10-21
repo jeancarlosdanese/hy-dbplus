@@ -1,0 +1,4 @@
+# @file: .cargo/config.toml
+# `cargo xtask <comando>` roda o binário xtask/ do workspace (M0: só `layers`).
+[alias]
+xtask = "run -p xtask --locked --"

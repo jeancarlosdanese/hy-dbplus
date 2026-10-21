@@ -1,11 +1,10 @@
 # @file: Cargo.toml
 # Workspace do hy-dbplus (docs/BRIEF.md §5). Camadas: driver 0, catalog 1, sql 2, engine 3,
-# automation e ui-egui 4; apps e xtask isentos. `cargo xtask layers` confere (passo seguinte
-# da FEAT-002).
+# automation e ui-egui 4; apps e xtask isentos. `cargo xtask layers` confere.
 
 [workspace]
 resolver = "3"
-members = ["crates/*", "apps/*"]
+members = ["crates/*", "apps/*", "xtask"]
 
 [workspace.package]
 version = "0.1.0"
@@ -26,6 +25,10 @@ hy-dbplus-sql = { path = "crates/sql" }
 hy-dbplus-engine = { path = "crates/engine" }
 hy-dbplus-automation = { path = "crates/automation" }
 hy-dbplus-ui-egui = { path = "crates/ui-egui" }
+
+# Externas. Cada entrada é uma decisão registrada no impl-notes da FEAT que a trouxe.
+# serde_json (MIT OR Apache-2.0): o xtask lê o `cargo metadata` (FEAT-002).
+serde_json = "1"
 
 # Never panic (CLAUDE.md): toda resposta do banco, arquivo e tecla é entrada não
 # confiável. Em teste o clippy.toml libera unwrap, expect, panic e indexação.

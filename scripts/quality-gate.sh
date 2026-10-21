@@ -115,6 +115,8 @@ fi
 if [ -f Cargo.toml ]; then
   run "cargo fmt" cargo fmt --all --check
   run "cargo clippy" cargo clippy --workspace --all-targets --locked -- -D warnings
+  # Camadas (docs/BRIEF.md §5): nada abaixo da UI depende de egui; regras em xtask/src/layers.rs.
+  run "cargo xtask layers" cargo run -p xtask --locked --quiet -- layers
   if [ "$MODE" = "full" ]; then
     run "cargo test" cargo test --workspace --locked
     if tool cargo-deny; then
