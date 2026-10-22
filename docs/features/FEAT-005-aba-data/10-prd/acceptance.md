@@ -1,0 +1,37 @@
+# @file: docs/features/FEAT-005-aba-data/10-prd/acceptance.md
+
+# FEAT-005 — Critérios de aceite
+
+## `catalog`
+
+- [ ] `page_sql("public", "pedido", Some(("total", Desc)), 100, 200)` produz `SELECT * FROM "public"."pedido"
+      ORDER BY "total" DESC LIMIT 100 OFFSET 200`; nomes com aspas duplas saem dobradas (teste puro).
+- [ ] `stats` devolve tamanhos legíveis, `row_count` exato e o comentário (teste com servidor no schema de teste).
+
+## `engine`
+
+- [ ] `load_stats` emite `StatsLoaded` e a segunda chamada sai do cache; `refresh` invalida (teste com driver
+      falso contando queries).
+- [ ] `load_page` emite `PageLoaded { rows, total, page }` com o SQL contendo `ORDER BY`, `LIMIT` e `OFFSET`
+      pedidos (driver falso guarda o último SQL).
+
+## `ui-egui`
+
+- [ ] Clicar no nome de uma tabela na árvore abre a aba Data no centro com cabeçalho e linhas; a seta ao lado
+      continua expandindo as colunas sem abrir a aba.
+- [ ] Clique no cabeçalho ordena (asc → desc → sem ordem) e recarrega a página; `‹ ›` e o tamanho da página
+      recarregam; o contador mostra `início-fim of total rows`.
+- [ ] Selecionar uma linha destaca e mostra os campos no painel direito; sem seleção, o painel mostra
+      `total_size`, `data_size`, `index_size` e `comment`.
+- [ ] `NULL` aparece em itálico e distinto de texto vazio.
+- [ ] Teste `egui_kittest` cobre abrir, ordenar, paginar e selecionar.
+- [ ] Grid com 1000 linhas por página não trava a interface (virtualizado: só as linhas visíveis são desenhadas).
+
+## Portão e CI
+
+- [ ] `scripts/quality-gate.sh --full` verde; cargo-deny verde com `egui_extras`; workflow verde.
+
+## Do Jean
+
+- [ ] Abrir uma tabela com dados reais, ordenar por uma coluna, avançar página, selecionar uma linha e ver os
+      campos e os tamanhos no painel.
