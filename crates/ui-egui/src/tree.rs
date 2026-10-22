@@ -1095,6 +1095,7 @@ mod tests {
             default: None,
             position,
             is_primary_key: pk,
+            ..Default::default()
         };
         ws.columns.insert(
             ("public".into(), "pedidos".into()),

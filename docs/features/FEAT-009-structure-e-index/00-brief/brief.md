@@ -20,7 +20,7 @@ editar nome, tipo ou chave fica para depois.
 
 1. **`catalog::structure`** (camada 1): modelo e carregadores.
    - `Column` ganha `comment: Option<String>` (`col_description`) e `identity: Option<String>`
-     (`attidentity`: `always`/`by default`) e `generated: Option<String>` (`attgenerated`: expressão).
+     (`attidentity`: `ALWAYS`/`BY DEFAULT`) e `generated: Option<String>` (`attgenerated`: expressão).
    - `Constraint { name, kind: PrimaryKey | Unique | Check | ForeignKey | Exclusion, columns: Vec<String>,
      definition: String (pg_get_constraintdef), references: Option<Reference { schema, table, columns,
      on_update, on_delete }> }` de `pg_constraint`.
@@ -58,8 +58,9 @@ editar nome, tipo ou chave fica para depois.
 ## Won't
 
 - Editar nome, tipo, nulabilidade, chave ou índice; `+ Column`; Triggers (o botão fica desabilitado).
-- Tabelas particionadas e herança no DDL (as partições já aparecem nos tamanhos; o DDL da pai sai sem
-  `PARTITION BY`, anotado no texto).
+- Tabelas particionadas, estrangeiras e herança no DDL (as partições já aparecem nos tamanhos; o DDL da pai
+  sai sem `PARTITION BY` e o da estrangeira sem `SERVER`/`OPTIONS`, os dois com aviso em comentário).
+- Collation de coluna no DDL (o `format_type` não a traz) e `WITH NO DATA` de view materializada.
 - Sequências e tipos próprios (enum, domínio) no DDL: só referenciados pelo nome.
 - Navegar pela FK no grid de dados (seta do BRIEF §3.4): M7, com Filters.
 

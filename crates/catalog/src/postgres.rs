@@ -46,12 +46,7 @@ pub async fn tables(conn: &impl Connection, schema: &str) -> Result<Vec<Table>, 
         .map(|i| Table {
             schema: schema.to_owned(),
             name: text(&rows, i, 0),
-            kind: match rows.cell(i, 1) {
-                Some("v") => TableKind::View,
-                Some("m") => TableKind::MaterializedView,
-                Some("f") => TableKind::Foreign,
-                _ => TableKind::Table,
-            },
+            kind: table_kind(rows.cell(i, 1)),
             comment: rows.cell(i, 2).map(str::to_owned),
         })
         .collect())
@@ -67,7 +62,8 @@ pub async fn columns(
         "SELECT a.attname, pg_catalog.format_type(a.atttypid, a.atttypmod), NOT a.attnotnull, \
                 pg_catalog.pg_get_expr(d.adbin, d.adrelid), a.attnum, \
                 EXISTS (SELECT 1 FROM pg_catalog.pg_index i \
-                        WHERE i.indrelid = a.attrelid AND i.indisprimary AND a.attnum = ANY (i.indkey)) \
+                        WHERE i.indrelid = a.attrelid AND i.indisprimary AND a.attnum = ANY (i.indkey)), \
+                pg_catalog.col_description(a.attrelid, a.attnum), a.attidentity, a.attgenerated \
          FROM pg_catalog.pg_attribute a \
          JOIN pg_catalog.pg_class c ON c.oid = a.attrelid \
          JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
@@ -79,15 +75,38 @@ pub async fn columns(
     );
     let rows = conn.query_text(&sql).await?;
     Ok((0..rows.rows.len())
-        .map(|i| Column {
-            name: text(&rows, i, 0),
-            data_type: text(&rows, i, 1),
-            nullable: rows.cell(i, 2) == Some("t"),
-            default: rows.cell(i, 3).map(str::to_owned),
-            position: rows.cell(i, 4).and_then(|v| v.parse().ok()).unwrap_or(0),
-            is_primary_key: rows.cell(i, 5) == Some("t"),
+        .map(|i| {
+            // Coluna gerada guarda a expressão em pg_attrdef: vai em `generated`, não em `default`.
+            let expr = rows.cell(i, 3).map(str::to_owned);
+            let generated = rows.cell(i, 8).is_some_and(|g| matches!(g, "s" | "v"));
+            Column {
+                name: text(&rows, i, 0),
+                data_type: text(&rows, i, 1),
+                nullable: rows.cell(i, 2) == Some("t"),
+                default: if generated { None } else { expr.clone() },
+                position: rows.cell(i, 4).and_then(|v| v.parse().ok()).unwrap_or(0),
+                is_primary_key: rows.cell(i, 5) == Some("t"),
+                comment: rows.cell(i, 6).map(str::to_owned),
+                identity: match rows.cell(i, 7) {
+                    Some("a") => Some("ALWAYS".to_owned()),
+                    Some("d") => Some("BY DEFAULT".to_owned()),
+                    _ => None,
+                },
+                generated: if generated { expr } else { None },
+                generated_virtual: rows.cell(i, 8) == Some("v"),
+            }
         })
         .collect())
+}
+
+/// `relkind` → [`TableKind`], como `tables` e `structure` o leem.
+pub(crate) fn table_kind(relkind: Option<&str>) -> TableKind {
+    match relkind {
+        Some("v") => TableKind::View,
+        Some("m") => TableKind::MaterializedView,
+        Some("f") => TableKind::Foreign,
+        _ => TableKind::Table,
+    }
 }
 
 /// Funções, procedures, agregados e funções de janela de um schema.
