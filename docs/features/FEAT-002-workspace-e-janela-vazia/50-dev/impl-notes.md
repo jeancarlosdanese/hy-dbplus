@@ -10,7 +10,7 @@ _Atualizado em 21/10/2026._
   layers` (`86e3ebc`); tema claro e escuro e janela vazia com eframe; portão `--full` verde com 299 pacotes
   no lock.
 - **Em curso:** nada.
-- **Falta:** push e CI verde nos três sistemas; verificação do Jean (janela e tema).
+- **Falta:** nada. CI verde nos três sistemas e janela conferida pelo Jean em 21/10/2026; FEAT concluída.
 - **Depende de:** nada.
 - **Para retomar:** esta pasta, o `CLAUDE.md` da raiz e o BRIEF §5 a §7.
 

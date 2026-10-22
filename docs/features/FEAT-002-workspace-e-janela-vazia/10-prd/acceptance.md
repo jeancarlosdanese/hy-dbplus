@@ -30,9 +30,9 @@
 
 - [x] `scripts/quality-gate.sh --full` verde na máquina do Jean (fmt, clippy, testes, cargo-deny, gitleaks,
       CLAUDE.md, layers).
-- [ ] Workflow verde no push: `gate` em macOS, `build` em Linux (com as bibliotecas do egui) e Windows.
+- [x] Workflow verde no push: `gate` em macOS (3 min), `build` em Linux (3 min) e Windows (5 min), 21/10/2026.
 
 ## Do Jean
 
-- [ ] Rodar `cargo run -p hy-dbplus` e confirmar a janela e o tema.
-- [ ] Marcar como feitos os itens de "Verificação real (depois do M0)" do aceite da FEAT-001 que o M0 prova.
+- [x] Rodar `cargo run -p hy-dbplus` e confirmar a janela e o tema (captura em 21/10/2026, tema escuro).
+- [x] Marcar como feitos os itens de "Verificação real (depois do M0)" do aceite da FEAT-001 que o M0 prova.

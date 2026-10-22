@@ -32,8 +32,8 @@
 
 ## Verificação real (depois do M0)
 
-- [ ] `cargo clippy` reprova um `unwrap()` fora de teste (lints de never-panic em `[workspace.lints]`).
+- [x] `cargo clippy` reprova um `unwrap()` fora de teste (provado na FEAT-002, 21/10/2026).
 - [ ] Commit que toca `crates/driver/src/` é recusado sem o `process:reviewer` e passa depois dele.
 - [ ] `git push` pela IA é recusado pela trava.
 - [ ] Dependência com licença GPL reprova o `cargo deny check licenses`.
-- [ ] Segredo no stage reprova o gitleaks no `--full`.
+- [x] Segredo no stage reprova o gitleaks no `--full` (`scripts/quality_gate_test.py`).

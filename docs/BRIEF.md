@@ -198,4 +198,5 @@ como a FEAT-001.
 
 1. ~~Aprovar este brief e responder as decisões em aberto.~~ Feito em 2026-10-21.
 2. ~~Processo, portão de qualidade e `CLAUDE.md`.~~ FEAT-001, 2026-10-21.
-3. M0: FEAT-002 (`docs/features/FEAT-002-workspace-e-janela-vazia/`), iniciada em 2026-10-21.
+3. ~~M0: FEAT-002.~~ Concluída em 2026-10-21.
+4. M1: FEAT-003 (`docs/features/FEAT-003-driver-postgres-e-conexoes/`), iniciada em 2026-10-21.

@@ -1,4 +1,4 @@
-<!-- FEAT_EM_ANDAMENTO — docs, workspace, xtask layers e janela em 21/10/2026; falta push, CI e a conferência do Jean -->
+<!-- FEAT_CONCLUIDA — M0 em quatro commits (adb0dfd, 921208b, 86e3ebc, 9e8f2d7); CI verde nos três sistemas e janela conferida pelo Jean em 21/10/2026 -->
 <!-- PRIO_ALTA -->
 # @file: docs/features/FEAT-002-workspace-e-janela-vazia/context.index.md
 
