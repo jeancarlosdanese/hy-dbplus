@@ -8,6 +8,7 @@ mod commit;
 mod connections;
 mod data;
 mod palette;
+mod rail;
 mod record;
 pub mod theme;
 mod tree;

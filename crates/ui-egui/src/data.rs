@@ -5,9 +5,9 @@
 //! ficam travados. Só tabela com chave primária edita; sem ela, aviso na linha de tamanhos.
 
 use egui_extras::{Column as TableColumn, TableBuilder};
-use hy_dbplus_engine::{ConnectionId, Direction, Driver, Order, Page};
+use hy_dbplus_engine::{Direction, Driver, Order, Page};
 
-use crate::app::App;
+use crate::app::{App, DbKey};
 use crate::theme;
 
 const ROW_HEIGHT: f32 = 22.0;
@@ -17,22 +17,22 @@ pub const LOCK_HINT: &str = "Commit ou descarte as alterações antes";
 pub const READ_ONLY_HINT: &str = "sem chave primária: só leitura";
 
 /// O centro da janela quando há uma tabela aberta.
-pub fn show<D>(app: &mut App<D>, ui: &mut egui::Ui, id: &ConnectionId)
+pub fn show<D>(app: &mut App<D>, ui: &mut egui::Ui, key: &DbKey)
 where
     D: Driver + 'static,
     D::Conn: 'static,
 {
     let tokens = theme::current(ui.ctx());
-    let Some(tab) = app.workspaces.get(id).and_then(|ws| ws.data.clone()) else {
+    let Some(tab) = app.workspaces.get(key).and_then(|ws| ws.data.clone()) else {
         return;
     };
-    let editable = app.editable(id);
+    let editable = app.editable(key);
     // Só leitura de verdade: as colunas já chegaram e nenhuma é chave (antes disso é só "ainda não").
-    let columns_known = app.workspaces.get(id).is_some_and(|ws| {
+    let columns_known = app.workspaces.get(key).is_some_and(|ws| {
         ws.columns
             .contains_key(&(tab.schema.clone(), tab.table.clone()))
     });
-    let read_only = tab.rows.is_some() && columns_known && app.key_columns(id).is_empty();
+    let read_only = tab.rows.is_some() && columns_known && app.key_columns(key).is_empty();
     let locked = tab.has_changes();
     let mut next_page: Option<Page> = None;
     let mut select: Option<(usize, egui::Modifiers)> = None;
@@ -263,7 +263,7 @@ where
         };
         let types: Vec<Option<String>> = app
             .workspaces
-            .get(id)
+            .get(key)
             .map(|ws| ws.catalog_columns(&tab.schema, &tab.table, &rows.columns))
             .unwrap_or_default()
             .into_iter()
@@ -413,31 +413,31 @@ where
     });
 
     if let Some(text) = edit_text
-        && let Some(tab) = app.workspaces.get_mut(id).and_then(|ws| ws.data.as_mut())
+        && let Some(tab) = app.workspaces.get_mut(key).and_then(|ws| ws.data.as_mut())
         && let Some(edit) = tab.editing.as_mut()
     {
         edit.text = text;
         edit.focus_pending = false;
     }
     if let Some(confirm) = finish_edit {
-        app.finish_edit(id, confirm);
+        app.finish_edit(key, confirm);
     }
     if let Some((row, col)) = start_edit {
-        app.start_edit(id, row, col);
+        app.start_edit(key, row, col);
     } else if let Some((index, modifiers)) = select {
-        app.select_row(id, index, modifiers);
+        app.select_row(key, index, modifiers);
     }
     if toggle_delete {
-        app.toggle_delete(id);
+        app.toggle_delete(key);
     }
     if open_commit {
-        app.open_commit(id);
+        app.open_commit(key);
     } else if discard {
-        app.discard_changes(id);
+        app.discard_changes(key);
     }
     if retry {
-        app.retry_data(id);
+        app.retry_data(key);
     } else if let Some(page) = next_page {
-        app.load_data_page(id, page);
+        app.load_data_page(key, page);
     }
 }

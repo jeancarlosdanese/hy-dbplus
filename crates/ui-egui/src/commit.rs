@@ -3,19 +3,19 @@
 //! desfeito; conexão caída no COMMIT: a mensagem do driver diz) e as pendências continuam no grid.
 //! Esc ou clique fora fecham a caixa quando nada está rodando.
 
-use hy_dbplus_engine::{ConnectionId, Driver};
+use hy_dbplus_engine::Driver;
 
-use crate::app::App;
+use crate::app::{App, DbKey};
 use crate::theme;
 
-pub fn show<D>(app: &mut App<D>, ctx: &egui::Context, id: &ConnectionId)
+pub fn show<D>(app: &mut App<D>, ctx: &egui::Context, key: &DbKey)
 where
     D: Driver + 'static,
     D::Conn: 'static,
 {
     let Some(dialog) = app
         .workspaces
-        .get(id)
+        .get(key)
         .and_then(|ws| ws.data.as_ref())
         .and_then(|tab| tab.commit.clone())
     else {
@@ -92,8 +92,8 @@ where
         cancel = true;
     }
     if execute {
-        app.execute_changes(id);
+        app.execute_changes(key);
     } else if cancel {
-        app.cancel_commit(id);
+        app.cancel_commit(key);
     }
 }

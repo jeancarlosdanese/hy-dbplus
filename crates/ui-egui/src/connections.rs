@@ -237,9 +237,9 @@ where
                         }
                         Status::Connected { .. } => {
                             if ui.button("Abrir").clicked() {
-                                app.view = crate::app::View::Workspace {
-                                    connection: c.id.clone(),
-                                };
+                                app.focus = Some(c.id.clone());
+                                app.active = app.key_of(&c.id);
+                                app.view = crate::app::View::Workspace;
                             }
                         }
                         _ => {

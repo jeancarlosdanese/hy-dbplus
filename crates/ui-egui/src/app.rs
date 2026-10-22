@@ -46,17 +46,29 @@ pub enum PanelMode {
     Json,
 }
 
-/// Qual tela está na frente.
+/// Qual tela está na frente. O workspace mostra o banco ativo (`App::active`) ou, sem banco
+/// aberto, a conexão em foco (`App::focus`) com o convite ao ⌘K.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum View {
     Connections,
-    Workspace { connection: ConnectionId },
+    Workspace,
 }
 
-/// O banco selecionado numa conexão e o catálogo que a UI já recebeu (tela 3.3).
+/// Um banco aberto: a conexão e o nome do banco. É a chave de `App::workspaces` e o item da
+/// faixa de bancos (FEAT-008).
+pub type DbKey = (ConnectionId, String);
+
+/// O que a UI sabe de uma conexão fora de qualquer banco: o banco que o ⌘K está abrindo e o
+/// erro da última tentativa (tela 3.2, "Nenhum banco selecionado").
+#[derive(Debug, Default, Clone)]
+pub struct ConnState {
+    pub opening: Option<String>,
+    pub error: Option<String>,
+}
+
+/// Um banco aberto (conexão + banco) e o catálogo que a UI já recebeu (tela 3.3).
 #[derive(Debug, Default)]
 pub struct Workspace {
-    pub database: Option<String>,
     pub schemas: Vec<Schema>,
     pub current_schema: Option<String>,
     /// Tabelas e funções por schema, como chegaram do engine.
@@ -318,7 +330,16 @@ pub struct App<D: Driver> {
     pub(crate) deps: Deps<D>,
     pub(crate) view: View,
     pub(crate) status: HashMap<ConnectionId, Status>,
-    pub(crate) workspaces: HashMap<ConnectionId, Workspace>,
+    /// Os bancos abertos, por (conexão, banco).
+    pub(crate) workspaces: HashMap<DbKey, Workspace>,
+    /// A ordem dos bancos abertos na faixa e o selecionado nela.
+    pub(crate) rail: Vec<DbKey>,
+    pub(crate) active: Option<DbKey>,
+    /// A conexão do workspace na tela (a do banco ativo, ou a recém-conectada sem banco).
+    pub(crate) focus: Option<ConnectionId>,
+    pub(crate) conn_state: HashMap<ConnectionId, ConnState>,
+    /// Banco com edição pendente que o × da faixa quer fechar: a confirmação está na tela.
+    pub(crate) confirm_close: Option<DbKey>,
     pub(crate) palette: Option<Palette>,
     /// Painel direito visível (botão na barra superior; abre sozinho na primeira seleção).
     pub(crate) side_panel_open: bool,
@@ -347,6 +368,11 @@ where
             view: View::Connections,
             status: HashMap::new(),
             workspaces: HashMap::new(),
+            rail: Vec::new(),
+            active: None,
+            focus: None,
+            conn_state: HashMap::new(),
+            confirm_close: None,
             palette: None,
             side_panel_open: false,
             panel_mode: PanelMode::default(),
@@ -376,8 +402,9 @@ where
                             databases,
                         },
                     );
-                    self.workspaces.insert(id.clone(), Workspace::default());
-                    self.view = View::Workspace { connection: id };
+                    self.conn_state.insert(id.clone(), ConnState::default());
+                    self.focus = Some(id);
+                    self.view = View::Workspace;
                 }
                 Event::Failed { error, .. } => {
                     self.status.insert(id, Status::Failed(error.to_string()));
@@ -387,10 +414,7 @@ where
                     if self.deps.store.get(&id).is_some() {
                         self.status.insert(id.clone(), Status::Idle);
                     }
-                    self.workspaces.remove(&id);
-                    if self.view == (View::Workspace { connection: id }) {
-                        self.view = View::Connections;
-                    }
+                    self.forget_connection(&id);
                 }
                 Event::DatabaseSelected {
                     database,
@@ -398,17 +422,28 @@ where
                     current_schema,
                     ..
                 } => {
-                    let ws = self.workspaces.entry(id.clone()).or_default();
-                    *ws = Workspace {
-                        database: Some(database.clone()),
-                        schemas,
-                        current_schema: current_schema.clone(),
-                        ..Default::default()
-                    };
-                    if let Some(schema) = current_schema {
-                        ws.loading = true;
-                        self.deps.sessions.load_schema(&id, &database, &schema);
+                    // Banco aberto (ou já estava: o engine responde do cache): entra na faixa e vira
+                    // o ativo. Já aberto na UI, só vira o ativo, sem perder árvore e aba.
+                    let key = (id.clone(), database.clone());
+                    if let Some(state) = self.conn_state.get_mut(&id) {
+                        state.opening = None;
+                        state.error = None;
                     }
+                    if !self.workspaces.contains_key(&key) {
+                        let mut ws = Workspace {
+                            schemas,
+                            current_schema: current_schema.clone(),
+                            ..Default::default()
+                        };
+                        if let Some(schema) = current_schema {
+                            ws.loading = true;
+                            self.deps.sessions.load_schema(&id, &database, &schema);
+                        }
+                        self.workspaces.insert(key.clone(), ws);
+                        self.rail.push(key.clone());
+                    }
+                    self.focus = Some(id);
+                    self.active = Some(key);
                 }
                 Event::SchemaLoaded {
                     database,
@@ -417,11 +452,7 @@ where
                     functions,
                     ..
                 } => {
-                    if let Some(ws) = self
-                        .workspaces
-                        .get_mut(&id)
-                        .filter(|ws| ws.database.as_deref() == Some(database.as_str()))
-                    {
+                    if let Some(ws) = self.workspaces.get_mut(&(id, database)) {
                         ws.objects.insert(schema, (tables, functions));
                         ws.loading = false;
                         ws.error = None;
@@ -434,11 +465,7 @@ where
                     columns,
                     ..
                 } => {
-                    if let Some(ws) = self
-                        .workspaces
-                        .get_mut(&id)
-                        .filter(|ws| ws.database.as_deref() == Some(database.as_str()))
-                    {
+                    if let Some(ws) = self.workspaces.get_mut(&(id, database)) {
                         ws.columns.insert((schema, table), columns);
                     }
                 }
@@ -484,8 +511,9 @@ where
                         tab.error = Some(error.to_string());
                     }
                 }
-                // FEAT-008 passo 1 da UI: a faixa de bancos tira o banco fechado.
-                Event::DatabaseClosed { .. } => {}
+                Event::DatabaseClosed { database, .. } => {
+                    self.forget_database(&(id, database));
+                }
                 Event::ChangesApplied {
                     database,
                     schema,
@@ -504,7 +532,7 @@ where
                             tab.page.clone()
                         });
                     if let Some(page) = page {
-                        self.load_data_page(&id, page);
+                        self.load_data_page(&(id.clone(), database.clone()), page);
                         self.deps
                             .sessions
                             .load_stats(&id, &database, &schema, &table);
@@ -535,18 +563,18 @@ where
                 Event::CatalogFailed {
                     database, error, ..
                 } => {
-                    // Só do banco selecionado, ou da tentativa de abrir o primeiro.
-                    if let Some(ws) = self
-                        .workspaces
-                        .get_mut(&id)
-                        .filter(|ws| ws.database.as_deref().is_none_or(|d| d == database))
-                    {
+                    // Do banco que o ⌘K estava abrindo (vai ao painel da conexão) ou de um banco
+                    // aberto (schema que não carregou: vai à árvore dele).
+                    if let Some(ws) = self.workspaces.get_mut(&(id.clone(), database.clone())) {
                         ws.loading = false;
-                        ws.error = Some(if ws.database.is_none() {
-                            format!("{database}: {error}")
-                        } else {
-                            error.to_string()
-                        });
+                        ws.error = Some(error.to_string());
+                    } else if let Some(state) = self
+                        .conn_state
+                        .get_mut(&id)
+                        .filter(|s| s.opening.as_deref() == Some(database.as_str()))
+                    {
+                        state.opening = None;
+                        state.error = Some(format!("{database}: {error}"));
                     }
                 }
             }
@@ -561,40 +589,106 @@ where
         table: &str,
     ) -> Option<&mut DataTab> {
         self.workspaces
-            .get_mut(id)
-            .filter(|ws| ws.database.as_deref() == Some(database))
+            .get_mut(&(id.to_owned(), database.to_owned()))
             .and_then(|ws| ws.data.as_mut())
             .filter(|tab| tab.schema == schema && tab.table == table)
     }
 
-    /// Abre (ou troca) a tabela da aba Data e pede a primeira página e os tamanhos.
-    pub(crate) fn open_table(&mut self, id: &ConnectionId, schema: &str, table: &str) {
-        let Some(database) = self.workspaces.get(id).and_then(|ws| ws.database.clone()) else {
+    /// Tira um banco da faixa e do mapa; se era o ativo, o último da faixa assume.
+    pub(crate) fn forget_database(&mut self, key: &DbKey) {
+        self.workspaces.remove(key);
+        self.rail.retain(|k| k != key);
+        if self.active.as_ref() == Some(key) {
+            self.active = self.rail.last().cloned();
+            if let Some(active) = &self.active {
+                self.focus = Some(active.0.clone());
+            }
+        }
+    }
+
+    /// Conexão fechada: todos os bancos dela saem; sem banco em foco, volta à lista.
+    fn forget_connection(&mut self, id: &ConnectionId) {
+        let keys: Vec<DbKey> = self.rail.iter().filter(|k| &k.0 == id).cloned().collect();
+        for key in keys {
+            self.forget_database(&key);
+        }
+        self.conn_state.remove(id);
+        if self.focus.as_ref() == Some(id) {
+            self.focus = self.active.as_ref().map(|k| k.0.clone());
+            if self.focus.is_none() {
+                self.view = View::Connections;
+            }
+        }
+    }
+
+    /// O workspace de uma conexão: o ativo, se é dela, senão o primeiro dela na faixa.
+    pub(crate) fn key_of(&self, id: &str) -> Option<DbKey> {
+        self.active
+            .iter()
+            .chain(self.rail.iter())
+            .find(|k| k.0 == id)
+            .cloned()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn workspace_of(&self, id: &str) -> Option<&Workspace> {
+        self.workspaces.get(&self.key_of(id)?)
+    }
+
+    /// Seleciona um banco na faixa.
+    pub(crate) fn activate(&mut self, key: &DbKey) {
+        if self.workspaces.contains_key(key) {
+            self.focus = Some(key.0.clone());
+            self.active = Some(key.clone());
+            self.view = View::Workspace;
+        }
+    }
+
+    /// ⌘K: abre o banco (ou só o seleciona, se já está na faixa).
+    pub(crate) fn open_database(&mut self, id: &ConnectionId, database: &str) {
+        let key = (id.clone(), database.to_owned());
+        if self.workspaces.contains_key(&key) {
+            self.activate(&key);
             return;
-        };
+        }
+        let state = self.conn_state.entry(id.clone()).or_default();
+        state.opening = Some(database.to_owned());
+        state.error = None;
+        self.deps.sessions.select_database(id, database);
+    }
+
+    /// × na faixa: fecha o banco no engine; `DatabaseClosed` o tira da faixa.
+    pub(crate) fn close_database(&mut self, key: &DbKey) {
+        self.deps.sessions.close_database(&key.0, &key.1);
+    }
+
+    /// Abre (ou troca) a tabela da aba Data e pede a primeira página e os tamanhos.
+    pub(crate) fn open_table(&mut self, key: &DbKey, schema: &str, table: &str) {
+        if !self.workspaces.contains_key(key) {
+            return;
+        }
         // Com edição pendente a aba fica travada (a árvore desabilita as outras tabelas, com a dica).
-        if self.has_pending_changes(id) {
+        if self.has_pending_changes(key) {
             return;
         }
         let tab = DataTab::new(schema, table);
         let page = tab.page.clone();
-        if let Some(ws) = self.workspaces.get_mut(id) {
+        if let Some(ws) = self.workspaces.get_mut(key) {
             ws.data = Some(tab);
         }
+        let (id, database) = key;
         self.deps
             .sessions
-            .load_page(id, &database, schema, table, page);
-        self.deps.sessions.load_stats(id, &database, schema, table);
+            .load_page(id, database, schema, table, page);
+        self.deps.sessions.load_stats(id, database, schema, table);
     }
 
     /// Recarrega a aba Data com a página pedida (ordem, limite, offset).
-    pub(crate) fn load_data_page(&mut self, id: &ConnectionId, page: Page) {
-        let Some(ws) = self.workspaces.get_mut(id) else {
+    pub(crate) fn load_data_page(&mut self, key: &DbKey, page: Page) {
+        let Some(ws) = self.workspaces.get_mut(key) else {
             return;
         };
-        let Some(database) = ws.database.clone() else {
-            return;
-        };
+        let (id, database) = key;
         let Some(tab) = ws.data.as_mut() else { return };
         if tab.has_changes() {
             return;
@@ -607,39 +701,31 @@ where
         let (schema, table) = (tab.schema.clone(), tab.table.clone());
         self.deps
             .sessions
-            .load_page(id, &database, &schema, &table, page);
+            .load_page(id, database, &schema, &table, page);
     }
 
     /// Repete a página pedida (ou a atual) e, se os tamanhos ainda não vieram, os stats.
-    pub(crate) fn retry_data(&mut self, id: &ConnectionId) {
-        let Some(ws) = self.workspaces.get(id) else {
-            return;
-        };
-        let Some(database) = ws.database.clone() else {
+    pub(crate) fn retry_data(&mut self, key: &DbKey) {
+        let Some(ws) = self.workspaces.get(key) else {
             return;
         };
         let Some(tab) = ws.data.as_ref() else { return };
         let (schema, table, stats_missing) =
             (tab.schema.clone(), tab.table.clone(), tab.stats.is_none());
         let page = tab.requested.clone().unwrap_or_else(|| tab.page.clone());
-        self.load_data_page(id, page);
+        self.load_data_page(key, page);
         if stats_missing {
             self.deps
                 .sessions
-                .load_stats(id, &database, &schema, &table);
+                .load_stats(&key.0, &key.1, &schema, &table);
         }
     }
 
     /// Clique numa linha do grid: simples seleciona só ela; ⌘ (Ctrl fora do macOS) alterna; ⇧ estende
     /// da última clicada. Só a primeira seleção (de nenhuma linha para alguma) abre o painel: depois, o
     /// botão "Painel" manda, e o clique numa linha não o reabre.
-    pub(crate) fn select_row(
-        &mut self,
-        id: &ConnectionId,
-        index: usize,
-        modifiers: egui::Modifiers,
-    ) {
-        let Some(tab) = self.workspaces.get_mut(id).and_then(|ws| ws.data.as_mut()) else {
+    pub(crate) fn select_row(&mut self, key: &DbKey, index: usize, modifiers: egui::Modifiers) {
+        let Some(tab) = self.workspaces.get_mut(key).and_then(|ws| ws.data.as_mut()) else {
             return;
         };
         let was_empty = tab.selected_rows.is_empty();
@@ -670,17 +756,17 @@ where
         }
     }
 
-    pub(crate) fn has_pending_changes(&self, id: &ConnectionId) -> bool {
+    pub(crate) fn has_pending_changes(&self, key: &DbKey) -> bool {
         self.workspaces
-            .get(id)
+            .get(key)
             .and_then(|ws| ws.data.as_ref())
             .is_some_and(DataTab::has_changes)
     }
 
     /// As colunas da chave primária da tabela aberta, na ordem da tabela; vazio sem cache ou sem
     /// chave (tabela só leitura).
-    pub(crate) fn key_columns(&self, id: &ConnectionId) -> Vec<String> {
-        let Some(ws) = self.workspaces.get(id) else {
+    pub(crate) fn key_columns(&self, key: &DbKey) -> Vec<String> {
+        let Some(ws) = self.workspaces.get(key) else {
             return Vec::new();
         };
         let Some(tab) = ws.data.as_ref() else {
@@ -696,25 +782,27 @@ where
 
     /// A tabela aberta aceita edição: tem chave primária (colunas já em cache), página na tela e
     /// nenhuma página em voo (a pendência é por índice da página; uma página nova a invalidaria).
-    pub(crate) fn editable(&self, id: &ConnectionId) -> bool {
+    pub(crate) fn editable(&self, key: &DbKey) -> bool {
         let settled = self
             .workspaces
-            .get(id)
+            .get(key)
             .and_then(|ws| ws.data.as_ref())
             .is_some_and(|tab| tab.rows.is_some() && !tab.loading && tab.requested.is_none());
-        settled && !self.key_columns(id).is_empty()
+        settled && !self.key_columns(key).is_empty()
     }
 
-    fn data_tab(&mut self, id: &ConnectionId) -> Option<&mut DataTab> {
-        self.workspaces.get_mut(id).and_then(|ws| ws.data.as_mut())
+    fn data_tab(&mut self, key: &DbKey) -> Option<&mut DataTab> {
+        self.workspaces.get_mut(key).and_then(|ws| ws.data.as_mut())
     }
 
     /// Duplo clique numa célula: abre a edição com o valor atual (pendente ou da página).
-    pub(crate) fn start_edit(&mut self, id: &ConnectionId, row: usize, col: usize) {
-        if !self.editable(id) {
+    pub(crate) fn start_edit(&mut self, key: &DbKey, row: usize, col: usize) {
+        if !self.editable(key) {
             return;
         }
-        let Some(tab) = self.data_tab(id) else { return };
+        let Some(tab) = self.data_tab(key) else {
+            return;
+        };
         if tab.deleted.contains(&row) {
             return;
         }
@@ -733,8 +821,10 @@ where
 
     /// Fim da edição da célula: Enter (ou perder o foco) confirma como pendente, Esc descarta. Abrir
     /// uma célula NULL e sair sem digitar não é mudança: texto vazio sobre NULL continua NULL.
-    pub(crate) fn finish_edit(&mut self, id: &ConnectionId, confirm: bool) {
-        let Some(tab) = self.data_tab(id) else { return };
+    pub(crate) fn finish_edit(&mut self, key: &DbKey, confirm: bool) {
+        let Some(tab) = self.data_tab(key) else {
+            return;
+        };
         let Some(edit) = tab.editing.take() else {
             return;
         };
@@ -749,11 +839,13 @@ where
     }
 
     /// Campo do Form: o valor vale para todas as linhas selecionadas (o lote do Update).
-    pub(crate) fn set_field(&mut self, id: &ConnectionId, column: &str, value: Option<String>) {
-        if !self.editable(id) {
+    pub(crate) fn set_field(&mut self, key: &DbKey, column: &str, value: Option<String>) {
+        if !self.editable(key) {
             return;
         }
-        let Some(tab) = self.data_tab(id) else { return };
+        let Some(tab) = self.data_tab(key) else {
+            return;
+        };
         let Some(col) = tab
             .rows
             .as_ref()
@@ -768,19 +860,23 @@ where
         }
     }
 
-    pub(crate) fn revert_field(&mut self, id: &ConnectionId, column: &str) {
-        let Some(tab) = self.data_tab(id) else { return };
+    pub(crate) fn revert_field(&mut self, key: &DbKey, column: &str) {
+        let Some(tab) = self.data_tab(key) else {
+            return;
+        };
         for row in tab.selected_rows.clone() {
             tab.revert_cell(row, column);
         }
     }
 
     /// ⌫ ou o botão Delete: marca as linhas selecionadas para apagar; todas já marcadas, desmarca.
-    pub(crate) fn toggle_delete(&mut self, id: &ConnectionId) {
-        if !self.editable(id) {
+    pub(crate) fn toggle_delete(&mut self, key: &DbKey) {
+        if !self.editable(key) {
             return;
         }
-        let Some(tab) = self.data_tab(id) else { return };
+        let Some(tab) = self.data_tab(key) else {
+            return;
+        };
         if tab.selected_rows.is_empty() {
             return;
         }
@@ -797,10 +893,12 @@ where
 
     /// Commit (botão ou ⌘S): confirma a célula em edição, monta o lote e abre a caixa com o SQL
     /// exato; o usuário executa.
-    pub(crate) fn open_commit(&mut self, id: &ConnectionId) {
-        self.finish_edit(id, true);
-        let keys = self.key_columns(id);
-        let Some(tab) = self.data_tab(id) else { return };
+    pub(crate) fn open_commit(&mut self, key: &DbKey) {
+        self.finish_edit(key, true);
+        let keys = self.key_columns(key);
+        let Some(tab) = self.data_tab(key) else {
+            return;
+        };
         if !tab.has_changes() || tab.commit.is_some() {
             return;
         }
@@ -826,12 +924,9 @@ where
     }
 
     /// Executar na caixa: manda o lote ao engine; o resultado chega por evento.
-    pub(crate) fn execute_changes(&mut self, id: &ConnectionId) {
-        let keys = self.key_columns(id);
-        let Some(ws) = self.workspaces.get_mut(id) else {
-            return;
-        };
-        let Some(database) = ws.database.clone() else {
+    pub(crate) fn execute_changes(&mut self, key: &DbKey) {
+        let keys = self.key_columns(key);
+        let Some(ws) = self.workspaces.get_mut(key) else {
             return;
         };
         let Some(tab) = ws.data.as_mut() else { return };
@@ -855,11 +950,11 @@ where
         let (schema, table) = (tab.schema.clone(), tab.table.clone());
         self.deps
             .sessions
-            .apply_changes(id, &database, &schema, &table, &changes);
+            .apply_changes(&key.0, &key.1, &schema, &table, &changes);
     }
 
-    pub(crate) fn cancel_commit(&mut self, id: &ConnectionId) {
-        if let Some(tab) = self.data_tab(id)
+    pub(crate) fn cancel_commit(&mut self, key: &DbKey) {
+        if let Some(tab) = self.data_tab(key)
             && !tab.commit.as_ref().is_some_and(|d| d.running)
         {
             tab.commit = None;
@@ -867,8 +962,8 @@ where
     }
 
     /// Descartar: limpa as pendências sem tocar no banco.
-    pub(crate) fn discard_changes(&mut self, id: &ConnectionId) {
-        if let Some(tab) = self.data_tab(id)
+    pub(crate) fn discard_changes(&mut self, key: &DbKey) {
+        if let Some(tab) = self.data_tab(key)
             && tab.commit.is_none()
         {
             tab.clear_changes();
@@ -885,7 +980,7 @@ where
         self.drain_events();
         match self.view.clone() {
             View::Connections => crate::connections::show(self, ui),
-            View::Workspace { connection } => crate::workspace::show(self, ui, &connection),
+            View::Workspace => crate::workspace::show(self, ui),
         }
     }
 }
@@ -978,12 +1073,8 @@ pub(crate) mod tests {
             matches!(&status, Status::Connected { databases, .. } if !databases.is_empty()),
             "{status:?}"
         );
-        assert_eq!(
-            app.view,
-            View::Workspace {
-                connection: c.id.clone()
-            }
-        );
+        assert_eq!(app.view, View::Workspace);
+        assert_eq!(app.focus.as_deref(), Some(c.id.as_str()));
         app.deps.sessions.disconnect(&c.id);
         app.drain_events();
         assert_eq!(app.view, View::Connections);

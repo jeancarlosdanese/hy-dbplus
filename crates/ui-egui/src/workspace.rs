@@ -1,31 +1,35 @@
 //! Telas 3.2, 3.3 e 3.4: conexão aberta. Barra superior colorida pelo ambiente com `AMBIENTE |
-//! PostgreSQL <versão> : conexão : banco`, painel esquerdo com a árvore ou o convite ao ⌘K, centro com a
-//! aba Data da tabela aberta (ou o convite) e painel direito com os tamanhos ou os campos da linha, que o
-//! botão "Painel" esconde e mostra.
+//! PostgreSQL <versão> : conexão : banco`, a faixa de bancos abertos (FEAT-008), o painel esquerdo com
+//! a árvore do banco ativo (ou o convite ao ⌘K), o centro com a aba Data da tabela aberta (ou o
+//! convite) e o painel direito com os campos da linha, que o botão "Painel" esconde e mostra.
 
-use hy_dbplus_engine::{ConnectionId, Driver};
+use hy_dbplus_engine::Driver;
 
 use crate::app::{App, Status, View};
-use crate::{commit, data, palette, record, theme, tree};
+use crate::{commit, data, palette, rail, record, theme, tree};
 
-pub fn show<D>(app: &mut App<D>, ui: &mut egui::Ui, id: &ConnectionId)
+pub fn show<D>(app: &mut App<D>, ui: &mut egui::Ui)
 where
     D: Driver + 'static,
     D::Conn: 'static,
 {
     let tokens = theme::current(ui.ctx());
-    let Some(connection) = app.deps.store.get(id).cloned() else {
+    let Some(id) = app.focus.clone() else {
         app.view = View::Connections;
         return;
     };
-    let Status::Connected { server_version, .. } = app.status_of(id) else {
+    let Some(connection) = app.deps.store.get(&id).cloned() else {
+        app.view = View::Connections;
+        return;
+    };
+    let Status::Connected { server_version, .. } = app.status_of(&id) else {
         app.view = View::Connections;
         return;
     };
     if ui.input_mut(|input| input.consume_shortcut(&palette::shortcut())) {
         palette::toggle(app);
     }
-    let database = app.workspaces.get(id).and_then(|ws| ws.database.clone());
+    let active = app.active.clone().filter(|k| k.0 == id);
     let color = theme::tag_color(connection.tag);
     egui::Panel::top("workspace-top")
         .frame(egui::Frame::new().fill(color).inner_margin(8.0))
@@ -40,7 +44,7 @@ where
                     server_version,
                     connection.name
                 );
-                if let Some(db) = &database {
+                if let Some((_, db)) = &active {
                     title.push_str(&format!(" : {db}"));
                 }
                 ui.label(
@@ -50,7 +54,7 @@ where
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("Desconectar").clicked() {
-                        app.deps.sessions.disconnect(id);
+                        app.deps.sessions.disconnect(&id);
                     }
                     if ui.button("Banco ⌘K").clicked() {
                         palette::toggle(app);
@@ -71,6 +75,7 @@ where
                 });
             });
         });
+    rail::show(app, ui);
     egui::Panel::left("workspace-left")
         .default_size(260.0)
         .show(ui, |ui| {
@@ -81,22 +86,18 @@ where
                 ui.label(egui::RichText::new("History").color(tokens.text_muted));
             });
             ui.separator();
-            if database.is_some() {
-                tree::show(app, ui, id);
+            if let Some(key) = &active {
+                tree::show(app, ui, key);
             } else {
-                let (loading, error) = app
-                    .workspaces
-                    .get(id)
-                    .map(|ws| (ws.loading, ws.error.clone()))
-                    .unwrap_or_default();
-                if loading {
+                let state = app.conn_state.get(&id).cloned().unwrap_or_default();
+                if state.opening.is_some() {
                     ui.label(egui::RichText::new("Abrindo banco…").color(tokens.text_muted));
                 } else {
                     ui.label(
                         egui::RichText::new("Nenhum banco selecionado.").color(tokens.text_muted),
                     );
                 }
-                if let Some(error) = error {
+                if let Some(error) = state.error {
                     ui.colored_label(theme::error_color(), error);
                 }
                 if ui.button("Escolher banco (⌘K)").clicked() {
@@ -104,16 +105,18 @@ where
                 }
             }
         });
-    let data_tab = app.workspaces.get(id).and_then(|ws| ws.data.clone());
+    let data_tab = active
+        .as_ref()
+        .and_then(|key| app.workspaces.get(key))
+        .and_then(|ws| ws.data.clone());
     if app.side_panel_open {
         egui::Panel::right("workspace-right")
             .default_size(300.0)
             .min_size(200.0)
             .max_size(640.0)
-            .show(ui, |ui| {
-                if data_tab.is_some() {
-                    record::show(app, ui, id);
-                } else {
+            .show(ui, |ui| match (&active, &data_tab) {
+                (Some(key), Some(_)) => record::show(app, ui, key),
+                _ => {
                     ui.centered_and_justified(|ui| {
                         ui.label(
                             egui::RichText::new("Nenhuma tabela aberta").color(tokens.text_muted),
@@ -122,20 +125,24 @@ where
                 }
             });
     }
-    if data_tab.is_some() {
-        data::show(app, ui, id);
-        commit::show(app, ui.ctx(), id);
-    } else {
-        egui::CentralPanel::default_margins().show(ui, |ui| {
-            ui.centered_and_justified(|ui| {
-                let text = if database.is_some() {
-                    "Escolha uma tabela na árvore."
-                } else {
-                    "Nenhum banco selecionado. ⌘K para escolher."
-                };
-                ui.label(egui::RichText::new(text).color(tokens.text_muted));
+    match (&active, &data_tab) {
+        (Some(key), Some(_)) => {
+            data::show(app, ui, key);
+            commit::show(app, ui.ctx(), key);
+        }
+        _ => {
+            egui::CentralPanel::default_margins().show(ui, |ui| {
+                ui.centered_and_justified(|ui| {
+                    let text = if active.is_some() {
+                        "Escolha uma tabela na árvore."
+                    } else {
+                        "Nenhum banco selecionado. ⌘K para escolher."
+                    };
+                    ui.label(egui::RichText::new(text).color(tokens.text_muted));
+                });
             });
-        });
+        }
     }
-    palette::show(app, ui.ctx(), id);
+    rail::confirm(app, ui.ctx());
+    palette::show(app, ui.ctx(), &id);
 }

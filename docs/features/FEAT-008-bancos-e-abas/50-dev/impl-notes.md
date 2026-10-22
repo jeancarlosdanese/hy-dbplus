@@ -8,8 +8,10 @@ _Atualizado em 22/10/2026._
 
 - **Feito:** documentação; `engine::close_database` + `DatabaseClosed` (teste: fecha só aquele banco, os
   outros seguem do cache, o fechado reabre pelo servidor, desconhecido não avisa).
-- **Em curso:** revisão e commit do engine.
-- **Falta:** UI passo 1 (workspace por banco e faixa); UI passo 2 (abas); verificação do Jean.
+- **Feito também:** UI passo 1: workspace por (conexão, banco), faixa de bancos, ⌘K acumulando, foco por
+  conexão, roteamento dos eventos, × com confirmação (teste de dois bancos).
+- **Em curso:** revisão e commit da UI passo 1.
+- **Falta:** UI passo 2 (abas por tabela); verificação do Jean.
 - **Depende de:** FEAT-007 (edição por aba).
 - **Para retomar:** esta pasta, a captura do TablePlus citada no brief e o `CLAUDE.md`.
 
@@ -61,3 +63,27 @@ _Atualizado em 22/10/2026._
   banco entra aberto depois. A faixa só ganha o item no `DatabaseSelected`, então o × nunca aparece
   enquanto abre; se a UI um dia mostrar "abrindo…" com ×, tem de repetir o `close_database` ao receber o
   `DatabaseSelected` de um banco que já fechou.
+
+### 22/10/2026 — UI passo 1: workspace por banco e faixa
+
+- [x] `App`: `workspaces: HashMap<DbKey, Workspace>` (`DbKey = (ConnectionId, String)`), `rail` (ordem da
+  faixa), `active` (banco selecionado), `focus` (conexão do workspace na tela, mesmo sem banco),
+  `conn_state` (banco abrindo e erro da última tentativa, fora de qualquer banco), `confirm_close`.
+  `View::Workspace` sem conexão; `Workspace` perdeu `database` (está na chave).
+- [x] Eventos: `DatabaseSelected` cria o workspace e o põe na faixa só se ainda não existe (banco já aberto só
+  vira o ativo, sem perder árvore e aba); `CatalogFailed` vai ao workspace do banco (schema que não carregou)
+  ou ao `conn_state` (banco que não abriu); `DatabaseClosed` tira da faixa (`forget_database`, o último da
+  faixa assume); `Disconnected` tira todos os bancos da conexão e, sem foco, volta à lista.
+- [x] `rail.rs`: item por banco com cor do ambiente, nome do banco e da conexão, × (confirmação por `Modal`
+  quando há pendência; "Descartar e fechar" chama `close_database`). Rótulos não selecionáveis para o clique
+  chegar ao item.
+- [x] `workspace.rs` por `focus`: barra superior com o banco ativo, faixa, árvore do ativo (ou "Abrindo
+  banco…"/"Nenhum banco selecionado." com o erro do `conn_state`), centro e painel do ativo.
+- [x] `tree`, `data`, `record`, `commit` recebem `&DbKey`; a paleta chama `App::open_database` (já aberto só
+  seleciona) e perdeu a trava da FEAT-007 (trocar de banco não zera mais nada); "Abrir" na lista foca a
+  conexão e o primeiro banco dela na faixa.
+- [x] Testes: `dois_bancos_na_faixa_trocam_arvore_e_aba_e_fecham_com_confirmacao`; os demais migrados para a
+  chave (`workspace_of(id)` nos testes). Os testes do grid ganharam janela de 1400 px: com a faixa, a célula
+  "a" caía sob o painel direito nos 800 px padrão e o clique não chegava ao grid.
+- Fica para o passo 2: "Desconectar" com pendência sem confirmação (hoje fecha tudo); `open_table` ainda troca
+  a tabela da aba única e mantém a trava de trocar de tabela.

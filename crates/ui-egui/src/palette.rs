@@ -20,8 +20,6 @@ where
         app.palette = None;
         return;
     };
-    // Trocar de banco zera o workspace: com edição pendente a paleta avisa e não troca.
-    let locked = app.has_pending_changes(id);
     let Some(palette) = app.palette.as_mut() else {
         return;
     };
@@ -53,9 +51,6 @@ where
                 palette.focus_pending = false;
             }
             ui.separator();
-            if locked {
-                ui.colored_label(theme::error_color(), crate::data::LOCK_HINT);
-            }
             if matches.is_empty() {
                 ui.label(
                     egui::RichText::new("Nenhum banco com esse nome.").color(tokens.text_muted),
@@ -82,9 +77,9 @@ where
                 }
             });
         });
-    if let Some(database) = chosen.filter(|_| !locked) {
+    if let Some(database) = chosen {
         app.palette = None;
-        select_database(app, id, &database);
+        app.open_database(id, &database);
     } else if close {
         app.palette = None;
     }
@@ -100,16 +95,4 @@ pub fn toggle<D: Driver>(app: &mut App<D>) {
             ..Palette::default()
         })
     };
-}
-
-pub fn select_database<D>(app: &mut App<D>, id: &ConnectionId, database: &str)
-where
-    D: Driver + 'static,
-    D::Conn: 'static,
-{
-    if let Some(ws) = app.workspaces.get_mut(id) {
-        ws.loading = true;
-        ws.error = None;
-    }
-    app.deps.sessions.select_database(id, database);
 }

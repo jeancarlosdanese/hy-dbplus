@@ -2,28 +2,26 @@
 //! tabela expansível até as colunas `nome  tipo`, chave primária com ícone, busca e o seletor de
 //! schema no rodapé do painel.
 
-use hy_dbplus_engine::{ConnectionId, Driver, TableKind};
+use hy_dbplus_engine::{Driver, TableKind};
 
-use crate::app::App;
+use crate::app::{App, DbKey};
 use crate::theme;
 
-pub fn show<D>(app: &mut App<D>, ui: &mut egui::Ui, id: &ConnectionId)
+pub fn show<D>(app: &mut App<D>, ui: &mut egui::Ui, key: &DbKey)
 where
     D: Driver + 'static,
     D::Conn: 'static,
 {
     let tokens = theme::current(ui.ctx());
-    let Some(ws) = app.workspaces.get(id) else {
+    let Some(ws) = app.workspaces.get(key) else {
         return;
     };
-    let Some(database) = ws.database.clone() else {
-        return;
-    };
+    let (id, database) = key.clone();
     let schemas: Vec<String> = ws.schemas.iter().map(|s| s.name.clone()).collect();
     let current = ws.current_schema.clone();
     // Com edição pendente, trocar de tabela perderia o lote e recarregar esvaziaria as colunas (e a
     // chave primária) da tabela aberta: os dois ficam desabilitados com a dica.
-    let locked = app.has_pending_changes(id);
+    let locked = app.has_pending_changes(key);
 
     // Rodapé: seletor de schema.
     let mut chosen_schema: Option<String> = None;
@@ -52,31 +50,31 @@ where
                 .on_disabled_hover_text(crate::data::LOCK_HINT)
                 .clicked()
             {
-                app.deps.sessions.refresh(id, &database);
+                app.deps.sessions.refresh(&id, &database);
                 if let Some(schema) = &current {
-                    if let Some(ws) = app.workspaces.get_mut(id) {
+                    if let Some(ws) = app.workspaces.get_mut(key) {
                         ws.objects.remove(schema);
                         ws.columns.clear();
                         ws.expanded.clear(); // tabela aberta pede as colunas de novo
                         ws.loading = true;
                     }
-                    app.deps.sessions.load_schema(id, &database, schema);
+                    app.deps.sessions.load_schema(&id, &database, schema);
                 }
             }
         });
     });
     if let Some(schema) = chosen_schema {
-        if let Some(ws) = app.workspaces.get_mut(id) {
+        if let Some(ws) = app.workspaces.get_mut(key) {
             ws.current_schema = Some(schema.clone());
             ws.expanded.clear();
             ws.loading = !ws.objects.contains_key(&schema);
         }
-        app.deps.sessions.load_schema(id, &database, &schema);
+        app.deps.sessions.load_schema(&id, &database, &schema);
     }
 
     // Busca e a árvore.
     egui::CentralPanel::default().show(ui, |ui| {
-        let Some(ws) = app.workspaces.get_mut(id) else {
+        let Some(ws) = app.workspaces.get_mut(key) else {
             return;
         };
         ui.add(
@@ -93,7 +91,7 @@ where
                 ws.error = None;
                 ws.expanded.clear();
                 ws.loading = true;
-                app.deps.sessions.load_schema(id, &database, &schema);
+                app.deps.sessions.load_schema(&id, &database, &schema);
             }
             return;
         }
@@ -217,10 +215,10 @@ where
         for table in to_load {
             app.deps
                 .sessions
-                .load_columns(id, &database, &schema, &table);
+                .load_columns(&id, &database, &schema, &table);
         }
         if let Some(table) = to_open {
-            app.open_table(id, &schema, &table);
+            app.open_table(key, &schema, &table);
         }
     });
 }
@@ -433,9 +431,7 @@ mod tests {
         crate::connections::connect(&mut app, &c);
         let id = c.id.clone();
         let mut harness = Harness::new_ui_state(|ui, app: &mut App<FakeDriver>| app.ui(ui), app);
-        wait_for(&mut harness, "Connected", |app| {
-            matches!(app.view, View::Workspace { .. })
-        });
+        wait_for(&mut harness, "Connected", |app| app.view == View::Workspace);
         harness.get_by_label("Nenhum banco selecionado.");
 
         // ⌘K abre a paleta com os bancos; escolher "loja" abre o banco e carrega public.
@@ -443,8 +439,7 @@ mod tests {
         harness.step();
         harness.get_by_label("loja").click();
         wait_for(&mut harness, "SchemaLoaded", |app| {
-            app.workspaces
-                .get(&id)
+            app.workspace_of(&id)
                 .is_some_and(|ws| ws.objects.contains_key("public"))
         });
         harness.get_by_label_contains(": loja");
@@ -460,7 +455,7 @@ mod tests {
         // Expandir a tabela pede as colunas uma vez; a chave primária tem o ícone.
         harness.get_all_by_label("▸").next().unwrap().click();
         wait_for(&mut harness, "ColumnsLoaded", |app| {
-            app.workspaces.get(&id).is_some_and(|ws| {
+            app.workspace_of(&id).is_some_and(|ws| {
                 ws.columns
                     .contains_key(&("public".to_owned(), "pedido".to_owned()))
             })
@@ -487,17 +482,26 @@ mod tests {
         harness.get_by_label("app").click_accesskit();
         harness.step();
         assert_eq!(
-            harness.state().workspaces[&id].current_schema.as_deref(),
+            harness
+                .state()
+                .workspace_of(&id)
+                .unwrap()
+                .current_schema
+                .as_deref(),
             Some("app"),
             "clique no schema"
         );
         wait_for(&mut harness, "schema app", |app| {
-            app.workspaces
-                .get(&id)
+            app.workspace_of(&id)
                 .is_some_and(|ws| ws.objects.contains_key("app"))
         });
         assert_eq!(
-            harness.state().workspaces[&id].current_schema.as_deref(),
+            harness
+                .state()
+                .workspace_of(&id)
+                .unwrap()
+                .current_schema
+                .as_deref(),
             Some("app")
         );
         assert_eq!(queries.load(Ordering::SeqCst), 6);
@@ -514,15 +518,12 @@ mod tests {
         crate::connections::connect(&mut app, &c);
         let id = c.id.clone();
         let mut harness = Harness::new_ui_state(|ui, app: &mut App<FakeDriver>| app.ui(ui), app);
-        wait_for(&mut harness, "Connected", |app| {
-            matches!(app.view, View::Workspace { .. })
-        });
+        wait_for(&mut harness, "Connected", |app| app.view == View::Workspace);
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::K);
         harness.step();
         harness.get_by_label("loja").click();
         wait_for(&mut harness, "SchemaLoaded", |app| {
-            app.workspaces
-                .get(&id)
+            app.workspace_of(&id)
                 .is_some_and(|ws| ws.objects.contains_key("public"))
         });
 
@@ -536,12 +537,12 @@ mod tests {
         }
         harness.get_by_label("quebrado").click_accesskit();
         wait_for(&mut harness, "CatalogFailed", |app| {
-            app.workspaces.get(&id).is_some_and(|ws| ws.error.is_some())
+            app.workspace_of(&id).is_some_and(|ws| ws.error.is_some())
         });
         harness.get_by_label_contains("permission denied");
         assert!(harness.state().deps.sessions.is_open(&id));
         assert_eq!(
-            harness.state().workspaces[&id].database.as_deref(),
+            harness.state().active.as_ref().map(|k| k.1.as_str()),
             Some("loja")
         );
         let before = queries.load(Ordering::SeqCst);
@@ -550,7 +551,7 @@ mod tests {
         harness.get_by_label("Tentar de novo").click();
         harness.step();
         wait_for(&mut harness, "nova tentativa", |app| {
-            app.workspaces.get(&id).is_some_and(|ws| ws.error.is_some())
+            app.workspace_of(&id).is_some_and(|ws| ws.error.is_some())
         });
         assert!(
             queries.load(Ordering::SeqCst) > before,
@@ -568,14 +569,12 @@ mod tests {
         crate::connections::connect(&mut app, &c);
         let id = c.id.clone();
         let mut harness = Harness::new_ui_state(|ui, app: &mut App<FakeDriver>| app.ui(ui), app);
-        wait_for(&mut harness, "Connected", |app| {
-            matches!(app.view, View::Workspace { .. })
-        });
+        wait_for(&mut harness, "Connected", |app| app.view == View::Workspace);
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::K);
         harness.step();
         harness.get_by_label("template0").click();
         wait_for(&mut harness, "CatalogFailed", |app| {
-            app.workspaces.get(&id).is_some_and(|ws| ws.error.is_some())
+            app.conn_state.get(&id).is_some_and(|s| s.error.is_some())
         });
         harness.get_by_label_contains("template0: ");
         harness.get_by_label_contains("not currently accepting");
@@ -595,34 +594,28 @@ mod tests {
         crate::connections::connect(&mut app, &c);
         let id = c.id.clone();
         let mut harness = Harness::new_ui_state(|ui, app: &mut App<FakeDriver>| app.ui(ui), app);
-        wait_for(&mut harness, "Connected", |app| {
-            matches!(app.view, View::Workspace { .. })
-        });
+        wait_for(&mut harness, "Connected", |app| app.view == View::Workspace);
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::K);
         harness.step();
         harness.get_by_label("loja").click();
         wait_for(&mut harness, "SchemaLoaded", |app| {
-            app.workspaces
-                .get(&id)
+            app.workspace_of(&id)
                 .is_some_and(|ws| ws.objects.contains_key("public"))
         });
         harness.get_all_by_label("▸").next().unwrap().click();
         wait_for(&mut harness, "ColumnsLoaded", |app| {
-            app.workspaces
-                .get(&id)
+            app.workspace_of(&id)
                 .is_some_and(|ws| !ws.columns.is_empty())
         });
         harness.get_by_label("🔑 id");
         let before = queries.load(Ordering::SeqCst);
         harness.get_by_label("↻").click();
         wait_for(&mut harness, "cache esvaziado", |app| {
-            app.workspaces
-                .get(&id)
+            app.workspace_of(&id)
                 .is_some_and(|ws| ws.columns.is_empty())
         });
         wait_for(&mut harness, "colunas de volta", |app| {
-            app.workspaces
-                .get(&id)
+            app.workspace_of(&id)
                 .is_some_and(|ws| !ws.columns.is_empty())
         });
         harness.get_by_label("🔑 id");
@@ -641,11 +634,8 @@ mod tests {
         let c = Connection::new("pg-localhost", Tag::Local, ConnectionConfig::default());
         app.deps.store.upsert(c.clone());
         crate::connections::connect(&mut app, &c);
-        let id = c.id.clone();
         let mut harness = Harness::new_ui_state(|ui, app: &mut App<FakeDriver>| app.ui(ui), app);
-        wait_for(&mut harness, "Connected", |app| {
-            matches!(app.view, View::Workspace { .. })
-        });
+        wait_for(&mut harness, "Connected", |app| app.view == View::Workspace);
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::K);
         harness.step();
         harness.get_by_label("postgres");
@@ -669,10 +659,16 @@ mod tests {
         assert!(harness.query_by_label("template0").is_none());
         harness.key_press(egui::Key::Enter);
         wait_for(&mut harness, "DatabaseSelected", |app| {
-            app.workspaces
-                .get(&id)
-                .is_some_and(|ws| ws.database.as_deref() == Some("loja"))
+            app.active.as_ref().is_some_and(|k| k.1 == "loja")
         });
+    }
+
+    /// Harness com janela larga: a faixa de bancos, a árvore, o grid e o painel direito não cabem nos
+    /// 800 px padrão, e um clique numa célula escondida sob o painel não chega ao grid.
+    fn wide_harness<'a>(app: App<FakeDriver>) -> Harness<'a, App<FakeDriver>> {
+        Harness::builder()
+            .with_size(egui::vec2(1400.0, 800.0))
+            .build_ui_state(|ui, app: &mut App<FakeDriver>| app.ui(ui), app)
     }
 
     #[test]
@@ -685,16 +681,13 @@ mod tests {
         app.deps.store.upsert(c.clone());
         crate::connections::connect(&mut app, &c);
         let id = c.id.clone();
-        let mut harness = Harness::new_ui_state(|ui, app: &mut App<FakeDriver>| app.ui(ui), app);
-        wait_for(&mut harness, "Connected", |app| {
-            matches!(app.view, View::Workspace { .. })
-        });
+        let mut harness = wide_harness(app);
+        wait_for(&mut harness, "Connected", |app| app.view == View::Workspace);
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::K);
         harness.step();
         harness.get_by_label("loja").click();
         wait_for(&mut harness, "SchemaLoaded", |app| {
-            app.workspaces
-                .get(&id)
+            app.workspace_of(&id)
                 .is_some_and(|ws| ws.objects.contains_key("public"))
         });
         harness.get_by_label("Escolha uma tabela na árvore.");
@@ -702,13 +695,11 @@ mod tests {
         // O nome abre a aba Data: página, contagem e tamanhos.
         harness.get_by_label("▦ pedido").click();
         wait_for(&mut harness, "PageLoaded", |app| {
-            app.workspaces
-                .get(&id)
+            app.workspace_of(&id)
                 .is_some_and(|ws| ws.data.as_ref().is_some_and(|d| d.rows.is_some()))
         });
         wait_for(&mut harness, "StatsLoaded", |app| {
-            app.workspaces
-                .get(&id)
+            app.workspace_of(&id)
                 .is_some_and(|ws| ws.data.as_ref().is_some_and(|d| d.stats.is_some()))
         });
         harness.get_by_label("public.pedido");
@@ -717,7 +708,8 @@ mod tests {
         harness.get_by_label_contains("250 rows · total 24 kB");
         harness.get_by_label("pedidos");
         let names = |app: &App<FakeDriver>| -> Vec<String> {
-            app.workspaces[&id]
+            app.workspace_of(&id)
+                .unwrap()
                 .data
                 .as_ref()
                 .unwrap()
@@ -734,23 +726,31 @@ mod tests {
         // Clique no cabeçalho ordena: asc, depois desc.
         harness.get_by_label("nome").click();
         wait_for(&mut harness, "asc", |app| {
-            app.workspaces[&id].data.as_ref().is_some_and(|d| {
-                !d.loading
-                    && d.page
-                        .order
-                        .as_ref()
-                        .is_some_and(|o| o.direction == Direction::Asc)
-            })
+            app.workspace_of(&id)
+                .unwrap()
+                .data
+                .as_ref()
+                .is_some_and(|d| {
+                    !d.loading
+                        && d.page
+                            .order
+                            .as_ref()
+                            .is_some_and(|o| o.direction == Direction::Asc)
+                })
         });
         harness.get_by_label("nome ▲").click();
         wait_for(&mut harness, "desc", |app| {
-            app.workspaces[&id].data.as_ref().is_some_and(|d| {
-                !d.loading
-                    && d.page
-                        .order
-                        .as_ref()
-                        .is_some_and(|o| o.direction == Direction::Desc)
-            })
+            app.workspace_of(&id)
+                .unwrap()
+                .data
+                .as_ref()
+                .is_some_and(|d| {
+                    !d.loading
+                        && d.page
+                            .order
+                            .as_ref()
+                            .is_some_and(|o| o.direction == Direction::Desc)
+                })
         });
         assert_eq!(names(harness.state()), ["b", "a", ""]);
 
@@ -758,7 +758,8 @@ mod tests {
         // Botão no rodapé: a ação do AccessKit (o clique por ponteiro não alcança o rodapé no harness).
         harness.get_by_label("›").click_accesskit();
         wait_for(&mut harness, "página 2", |app| {
-            app.workspaces[&id]
+            app.workspace_of(&id)
+                .unwrap()
                 .data
                 .as_ref()
                 .is_some_and(|d| !d.loading && d.page.offset == 100)
@@ -770,7 +771,8 @@ mod tests {
         harness.step();
         harness.step(); // o painel direito é desenhado antes do grid: lê a seleção no frame seguinte
         let selected = |app: &App<FakeDriver>| {
-            app.workspaces[&id]
+            app.workspace_of(&id)
+                .unwrap()
                 .data
                 .as_ref()
                 .unwrap()
@@ -893,16 +895,13 @@ mod tests {
         app.deps.store.upsert(c.clone());
         crate::connections::connect(&mut app, &c);
         let id = c.id.clone();
-        let mut harness = Harness::new_ui_state(|ui, app: &mut App<FakeDriver>| app.ui(ui), app);
-        wait_for(&mut harness, "Connected", |app| {
-            matches!(app.view, View::Workspace { .. })
-        });
+        let mut harness = wide_harness(app);
+        wait_for(&mut harness, "Connected", |app| app.view == View::Workspace);
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::K);
         harness.step();
         harness.get_by_label("loja").click();
         wait_for(&mut harness, "SchemaLoaded", |app| {
-            app.workspaces
-                .get(&id)
+            app.workspace_of(&id)
                 .is_some_and(|ws| ws.objects.contains_key("public"))
         });
         // Abre a tabela pelo rótulo da árvore e espera a aba NOVA (não a anterior, que já estava
@@ -910,7 +909,7 @@ mod tests {
         let open = |harness: &mut Harness<'_, App<FakeDriver>>, label: &str, table: &str| {
             harness.get_by_label(label).click();
             wait_for(harness, "tabela aberta e carregada", |app| {
-                app.workspaces.get(&id).is_some_and(|ws| {
+                app.workspace_of(&id).is_some_and(|ws| {
                     ws.data.as_ref().is_some_and(|d| {
                         d.table == table && d.rows.is_some() && d.stats.is_some() && !d.loading
                     }) && ws
@@ -920,7 +919,7 @@ mod tests {
             });
         };
         open(&mut harness, "▦ pedido", "pedido");
-        let tab = |app: &App<FakeDriver>| app.workspaces[&id].data.clone().unwrap();
+        let tab = |app: &App<FakeDriver>| app.workspace_of(&id).unwrap().data.clone().unwrap();
 
         // Duplo clique na célula "a" (nome da linha 1) abre o campo; digitar e Enter deixa pendente.
         double_click(&mut harness, "a");
@@ -976,7 +975,8 @@ mod tests {
         let before = queries.load(Ordering::SeqCst);
         harness.get_by_label("Executar").click_accesskit();
         wait_for(&mut harness, "ChangesApplied", |app| {
-            app.workspaces[&id]
+            app.workspace_of(&id)
+                .unwrap()
                 .data
                 .as_ref()
                 .is_some_and(|d| d.commit.is_none() && !d.has_changes() && !d.loading)
@@ -1009,7 +1009,8 @@ mod tests {
         harness.get_by_label("1 updates, 0 deletes");
         harness.get_by_label("Executar").click_accesskit();
         wait_for(&mut harness, "ChangesFailed", |app| {
-            app.workspaces[&id]
+            app.workspace_of(&id)
+                .unwrap()
                 .data
                 .as_ref()
                 .is_some_and(|d| d.commit.as_ref().is_some_and(|c| c.error.is_some()))
@@ -1081,7 +1082,7 @@ mod tests {
 
     /// Um `App` com a tabela `public.pedidos` aberta (chave `id`), página de três linhas
     /// (`id`, `nome`), sem página em voo: o mínimo para exercitar a edição sem harness.
-    fn app_with_editable_table() -> (App<FakeDriver>, hy_dbplus_engine::ConnectionId) {
+    fn app_with_editable_table() -> (App<FakeDriver>, crate::app::DbKey) {
         use crate::app::{DataTab, Workspace};
         use hy_dbplus_engine::{Column, Page};
 
@@ -1089,6 +1090,7 @@ mod tests {
         let mut app = App::with_deps(deps(FakeDriver::default(), &rt));
         std::mem::forget(rt); // o teste é síncrono; o runtime só precisa existir
         let id: hy_dbplus_engine::ConnectionId = "c1".into();
+        let key: crate::app::DbKey = (id.clone(), "loja".into());
         let mut tab = DataTab::new("public", "pedidos");
         tab.requested = None;
         tab.loading = false;
@@ -1102,7 +1104,6 @@ mod tests {
             ],
         }));
         let mut ws = Workspace {
-            database: Some("loja".into()),
             data: Some(tab),
             ..Default::default()
         };
@@ -1118,32 +1119,35 @@ mod tests {
             ("public".into(), "pedidos".into()),
             vec![column("id", true, 1), column("nome", false, 2)],
         );
-        app.workspaces.insert(id.clone(), ws);
-        (app, id)
+        app.workspaces.insert(key.clone(), ws);
+        app.rail.push(key.clone());
+        app.active = Some(key.clone());
+        app.focus = Some(id);
+        (app, key)
     }
 
-    fn tab_of(app: &App<FakeDriver>, id: &str) -> crate::app::DataTab {
-        app.workspaces[id].data.clone().unwrap()
+    fn tab_of(app: &App<FakeDriver>, key: &crate::app::DbKey) -> crate::app::DataTab {
+        app.workspaces[key].data.clone().unwrap()
     }
 
     /// Abrir uma célula NULL e sair sem digitar não vira pendência `''` (achado do revisor); digitar
     /// e apagar tudo sobre NULL volta a NULL; valor igual ao da página some da pendência.
     #[test]
     fn celula_null_aberta_e_fechada_sem_digitar_nao_vira_pendencia() {
-        let (mut app, id) = app_with_editable_table();
-        assert!(app.editable(&id));
-        app.start_edit(&id, 1, 1);
-        assert_eq!(tab_of(&app, &id).editing.unwrap().text, "");
-        app.finish_edit(&id, true);
+        let (mut app, key) = app_with_editable_table();
+        assert!(app.editable(&key));
+        app.start_edit(&key, 1, 1);
+        assert_eq!(tab_of(&app, &key).editing.unwrap().text, "");
+        app.finish_edit(&key, true);
         assert!(
-            !tab_of(&app, &id).has_changes(),
+            !tab_of(&app, &key).has_changes(),
             "NULL aberto e fechado virou ''"
         );
         // Digitar sobre NULL vira texto; apagar tudo sobre o texto vira '' (string vazia; NULL é
         // só pelo botão do Form), e o NULL pelo Form devolve a célula ao valor da página.
-        app.start_edit(&id, 1, 1);
+        app.start_edit(&key, 1, 1);
         app.workspaces
-            .get_mut(&id)
+            .get_mut(&key)
             .unwrap()
             .data
             .as_mut()
@@ -1152,11 +1156,11 @@ mod tests {
             .as_mut()
             .unwrap()
             .text = "x".into();
-        app.finish_edit(&id, true);
-        assert_eq!(tab_of(&app, &id).cell_value(1, 1), Some(Some("x")));
-        app.start_edit(&id, 1, 1);
+        app.finish_edit(&key, true);
+        assert_eq!(tab_of(&app, &key).cell_value(1, 1), Some(Some("x")));
+        app.start_edit(&key, 1, 1);
         app.workspaces
-            .get_mut(&id)
+            .get_mut(&key)
             .unwrap()
             .data
             .as_mut()
@@ -1165,20 +1169,20 @@ mod tests {
             .as_mut()
             .unwrap()
             .text = String::new();
-        app.finish_edit(&id, true);
-        assert!(tab_of(&app, &id).cell_value(1, 1) == Some(Some("")));
+        app.finish_edit(&key, true);
+        assert!(tab_of(&app, &key).cell_value(1, 1) == Some(Some("")));
         app.workspaces
-            .get_mut(&id)
+            .get_mut(&key)
             .unwrap()
             .data
             .as_mut()
             .unwrap()
             .set_cell(1, 1, None);
-        assert!(!tab_of(&app, &id).has_changes());
+        assert!(!tab_of(&app, &key).has_changes());
         // Célula com texto: voltar ao valor da página também some da pendência; Esc descarta.
-        app.start_edit(&id, 0, 1);
+        app.start_edit(&key, 0, 1);
         app.workspaces
-            .get_mut(&id)
+            .get_mut(&key)
             .unwrap()
             .data
             .as_mut()
@@ -1187,11 +1191,11 @@ mod tests {
             .as_mut()
             .unwrap()
             .text = "b".into();
-        app.finish_edit(&id, true);
-        assert!(tab_of(&app, &id).is_pending(0, "nome"));
-        app.start_edit(&id, 0, 1);
+        app.finish_edit(&key, true);
+        assert!(tab_of(&app, &key).is_pending(0, "nome"));
+        app.start_edit(&key, 0, 1);
         app.workspaces
-            .get_mut(&id)
+            .get_mut(&key)
             .unwrap()
             .data
             .as_mut()
@@ -1200,11 +1204,11 @@ mod tests {
             .as_mut()
             .unwrap()
             .text = "a".into();
-        app.finish_edit(&id, true);
-        assert!(!tab_of(&app, &id).has_changes());
-        app.start_edit(&id, 0, 1);
+        app.finish_edit(&key, true);
+        assert!(!tab_of(&app, &key).has_changes());
+        app.start_edit(&key, 0, 1);
         app.workspaces
-            .get_mut(&id)
+            .get_mut(&key)
             .unwrap()
             .data
             .as_mut()
@@ -1213,8 +1217,8 @@ mod tests {
             .as_mut()
             .unwrap()
             .text = "zzz".into();
-        app.finish_edit(&id, false);
-        assert!(!tab_of(&app, &id).has_changes());
+        app.finish_edit(&key, false);
+        assert!(!tab_of(&app, &key).has_changes());
     }
 
     /// Com página em voo não se edita (a pendência é por índice), e uma página nova descarta a
@@ -1223,18 +1227,18 @@ mod tests {
     fn pagina_em_voo_trava_a_edicao_e_pagina_nova_descarta_a_pendencia() {
         use hy_dbplus_engine::Page;
 
-        let (mut app, id) = app_with_editable_table();
+        let (mut app, key) = app_with_editable_table();
         {
-            let tab = app.workspaces.get_mut(&id).unwrap().data.as_mut().unwrap();
+            let tab = app.workspaces.get_mut(&key).unwrap().data.as_mut().unwrap();
             tab.set_cell(0, 1, Some("b".into()));
             tab.deleted.insert(2);
             assert!(tab.has_changes());
             tab.requested = Some(Page::default());
         }
-        assert!(!app.editable(&id), "editável com página em voo");
-        app.start_edit(&id, 0, 1);
-        assert!(tab_of(&app, &id).editing.is_none());
-        let tab = app.workspaces.get_mut(&id).unwrap().data.as_mut().unwrap();
+        assert!(!app.editable(&key), "editável com página em voo");
+        app.start_edit(&key, 0, 1);
+        assert!(tab_of(&app, &key).editing.is_none());
+        let tab = app.workspaces.get_mut(&key).unwrap().data.as_mut().unwrap();
         let dropped = tab.accept_page(
             Page::default(),
             TextRows {
@@ -1254,39 +1258,142 @@ mod tests {
     /// e o lote leva só as vivas como UPDATE e a marcada como DELETE.
     #[test]
     fn campo_do_form_edita_so_as_linhas_vivas_da_selecao() {
-        let (mut app, id) = app_with_editable_table();
+        let (mut app, key) = app_with_editable_table();
         {
-            let tab = app.workspaces.get_mut(&id).unwrap().data.as_mut().unwrap();
+            let tab = app.workspaces.get_mut(&key).unwrap().data.as_mut().unwrap();
             tab.selected_rows.extend([0, 1, 2]);
         }
-        app.toggle_delete(&id); // marca as três
-        app.toggle_delete(&id); // todas marcadas: desmarca
-        assert!(tab_of(&app, &id).deleted.is_empty());
+        app.toggle_delete(&key); // marca as três
+        app.toggle_delete(&key); // todas marcadas: desmarca
+        assert!(tab_of(&app, &key).deleted.is_empty());
         {
-            let tab = app.workspaces.get_mut(&id).unwrap().data.as_mut().unwrap();
+            let tab = app.workspaces.get_mut(&key).unwrap().data.as_mut().unwrap();
             tab.selected_rows.clear();
             tab.selected_rows.insert(2);
         }
-        app.toggle_delete(&id);
+        app.toggle_delete(&key);
         app.workspaces
-            .get_mut(&id)
+            .get_mut(&key)
             .unwrap()
             .data
             .as_mut()
             .unwrap()
             .selected_rows
             .extend([0, 1]);
-        app.set_field(&id, "nome", Some("z".into()));
-        let tab = tab_of(&app, &id);
+        app.set_field(&key, "nome", Some("z".into()));
+        let tab = tab_of(&app, &key);
         assert!(tab.is_pending(0, "nome") && tab.is_pending(1, "nome"));
         assert!(!tab.is_pending(2, "nome"), "linha marcada recebeu edição");
         let changes = tab.change_set(&["id".to_owned()]).unwrap();
         assert_eq!(changes.updates.len(), 2);
         assert_eq!(changes.deletes, vec![vec!["3".to_owned()]]);
-        app.set_field(&id, "nome", None);
-        assert_eq!(tab_of(&app, &id).cell_value(0, 1), Some(None));
-        app.revert_field(&id, "nome");
-        assert!(tab_of(&app, &id).pending.is_empty());
+        app.set_field(&key, "nome", None);
+        assert_eq!(tab_of(&app, &key).cell_value(0, 1), Some(None));
+        app.revert_field(&key, "nome");
+        assert!(tab_of(&app, &key).pending.is_empty());
+    }
+
+    /// FEAT-008 passo 1: ⌘K abre um segundo banco sem fechar o primeiro; a faixa mostra os dois e
+    /// trocar nela traz a árvore e a aba (com a pendência) de cada um; × com pendência pede
+    /// confirmação e fechar tira o banco da faixa.
+    #[test]
+    fn dois_bancos_na_faixa_trocam_arvore_e_aba_e_fecham_com_confirmacao() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let driver = FakeDriver::default();
+        let mut app = App::with_deps(deps(driver, &rt));
+        let c = Connection::new("pg-localhost", Tag::Local, ConnectionConfig::default());
+        app.deps.store.upsert(c.clone());
+        crate::connections::connect(&mut app, &c);
+        let id = c.id.clone();
+        let mut harness = wide_harness(app);
+        wait_for(&mut harness, "Connected", |app| app.view == View::Workspace);
+        let open_db = |harness: &mut Harness<'_, App<FakeDriver>>, db: &str| {
+            harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::K);
+            harness.step();
+            harness.get_by_label(db).click();
+            wait_for(harness, "DatabaseSelected", |app| {
+                app.active.as_ref().is_some_and(|k| k.1 == db)
+                    && app
+                        .workspace_of(&id)
+                        .is_some_and(|ws| ws.objects.contains_key("public"))
+            });
+        };
+        open_db(&mut harness, "loja");
+        harness.get_by_label("▦ pedido").click();
+        wait_for(&mut harness, "tabela carregada", |app| {
+            app.workspace_of(&id).is_some_and(|ws| {
+                ws.data
+                    .as_ref()
+                    .is_some_and(|d| d.rows.is_some() && !d.loading)
+                    && ws
+                        .columns
+                        .contains_key(&("public".to_owned(), "pedido".to_owned()))
+            })
+        });
+        double_click(&mut harness, "a");
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::Text("x".into()));
+        harness.step();
+        harness.key_press(egui::Key::Enter);
+        harness.step();
+        harness.step();
+        harness.get_by_label("1 alteração");
+
+        // Segundo banco: entra na faixa e vira o ativo, com árvore própria e sem aba.
+        open_db(&mut harness, "postgres");
+        assert_eq!(
+            harness.state().rail,
+            vec![
+                (id.clone(), "loja".to_owned()),
+                (id.clone(), "postgres".to_owned())
+            ]
+        );
+        harness.get_by_label("Escolha uma tabela na árvore.");
+        assert!(harness.query_by_label("1 alteração").is_none());
+        harness.get_by_label_contains(": postgres");
+
+        // Volta ao primeiro pela faixa: aba e pendência intactas.
+        harness.get_all_by_label("loja").next().unwrap().click();
+        harness.step();
+        harness.step();
+        assert_eq!(
+            harness.state().active.as_ref().map(|k| k.1.as_str()),
+            Some("loja")
+        );
+        harness.get_by_label("1 alteração");
+        harness.get_by_label("public.pedido");
+
+        // × no banco com pendência: confirmação; Cancelar mantém; Descartar e fechar tira da faixa.
+        harness
+            .get_all_by_label("×")
+            .next()
+            .unwrap()
+            .click_accesskit();
+        harness.step();
+        harness.step();
+        harness.get_by_label("Fechar o banco?");
+        harness.get_by_label("Cancelar").click_accesskit();
+        harness.step();
+        harness.step();
+        assert!(harness.query_by_label("Fechar o banco?").is_none());
+        assert_eq!(harness.state().rail.len(), 2);
+        harness
+            .get_all_by_label("×")
+            .next()
+            .unwrap()
+            .click_accesskit();
+        harness.step();
+        harness.step();
+        harness.get_by_label("Descartar e fechar").click_accesskit();
+        wait_for(&mut harness, "DatabaseClosed", |app| app.rail.len() == 1);
+        assert_eq!(
+            harness.state().active.as_ref().map(|k| k.1.as_str()),
+            Some("postgres")
+        );
+        assert!(harness.query_by_label("1 alteração").is_none());
+        harness.get_by_label("Escolha uma tabela na árvore.");
     }
 
     /// `select_row` sem harness: ⇧ estende da âncora (para frente e para trás, ou da própria linha sem
@@ -1299,20 +1406,23 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let mut app = App::with_deps(deps(FakeDriver::default(), &rt));
         let id: ConnectionId = "c1".into();
+        let key: crate::app::DbKey = (id.clone(), "loja".into());
         let mut tab = DataTab::new("public", "pedidos");
         tab.rows = Some(Arc::new(TextRows {
             columns: vec!["id".into()],
             rows: (1..=6).map(|i| vec![Some(i.to_string())]).collect(),
         }));
         app.workspaces.insert(
-            id.clone(),
+            key.clone(),
             Workspace {
                 data: Some(tab),
                 ..Default::default()
             },
         );
+        app.rail.push(key.clone());
+        app.active = Some(key.clone());
         let selected = |app: &App<FakeDriver>| {
-            app.workspaces[&id]
+            app.workspaces[&key]
                 .data
                 .as_ref()
                 .unwrap()
@@ -1323,24 +1433,24 @@ mod tests {
         };
         assert!(!app.side_panel_open);
         // ⇧ sem âncora: só a linha clicada; o painel abre.
-        app.select_row(&id, 3, egui::Modifiers::SHIFT);
+        app.select_row(&key, 3, egui::Modifiers::SHIFT);
         assert_eq!(selected(&app), [3]);
         assert!(app.side_panel_open);
         // ⇧ para trás e para frente a partir da âncora 3.
-        app.select_row(&id, 1, egui::Modifiers::SHIFT);
+        app.select_row(&key, 1, egui::Modifiers::SHIFT);
         assert_eq!(selected(&app), [1, 2, 3]);
-        app.select_row(&id, 5, egui::Modifiers::SHIFT);
+        app.select_row(&key, 5, egui::Modifiers::SHIFT);
         assert_eq!(selected(&app), [1, 2, 3, 4, 5]);
         // Clique simples: só ela; de novo na única selecionada: nenhuma. O painel fechado fica fechado.
         app.side_panel_open = false;
-        app.select_row(&id, 4, egui::Modifiers::NONE);
+        app.select_row(&key, 4, egui::Modifiers::NONE);
         assert_eq!(selected(&app), [4]);
         assert!(!app.side_panel_open);
-        app.select_row(&id, 4, egui::Modifiers::NONE);
+        app.select_row(&key, 4, egui::Modifiers::NONE);
         assert!(selected(&app).is_empty());
         assert!(!app.side_panel_open);
         // Da seleção vazia, a próxima abre o painel de novo.
-        app.select_row(&id, 0, egui::Modifiers::COMMAND);
+        app.select_row(&key, 0, egui::Modifiers::COMMAND);
         assert_eq!(selected(&app), [0]);
         assert!(app.side_panel_open);
     }

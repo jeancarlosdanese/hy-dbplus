@@ -4,15 +4,15 @@
 
 ## `engine`
 
-- [ ] `close_database` fecha a conexão do banco, solta os caches e emite `DatabaseClosed`; os outros bancos da
+- [x] `close_database` fecha a conexão do banco, solta os caches e emite `DatabaseClosed`; os outros bancos da
       conexão seguem abertos; banco desconhecido não emite nada.
-- [ ] `disconnect` continua fechando todos os bancos da conexão.
+- [x] `disconnect` continua fechando todos os bancos da conexão.
 
 ## `ui-egui`
 
-- [ ] ⌘K com um banco já aberto abre um segundo: a faixa mostra os dois, o segundo ativo, árvore do segundo;
+- [x] ⌘K com um banco já aberto abre um segundo: a faixa mostra os dois, o segundo ativo, árvore do segundo;
       clicar no primeiro traz a árvore e as abas dele de volta.
-- [ ] Barra superior mostra o ambiente, a conexão e o banco ativos; "← Conexões" volta à lista sem fechar.
+- [x] Barra superior mostra o ambiente, a conexão e o banco ativos; "← Conexões" volta à lista sem fechar.
 - [ ] Clicar numa tabela abre uma aba; clicar noutra abre a segunda; clicar na primeira de novo só a foca;
       × e ⌘W fecham; sem abas, o convite.
 - [ ] Cada aba tem página, ordenação, seleção e pendência próprias; trocar de aba ou de banco e voltar mantém

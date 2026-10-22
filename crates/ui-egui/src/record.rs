@@ -4,23 +4,23 @@
 //! **Reverter**; o valor digitado vale para todas as linhas selecionadas. Os valores mostrados são os
 //! pendentes, quando há.
 
-use hy_dbplus_engine::{Column, ConnectionId, Driver, record};
+use hy_dbplus_engine::{Column, Driver, record};
 
-use crate::app::{App, PanelMode};
+use crate::app::{App, DbKey, PanelMode};
 use crate::theme;
 
 /// Valor maior que isto aparece truncado no Form (só leitura) até "mostrar tudo".
 const PREVIEW_CHARS: usize = 300;
 
-pub fn show<D>(app: &mut App<D>, ui: &mut egui::Ui, id: &ConnectionId)
+pub fn show<D>(app: &mut App<D>, ui: &mut egui::Ui, key: &DbKey)
 where
     D: Driver + 'static,
     D::Conn: 'static,
 {
     let tokens = theme::current(ui.ctx());
     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-    let editable = app.editable(id);
-    let Some(ws) = app.workspaces.get(id) else {
+    let editable = app.editable(key);
+    let Some(ws) = app.workspaces.get(key) else {
         return;
     };
     let Some(tab) = ws.data.as_ref() else { return };
@@ -225,15 +225,15 @@ where
     }
     app.panel_mode = mode;
     if let Some(field) = toggled_field
-        && let Some(tab) = app.workspaces.get_mut(id).and_then(|ws| ws.data.as_mut())
+        && let Some(tab) = app.workspaces.get_mut(key).and_then(|ws| ws.data.as_mut())
         && !tab.expanded_fields.remove(&field)
     {
         tab.expanded_fields.insert(field);
     }
     for (column, value) in field_edits {
-        app.set_field(id, &column, value);
+        app.set_field(key, &column, value);
     }
     for column in reverts {
-        app.revert_field(id, &column);
+        app.revert_field(key, &column);
     }
 }
