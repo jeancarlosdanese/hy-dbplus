@@ -20,6 +20,8 @@ where
         app.palette = None;
         return;
     };
+    // Trocar de banco zera o workspace: com edição pendente a paleta avisa e não troca.
+    let locked = app.has_pending_changes(id);
     let Some(palette) = app.palette.as_mut() else {
         return;
     };
@@ -51,6 +53,9 @@ where
                 palette.focus_pending = false;
             }
             ui.separator();
+            if locked {
+                ui.colored_label(theme::error_color(), crate::data::LOCK_HINT);
+            }
             if matches.is_empty() {
                 ui.label(
                     egui::RichText::new("Nenhum banco com esse nome.").color(tokens.text_muted),
@@ -77,7 +82,7 @@ where
                 }
             });
         });
-    if let Some(database) = chosen {
+    if let Some(database) = chosen.filter(|_| !locked) {
         app.palette = None;
         select_database(app, id, &database);
     } else if close {

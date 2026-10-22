@@ -62,6 +62,9 @@ num banco de desenvolvimento local. Servem como especificação visual e funcion
 - Painel direito, recolhido por padrão: abre ao selecionar a primeira linha e mostra os campos dela em
   **Form** (nome, tipo, valor) ou **JSON** com botão Copiar; seleção múltipla mostra "Múltiplos valores"
   nos campos que diferem (FEAT-006).
+- Edição (FEAT-007, só tabela com chave primária): duplo clique na célula ou campo do Form deixa a mudança
+  pendente; ⌫ marca a seleção para apagar; **Commit** (⌘S) mostra o SQL exato e roda tudo numa transação;
+  **Descartar** limpa. Com pendência, ordenar, paginar e recarregar ficam travados.
 
 ### 3.5 Aba Structure
 - Campos editáveis **Name** e **Primary**.

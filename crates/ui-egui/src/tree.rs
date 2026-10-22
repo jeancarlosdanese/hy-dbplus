@@ -21,6 +21,9 @@ where
     };
     let schemas: Vec<String> = ws.schemas.iter().map(|s| s.name.clone()).collect();
     let current = ws.current_schema.clone();
+    // Com edição pendente, trocar de tabela perderia o lote e recarregar esvaziaria as colunas (e a
+    // chave primária) da tabela aberta: os dois ficam desabilitados com a dica.
+    let locked = app.has_pending_changes(id);
 
     // Rodapé: seletor de schema.
     let mut chosen_schema: Option<String> = None;
@@ -44,8 +47,9 @@ where
                     }
                 });
             if ui
-                .small_button("↻")
+                .add_enabled(!locked, egui::Button::new("↻").small())
                 .on_hover_text("Recarregar o catálogo")
+                .on_disabled_hover_text(crate::data::LOCK_HINT)
                 .clicked()
             {
                 app.deps.sessions.refresh(id, &database);
@@ -163,7 +167,14 @@ where
                                     .as_ref()
                                     .is_some_and(|d| d.schema == schema && d.table == t.name);
                                 if ui
-                                    .selectable_label(selected, format!("{icon} {}", t.name))
+                                    .add_enabled(
+                                        !locked || selected,
+                                        egui::Button::selectable(
+                                            selected,
+                                            format!("{icon} {}", t.name),
+                                        ),
+                                    )
+                                    .on_disabled_hover_text(crate::data::LOCK_HINT)
                                     .clicked()
                                 {
                                     to_open = Some(t.name.clone());
@@ -216,8 +227,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
     use egui_kittest::Harness;
@@ -235,9 +246,11 @@ mod tests {
     #[derive(Default)]
     struct FakeDriver {
         queries: Arc<AtomicUsize>,
+        batches: Arc<Mutex<Vec<Vec<BatchStatement>>>>,
     }
     struct FakeConn {
         queries: Arc<AtomicUsize>,
+        batches: Arc<Mutex<Vec<Vec<BatchStatement>>>>,
     }
 
     fn row(cells: &[Option<&str>]) -> Vec<Option<String>> {
@@ -264,11 +277,24 @@ mod tests {
                 },
             ])
         }
+        /// Grava o lote; um statement com `erro` no texto é o que o servidor recusaria.
         async fn execute_batch(
             &self,
-            _statements: &[BatchStatement],
+            statements: &[BatchStatement],
         ) -> Result<Vec<u64>, DriverError> {
-            Err(DriverError::Db("lote fora deste teste".into()))
+            if let Ok(mut batches) = self.batches.lock() {
+                batches.push(statements.to_vec());
+            }
+            if let Some(i) = statements.iter().position(|s| s.sql.contains("erro")) {
+                return Err(DriverError::Statement {
+                    position: i + 1,
+                    reason: "invalid input syntax".into(),
+                });
+            }
+            Ok(statements
+                .iter()
+                .map(|s| s.expected_rows.unwrap_or(0))
+                .collect())
         }
         async fn query_text(&self, sql: &str) -> Result<TextRows, DriverError> {
             self.queries.fetch_add(1, Ordering::SeqCst);
@@ -294,6 +320,12 @@ mod tests {
                     ],
                 });
             } else if sql.contains("pg_attribute") {
+                // A view v_pedido tem as mesmas colunas, sem chave primária (só leitura).
+                let pk = if sql.contains("E'v_pedido'") {
+                    "f"
+                } else {
+                    "t"
+                };
                 vec![
                     row(&[
                         Some("id"),
@@ -301,7 +333,7 @@ mod tests {
                         Some("f"),
                         None,
                         Some("1"),
-                        Some("t"),
+                        Some(pk),
                     ]),
                     row(&[
                         Some("cliente"),
@@ -367,6 +399,7 @@ mod tests {
             }
             Ok(FakeConn {
                 queries: Arc::clone(&self.queries),
+                batches: Arc::clone(&self.batches),
             })
         }
     }
@@ -770,13 +803,23 @@ mod tests {
         assert_eq!(selected(harness.state()), [0, 2]);
         harness.get_by_label("2 of 3 rows selected");
         harness.get_by_label("2 linhas");
+        // A tabela tem chave primária: o Form é editável, um campo por coluna (FEAT-007); os campos
+        // que diferem (id, nome) ficam vazios com a dica "Múltiplos valores", o igual (status) traz "ok".
         assert_eq!(
-            harness.get_all_by_label("Múltiplos valores").count(),
-            2,
-            "id e nome diferem"
+            harness
+                .get_all_by_role(egui::accesskit::Role::MultilineTextInput)
+                .count(),
+            3
         );
-        // "ok" nas três células do grid e uma vez no Form (campo igual nas duas linhas).
-        assert_eq!(harness.get_all_by_label("ok").count(), 4);
+        assert_eq!(
+            harness.get_all_by_label("ok").count(),
+            3,
+            "as três células do grid"
+        );
+        assert!(
+            harness.get_all_by_value("ok").count() >= 1,
+            "o campo status do Form"
+        );
         // JSON: lista com os dois objetos, tipos pelo catálogo; Copiar não quebra.
         harness.get_by_label("JSON").click_accesskit();
         harness.step();
@@ -813,6 +856,419 @@ mod tests {
         // schemas, tabelas e funções (3), stats (tamanhos + count = 2), colunas antes da primeira página (1),
         // quatro páginas (1 cada): sem count a cada página.
         assert_eq!(queries.load(Ordering::SeqCst), 3 + 2 + 1 + 4);
+    }
+
+    /// Duplo clique num nó: os dois pares press/release no mesmo frame, na mesma posição (o egui
+    /// exige menos de 6 px e 0,3 s entre os cliques; o primeiro clique abre o painel e mexeria no
+    /// layout se os cliques fossem em frames separados).
+    fn double_click(harness: &mut Harness<'_, App<FakeDriver>>, label: &str) {
+        let pos = harness.get_by_label(label).rect().center();
+        let events = &mut harness.input_mut().events;
+        events.push(egui::Event::PointerMoved(pos));
+        for _ in 0..2 {
+            for pressed in [true, false] {
+                events.push(egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::default(),
+                });
+            }
+        }
+        harness.step();
+        harness.step();
+    }
+
+    /// FEAT-007: duplo clique edita a célula, ⌫ marca a seleção, Commit mostra o SQL exato, Executar
+    /// manda o lote e recarrega; erro do servidor fica na caixa com as pendências; Descartar limpa; o
+    /// Form edita com Reverter; com pendência a ordenação trava; tabela sem chave primária não edita.
+    #[test]
+    fn editar_celula_apagar_commit_executar_e_descartar() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let driver = FakeDriver::default();
+        let queries = Arc::clone(&driver.queries);
+        let batches = Arc::clone(&driver.batches);
+        let mut app = App::with_deps(deps(driver, &rt));
+        let c = Connection::new("pg-localhost", Tag::Local, ConnectionConfig::default());
+        app.deps.store.upsert(c.clone());
+        crate::connections::connect(&mut app, &c);
+        let id = c.id.clone();
+        let mut harness = Harness::new_ui_state(|ui, app: &mut App<FakeDriver>| app.ui(ui), app);
+        wait_for(&mut harness, "Connected", |app| {
+            matches!(app.view, View::Workspace { .. })
+        });
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::K);
+        harness.step();
+        harness.get_by_label("loja").click();
+        wait_for(&mut harness, "SchemaLoaded", |app| {
+            app.workspaces
+                .get(&id)
+                .is_some_and(|ws| ws.objects.contains_key("public"))
+        });
+        let open = |harness: &mut Harness<'_, App<FakeDriver>>, label: &str| {
+            harness.get_by_label(label).click();
+            wait_for(harness, "PageLoaded", |app| {
+                app.workspaces.get(&id).is_some_and(|ws| {
+                    ws.data
+                        .as_ref()
+                        .is_some_and(|d| d.rows.is_some() && d.stats.is_some() && !d.loading)
+                })
+            });
+        };
+        open(&mut harness, "▦ pedido");
+        let tab = |app: &App<FakeDriver>| app.workspaces[&id].data.clone().unwrap();
+
+        // Duplo clique na célula "a" (nome da linha 1) abre o campo; digitar e Enter deixa pendente.
+        double_click(&mut harness, "a");
+        assert!(
+            tab(harness.state()).editing.is_some(),
+            "duplo clique não abriu a edição"
+        );
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::Text("novo".into()));
+        harness.step();
+        harness.key_press(egui::Key::Enter);
+        harness.step();
+        harness.step();
+        let t = tab(harness.state());
+        assert!(t.editing.is_none());
+        let nome = t
+            .pending
+            .get(&0)
+            .and_then(|m| m.get("nome"))
+            .cloned()
+            .flatten();
+        assert!(
+            nome.as_deref().is_some_and(|v| v.contains("novo")),
+            "pendente: {nome:?}"
+        );
+        harness.get_by_label("1 alteração");
+        // Com pendência, ordenar não faz nada e a dica aparece.
+        harness.get_by_label("nome").click();
+        harness.step();
+        assert!(tab(harness.state()).page.order.is_none());
+        harness.get_by_label(crate::data::LOCK_HINT);
+
+        // Selecionar a linha 3 e ⌫: marcada para apagar.
+        harness.get_all_by_label("3").next().unwrap().click();
+        harness.step();
+        harness.step();
+        harness.key_press(egui::Key::Backspace);
+        harness.step();
+        harness.step();
+        assert!(tab(harness.state()).deleted.contains(&2));
+        harness.get_by_label("2 alterações");
+
+        // Commit mostra o SQL exato; Executar manda o lote e recarrega.
+        harness.get_by_label("Commit").click_accesskit();
+        harness.step();
+        harness.step();
+        harness.get_by_label("1 updates, 1 deletes");
+        harness.get_by_label_contains("UPDATE \"public\".\"pedido\" SET \"nome\" = E'");
+        harness
+            .get_by_label_contains("DELETE FROM \"public\".\"pedido\" WHERE (\"id\") IN ((E'3'));");
+        let before = queries.load(Ordering::SeqCst);
+        harness.get_by_label("Executar").click_accesskit();
+        wait_for(&mut harness, "ChangesApplied", |app| {
+            app.workspaces[&id]
+                .data
+                .as_ref()
+                .is_some_and(|d| d.commit.is_none() && !d.has_changes() && !d.loading)
+        });
+        let sent = batches.lock().unwrap().clone();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0].len(), 2);
+        assert!(sent[0][0].sql.starts_with("UPDATE"));
+        assert_eq!(sent[0][1].expected_rows, Some(1));
+        assert!(
+            queries.load(Ordering::SeqCst) >= before + 3,
+            "página e stats recarregados"
+        );
+        assert!(harness.query_by_label("2 alterações").is_none());
+
+        // Erro do servidor: a caixa mostra, nada foi gravado e a pendência continua; Cancelar fecha.
+        double_click(&mut harness, "a");
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::Text("erro".into()));
+        harness.step();
+        harness.key_press(egui::Key::Enter);
+        harness.step();
+        harness.step();
+        harness.get_by_label("1 alteração");
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::S);
+        harness.step();
+        harness.step();
+        harness.get_by_label("1 updates, 0 deletes");
+        harness.get_by_label("Executar").click_accesskit();
+        wait_for(&mut harness, "ChangesFailed", |app| {
+            app.workspaces[&id]
+                .data
+                .as_ref()
+                .is_some_and(|d| d.commit.as_ref().is_some_and(|c| c.error.is_some()))
+        });
+        harness.get_by_label_contains("statement 1 do lote falhou");
+        assert_eq!(tab(harness.state()).commit.unwrap().failed, Some(1));
+        assert_eq!(batches.lock().unwrap().len(), 2);
+        harness.get_by_label("Cancelar").click_accesskit();
+        harness.step();
+        harness.step();
+        let t = tab(harness.state());
+        assert!(t.commit.is_none() && t.has_changes());
+        harness.get_by_label("1 alteração");
+
+        // Descartar limpa sem ir ao banco.
+        harness.get_by_label("Descartar").click_accesskit();
+        harness.step();
+        harness.step();
+        assert!(!tab(harness.state()).has_changes());
+        assert!(harness.query_by_label("1 alteração").is_none());
+        assert_eq!(batches.lock().unwrap().len(), 2);
+
+        // Form: o campo "nome" da linha selecionada é editável; Reverter desfaz.
+        harness.get_all_by_label("2").next().unwrap().click();
+        harness.step();
+        harness.step();
+        harness.get_by_label("Linha 2");
+        let field = harness
+            .get_all_by_role(egui::accesskit::Role::MultilineTextInput)
+            .nth(1)
+            .unwrap();
+        field.focus();
+        harness.step();
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::Text("z".into()));
+        harness.step();
+        harness.step();
+        let t = tab(harness.state());
+        assert!(t.pending.get(&1).is_some_and(|m| m.contains_key("nome")));
+        harness.get_by_label("alterado");
+        harness.get_by_label("Reverter").click_accesskit();
+        harness.step();
+        harness.step();
+        assert!(!tab(harness.state()).has_changes());
+
+        // Tabela sem chave primária: aviso, e o duplo clique não abre nada.
+        open(&mut harness, "◫ v_pedido");
+        harness.step(); // as colunas (sem chave) chegam um frame depois da página
+        harness.get_by_label(crate::data::READ_ONLY_HINT);
+        double_click(&mut harness, "a");
+        assert!(tab(harness.state()).editing.is_none());
+    }
+
+    /// Um `App` com a tabela `public.pedidos` aberta (chave `id`), página de três linhas
+    /// (`id`, `nome`), sem página em voo: o mínimo para exercitar a edição sem harness.
+    fn app_with_editable_table() -> (App<FakeDriver>, hy_dbplus_engine::ConnectionId) {
+        use crate::app::{DataTab, Workspace};
+        use hy_dbplus_engine::{Column, Page};
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut app = App::with_deps(deps(FakeDriver::default(), &rt));
+        std::mem::forget(rt); // o teste é síncrono; o runtime só precisa existir
+        let id: hy_dbplus_engine::ConnectionId = "c1".into();
+        let mut tab = DataTab::new("public", "pedidos");
+        tab.requested = None;
+        tab.loading = false;
+        tab.page = Page::default();
+        tab.rows = Some(Arc::new(TextRows {
+            columns: vec!["id".into(), "nome".into()],
+            rows: vec![
+                vec![Some("1".into()), Some("a".into())],
+                vec![Some("2".into()), None],
+                vec![Some("3".into()), Some("c".into())],
+            ],
+        }));
+        let mut ws = Workspace {
+            database: Some("loja".into()),
+            data: Some(tab),
+            ..Default::default()
+        };
+        let column = |name: &str, pk: bool, position: i32| Column {
+            name: name.into(),
+            data_type: if pk { "integer" } else { "text" }.into(),
+            nullable: !pk,
+            default: None,
+            position,
+            is_primary_key: pk,
+        };
+        ws.columns.insert(
+            ("public".into(), "pedidos".into()),
+            vec![column("id", true, 1), column("nome", false, 2)],
+        );
+        app.workspaces.insert(id.clone(), ws);
+        (app, id)
+    }
+
+    fn tab_of(app: &App<FakeDriver>, id: &str) -> crate::app::DataTab {
+        app.workspaces[id].data.clone().unwrap()
+    }
+
+    /// Abrir uma célula NULL e sair sem digitar não vira pendência `''` (achado do revisor); digitar
+    /// e apagar tudo sobre NULL volta a NULL; valor igual ao da página some da pendência.
+    #[test]
+    fn celula_null_aberta_e_fechada_sem_digitar_nao_vira_pendencia() {
+        let (mut app, id) = app_with_editable_table();
+        assert!(app.editable(&id));
+        app.start_edit(&id, 1, 1);
+        assert_eq!(tab_of(&app, &id).editing.unwrap().text, "");
+        app.finish_edit(&id, true);
+        assert!(
+            !tab_of(&app, &id).has_changes(),
+            "NULL aberto e fechado virou ''"
+        );
+        // Digitar sobre NULL vira texto; apagar tudo sobre o texto vira '' (string vazia; NULL é
+        // só pelo botão do Form), e o NULL pelo Form devolve a célula ao valor da página.
+        app.start_edit(&id, 1, 1);
+        app.workspaces
+            .get_mut(&id)
+            .unwrap()
+            .data
+            .as_mut()
+            .unwrap()
+            .editing
+            .as_mut()
+            .unwrap()
+            .text = "x".into();
+        app.finish_edit(&id, true);
+        assert_eq!(tab_of(&app, &id).cell_value(1, 1), Some(Some("x")));
+        app.start_edit(&id, 1, 1);
+        app.workspaces
+            .get_mut(&id)
+            .unwrap()
+            .data
+            .as_mut()
+            .unwrap()
+            .editing
+            .as_mut()
+            .unwrap()
+            .text = String::new();
+        app.finish_edit(&id, true);
+        assert!(tab_of(&app, &id).cell_value(1, 1) == Some(Some("")));
+        app.workspaces
+            .get_mut(&id)
+            .unwrap()
+            .data
+            .as_mut()
+            .unwrap()
+            .set_cell(1, 1, None);
+        assert!(!tab_of(&app, &id).has_changes());
+        // Célula com texto: voltar ao valor da página também some da pendência; Esc descarta.
+        app.start_edit(&id, 0, 1);
+        app.workspaces
+            .get_mut(&id)
+            .unwrap()
+            .data
+            .as_mut()
+            .unwrap()
+            .editing
+            .as_mut()
+            .unwrap()
+            .text = "b".into();
+        app.finish_edit(&id, true);
+        assert!(tab_of(&app, &id).is_pending(0, "nome"));
+        app.start_edit(&id, 0, 1);
+        app.workspaces
+            .get_mut(&id)
+            .unwrap()
+            .data
+            .as_mut()
+            .unwrap()
+            .editing
+            .as_mut()
+            .unwrap()
+            .text = "a".into();
+        app.finish_edit(&id, true);
+        assert!(!tab_of(&app, &id).has_changes());
+        app.start_edit(&id, 0, 1);
+        app.workspaces
+            .get_mut(&id)
+            .unwrap()
+            .data
+            .as_mut()
+            .unwrap()
+            .editing
+            .as_mut()
+            .unwrap()
+            .text = "zzz".into();
+        app.finish_edit(&id, false);
+        assert!(!tab_of(&app, &id).has_changes());
+    }
+
+    /// Com página em voo não se edita (a pendência é por índice), e uma página nova descarta a
+    /// pendência com aviso em vez de deixar os índices apontarem outras linhas (achado do revisor).
+    #[test]
+    fn pagina_em_voo_trava_a_edicao_e_pagina_nova_descarta_a_pendencia() {
+        use hy_dbplus_engine::Page;
+
+        let (mut app, id) = app_with_editable_table();
+        {
+            let tab = app.workspaces.get_mut(&id).unwrap().data.as_mut().unwrap();
+            tab.set_cell(0, 1, Some("b".into()));
+            tab.deleted.insert(2);
+            assert!(tab.has_changes());
+            tab.requested = Some(Page::default());
+        }
+        assert!(!app.editable(&id), "editável com página em voo");
+        app.start_edit(&id, 0, 1);
+        assert!(tab_of(&app, &id).editing.is_none());
+        let tab = app.workspaces.get_mut(&id).unwrap().data.as_mut().unwrap();
+        let dropped = tab.accept_page(
+            Page::default(),
+            TextRows {
+                columns: vec!["id".into(), "nome".into()],
+                rows: vec![vec![Some("9".into()), Some("z".into())]],
+            },
+        );
+        assert!(dropped);
+        assert!(!tab.has_changes() && tab.requested.is_none() && !tab.loading);
+        assert_eq!(tab.error.as_deref(), Some(crate::app::DROPPED_HINT));
+        // Sem pendência, a página nova chega limpa, sem aviso.
+        assert!(!tab.accept_page(Page::default(), TextRows::default()));
+        assert!(tab.error.is_none());
+    }
+
+    /// O campo do Form vale para as linhas selecionadas vivas: a marcada para apagar fica de fora,
+    /// e o lote leva só as vivas como UPDATE e a marcada como DELETE.
+    #[test]
+    fn campo_do_form_edita_so_as_linhas_vivas_da_selecao() {
+        let (mut app, id) = app_with_editable_table();
+        {
+            let tab = app.workspaces.get_mut(&id).unwrap().data.as_mut().unwrap();
+            tab.selected_rows.extend([0, 1, 2]);
+        }
+        app.toggle_delete(&id); // marca as três
+        app.toggle_delete(&id); // todas marcadas: desmarca
+        assert!(tab_of(&app, &id).deleted.is_empty());
+        {
+            let tab = app.workspaces.get_mut(&id).unwrap().data.as_mut().unwrap();
+            tab.selected_rows.clear();
+            tab.selected_rows.insert(2);
+        }
+        app.toggle_delete(&id);
+        app.workspaces
+            .get_mut(&id)
+            .unwrap()
+            .data
+            .as_mut()
+            .unwrap()
+            .selected_rows
+            .extend([0, 1]);
+        app.set_field(&id, "nome", Some("z".into()));
+        let tab = tab_of(&app, &id);
+        assert!(tab.is_pending(0, "nome") && tab.is_pending(1, "nome"));
+        assert!(!tab.is_pending(2, "nome"), "linha marcada recebeu edição");
+        let changes = tab.change_set(&["id".to_owned()]).unwrap();
+        assert_eq!(changes.updates.len(), 2);
+        assert_eq!(changes.deletes, vec![vec!["3".to_owned()]]);
+        app.set_field(&id, "nome", None);
+        assert_eq!(tab_of(&app, &id).cell_value(0, 1), Some(None));
+        app.revert_field(&id, "nome");
+        assert!(tab_of(&app, &id).pending.is_empty());
     }
 
     /// `select_row` sem harness: ⇧ estende da âncora (para frente e para trás, ou da própria linha sem

@@ -2,13 +2,14 @@
 //! Genérico no driver para o teste de interação rodar com um engine falso; o binário usa
 //! [`PgApp`].
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 
 use hy_dbplus_engine::{
-    Column, ConnectionId, ConnectionStore, DatabaseInfo, Driver, Event, Function, Page,
-    PostgresDriver, Schema, SecretStore, Sessions, Table, TableStats, TextRows,
+    ChangeSet, Column, ConnectionId, ConnectionStore, DatabaseInfo, Driver, Event, Function, Page,
+    PostgresDriver, RowUpdate, Schema, SecretStore, Sessions, Table, TableStats, TextRows,
+    preview_sql,
 };
 
 use crate::connections::{ConnectionForm, Connections};
@@ -87,7 +88,38 @@ impl Workspace {
     }
 }
 
-/// A aba Data de uma tabela (tela 3.4): página atual, ordenação, contagem, tamanhos e seleção.
+/// Uma célula do grid em edição (FEAT-007): posição na página e o texto digitado.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CellEdit {
+    pub row: usize,
+    pub col: usize,
+    pub text: String,
+    /// O valor de onde a edição partiu (pendente ou da página): texto vazio sobre NULL continua NULL.
+    pub original: Option<String>,
+    /// Pede o foco do campo uma vez, ao abrir.
+    pub focus_pending: bool,
+}
+
+/// A caixa de Commit (FEAT-007): o SQL que vai rodar, as contagens, se já está rodando e o erro
+/// do servidor (statement ou contagem: desfeito; conexão caída no COMMIT: a mensagem diz; as
+/// pendências continuam).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CommitDialog {
+    pub sql: Vec<String>,
+    pub updates: usize,
+    pub deletes: usize,
+    pub running: bool,
+    pub error: Option<String>,
+    /// O statement que falhou (a partir de 1), destacado no SQL.
+    pub failed: Option<usize>,
+}
+
+/// Aviso quando uma página nova chega com edição pendente (não deveria acontecer: a navegação trava).
+pub const DROPPED_HINT: &str =
+    "A página foi recarregada e as alterações pendentes foram descartadas";
+
+/// A aba Data de uma tabela (tela 3.4): página atual, ordenação, contagem, tamanhos, seleção e as
+/// edições pendentes (FEAT-007).
 #[derive(Debug, Clone)]
 pub struct DataTab {
     pub schema: String,
@@ -103,6 +135,13 @@ pub struct DataTab {
     pub anchor: Option<usize>,
     /// Campos do Form abertos por "mostrar tudo".
     pub expanded_fields: HashSet<String>,
+    /// Edições pendentes por linha da página: coluna → valor novo (`None` é NULL). Nada vai ao
+    /// banco até o Commit; valor igual ao da página não fica pendente.
+    pub pending: BTreeMap<usize, BTreeMap<String, Option<String>>>,
+    /// Linhas da página marcadas para apagar.
+    pub deleted: BTreeSet<usize>,
+    pub editing: Option<CellEdit>,
+    pub commit: Option<CommitDialog>,
     pub loading: bool,
     pub error: Option<String>,
 }
@@ -119,9 +158,141 @@ impl DataTab {
             selected_rows: BTreeSet::new(),
             anchor: None,
             expanded_fields: HashSet::new(),
+            pending: BTreeMap::new(),
+            deleted: BTreeSet::new(),
+            editing: None,
+            commit: None,
             loading: true,
             error: None,
         }
+    }
+
+    /// Há edição ou exclusão pendente: ordenar, paginar, recarregar e trocar de tabela ficam
+    /// travados até o Commit ou o Descartar.
+    pub fn has_changes(&self) -> bool {
+        !self.pending.is_empty() || !self.deleted.is_empty()
+    }
+
+    /// (linhas alteradas que não estão marcadas para apagar, linhas a apagar).
+    pub fn change_counts(&self) -> (usize, usize) {
+        let updates = self
+            .pending
+            .keys()
+            .filter(|row| !self.deleted.contains(row))
+            .count();
+        (updates, self.deleted.len())
+    }
+
+    /// O valor que o grid e o Form mostram para a célula: o pendente, senão o da página; `None`
+    /// se a célula não existe.
+    pub fn cell_value(&self, row: usize, col: usize) -> Option<Option<&str>> {
+        let rows = self.rows.as_ref()?;
+        let name = rows.columns.get(col)?;
+        if let Some(value) = self.pending.get(&row).and_then(|m| m.get(name)) {
+            return Some(value.as_deref());
+        }
+        Some(rows.rows.get(row)?.get(col)?.as_deref())
+    }
+
+    pub fn is_pending(&self, row: usize, column: &str) -> bool {
+        self.pending
+            .get(&row)
+            .is_some_and(|m| m.contains_key(column))
+    }
+
+    /// Guarda o valor novo da célula; igual ao da página, a pendência some.
+    pub fn set_cell(&mut self, row: usize, col: usize, value: Option<String>) {
+        let Some(rows) = self.rows.as_ref() else {
+            return;
+        };
+        let Some(name) = rows.columns.get(col).cloned() else {
+            return;
+        };
+        let Some(original) = rows.rows.get(row).and_then(|r| r.get(col)) else {
+            return;
+        };
+        if &value == original {
+            self.revert_cell(row, &name);
+            return;
+        }
+        self.pending.entry(row).or_default().insert(name, value);
+    }
+
+    pub fn revert_cell(&mut self, row: usize, column: &str) {
+        if let Some(map) = self.pending.get_mut(&row) {
+            map.remove(column);
+            if map.is_empty() {
+                self.pending.remove(&row);
+            }
+        }
+    }
+
+    pub fn clear_changes(&mut self) {
+        self.pending.clear();
+        self.deleted.clear();
+        self.editing = None;
+    }
+
+    /// A página pedida chegou: troca as linhas e limpa a seleção. Pendência, edição ou caixa sobre
+    /// a página antiga são descartadas com aviso (os índices apontariam outras linhas); devolve
+    /// se descartou algo.
+    pub fn accept_page(&mut self, page: Page, rows: TextRows) -> bool {
+        let dropped = self.has_changes() || self.editing.is_some() || self.commit.is_some();
+        self.page = page;
+        self.requested = None;
+        self.rows = Some(Arc::new(rows));
+        self.loading = false;
+        self.error = dropped.then(|| DROPPED_HINT.to_owned());
+        self.selected_rows.clear();
+        self.anchor = None;
+        self.clear_changes();
+        self.commit = None;
+        dropped
+    }
+
+    /// O lote para o engine, com a chave de cada linha lida da página. Linha marcada para apagar
+    /// não entra como Update. `None` sem chave ou com chave NULL na página (não deveria acontecer).
+    pub fn change_set(&self, key_columns: &[String]) -> Option<ChangeSet> {
+        if key_columns.is_empty() {
+            return None;
+        }
+        let rows = self.rows.as_ref()?;
+        let key_indexes: Vec<usize> = key_columns
+            .iter()
+            .map(|k| rows.columns.iter().position(|c| c == k))
+            .collect::<Option<_>>()?;
+        let key_of = |row: usize| -> Option<Vec<String>> {
+            let cells = rows.rows.get(row)?;
+            key_indexes
+                .iter()
+                .map(|i| cells.get(*i).cloned().flatten())
+                .collect()
+        };
+        let mut updates = Vec::new();
+        for (row, map) in &self.pending {
+            if self.deleted.contains(row) {
+                continue;
+            }
+            let set: Vec<(String, Option<String>)> = rows
+                .columns
+                .iter()
+                .filter_map(|c| map.get(c).map(|v| (c.clone(), v.clone())))
+                .collect();
+            updates.push(RowUpdate {
+                key: key_of(*row)?,
+                set,
+            });
+        }
+        let deletes = self
+            .deleted
+            .iter()
+            .map(|row| key_of(*row))
+            .collect::<Option<Vec<_>>>()?;
+        Some(ChangeSet {
+            key_columns: key_columns.to_vec(),
+            updates,
+            deletes,
+        })
     }
 }
 
@@ -132,6 +303,15 @@ pub struct Palette {
     pub selected: usize,
     /// Pede o foco do campo uma vez, ao abrir; depois o usuário manda.
     pub focus_pending: bool,
+}
+
+/// Por que o lote não pôde ser montado: sem chave, ou uma linha da página sem valor de chave.
+fn batch_error(keys: &[String]) -> &'static str {
+    if keys.is_empty() {
+        "a tabela não tem chave primária: só leitura"
+    } else {
+        "não foi possível montar o lote: linha sem chave na página; descarte e recarregue"
+    }
 }
 
 pub struct App<D: Driver> {
@@ -286,13 +466,7 @@ where
                         .data_tab_mut(&id, &database, &schema, &table)
                         .filter(|t| t.requested.as_ref() == Some(&page))
                     {
-                        tab.page = page;
-                        tab.requested = None;
-                        tab.rows = Some(Arc::new(rows));
-                        tab.loading = false;
-                        tab.error = None;
-                        tab.selected_rows.clear();
-                        tab.anchor = None;
+                        tab.accept_page(page, rows);
                     }
                 }
                 Event::DataFailed {
@@ -310,8 +484,52 @@ where
                         tab.error = Some(error.to_string());
                     }
                 }
-                // FEAT-007 passo 4: recarga da página e dos stats, e a caixa de Commit com o erro.
-                Event::ChangesApplied { .. } | Event::ChangesFailed { .. } => {}
+                Event::ChangesApplied {
+                    database,
+                    schema,
+                    table,
+                    ..
+                } => {
+                    // Gravou: fecha a caixa, limpa as pendências e recarrega a página e os stats
+                    // (o engine já esvaziou o cache deles).
+                    let page = self
+                        .data_tab_mut(&id, &database, &schema, &table)
+                        .map(|tab| {
+                            tab.commit = None;
+                            tab.clear_changes();
+                            tab.selected_rows.clear();
+                            tab.anchor = None;
+                            tab.page.clone()
+                        });
+                    if let Some(page) = page {
+                        self.load_data_page(&id, page);
+                        self.deps
+                            .sessions
+                            .load_stats(&id, &database, &schema, &table);
+                    }
+                }
+                Event::ChangesFailed {
+                    database,
+                    schema,
+                    table,
+                    error,
+                    position,
+                    ..
+                } => {
+                    // Statement ou contagem: desfeito; conexão caída: a mensagem do driver diz. As
+                    // pendências ficam para corrigir. O erro vai na caixa, se ela está aberta, senão
+                    // na faixa da aba.
+                    if let Some(tab) = self.data_tab_mut(&id, &database, &schema, &table) {
+                        match tab.commit.as_mut() {
+                            Some(dialog) => {
+                                dialog.running = false;
+                                dialog.error = Some(error);
+                                dialog.failed = position;
+                            }
+                            None => tab.error = Some(error),
+                        }
+                    }
+                }
                 Event::CatalogFailed {
                     database, error, ..
                 } => {
@@ -352,6 +570,10 @@ where
         let Some(database) = self.workspaces.get(id).and_then(|ws| ws.database.clone()) else {
             return;
         };
+        // Com edição pendente a aba fica travada (a árvore desabilita as outras tabelas, com a dica).
+        if self.has_pending_changes(id) {
+            return;
+        }
         let tab = DataTab::new(schema, table);
         let page = tab.page.clone();
         if let Some(ws) = self.workspaces.get_mut(id) {
@@ -372,6 +594,9 @@ where
             return;
         };
         let Some(tab) = ws.data.as_mut() else { return };
+        if tab.has_changes() {
+            return;
+        }
         tab.requested = Some(page.clone());
         tab.loading = true;
         tab.error = None;
@@ -440,6 +665,211 @@ where
         }
         if was_empty && !tab.selected_rows.is_empty() {
             self.side_panel_open = true;
+        }
+    }
+
+    pub(crate) fn has_pending_changes(&self, id: &ConnectionId) -> bool {
+        self.workspaces
+            .get(id)
+            .and_then(|ws| ws.data.as_ref())
+            .is_some_and(DataTab::has_changes)
+    }
+
+    /// As colunas da chave primária da tabela aberta, na ordem da tabela; vazio sem cache ou sem
+    /// chave (tabela só leitura).
+    pub(crate) fn key_columns(&self, id: &ConnectionId) -> Vec<String> {
+        let Some(ws) = self.workspaces.get(id) else {
+            return Vec::new();
+        };
+        let Some(tab) = ws.data.as_ref() else {
+            return Vec::new();
+        };
+        let Some(columns) = ws.columns.get(&(tab.schema.clone(), tab.table.clone())) else {
+            return Vec::new();
+        };
+        let mut keys: Vec<&Column> = columns.iter().filter(|c| c.is_primary_key).collect();
+        keys.sort_by_key(|c| c.position);
+        keys.into_iter().map(|c| c.name.clone()).collect()
+    }
+
+    /// A tabela aberta aceita edição: tem chave primária (colunas já em cache), página na tela e
+    /// nenhuma página em voo (a pendência é por índice da página; uma página nova a invalidaria).
+    pub(crate) fn editable(&self, id: &ConnectionId) -> bool {
+        let settled = self
+            .workspaces
+            .get(id)
+            .and_then(|ws| ws.data.as_ref())
+            .is_some_and(|tab| tab.rows.is_some() && !tab.loading && tab.requested.is_none());
+        settled && !self.key_columns(id).is_empty()
+    }
+
+    fn data_tab(&mut self, id: &ConnectionId) -> Option<&mut DataTab> {
+        self.workspaces.get_mut(id).and_then(|ws| ws.data.as_mut())
+    }
+
+    /// Duplo clique numa célula: abre a edição com o valor atual (pendente ou da página).
+    pub(crate) fn start_edit(&mut self, id: &ConnectionId, row: usize, col: usize) {
+        if !self.editable(id) {
+            return;
+        }
+        let Some(tab) = self.data_tab(id) else { return };
+        if tab.deleted.contains(&row) {
+            return;
+        }
+        let Some(value) = tab.cell_value(row, col) else {
+            return;
+        };
+        let original = value.map(str::to_owned);
+        tab.editing = Some(CellEdit {
+            row,
+            col,
+            text: original.clone().unwrap_or_default(),
+            original,
+            focus_pending: true,
+        });
+    }
+
+    /// Fim da edição da célula: Enter (ou perder o foco) confirma como pendente, Esc descarta. Abrir
+    /// uma célula NULL e sair sem digitar não é mudança: texto vazio sobre NULL continua NULL.
+    pub(crate) fn finish_edit(&mut self, id: &ConnectionId, confirm: bool) {
+        let Some(tab) = self.data_tab(id) else { return };
+        let Some(edit) = tab.editing.take() else {
+            return;
+        };
+        if confirm {
+            let value = if edit.text.is_empty() && edit.original.is_none() {
+                None
+            } else {
+                Some(edit.text)
+            };
+            tab.set_cell(edit.row, edit.col, value);
+        }
+    }
+
+    /// Campo do Form: o valor vale para todas as linhas selecionadas (o lote do Update).
+    pub(crate) fn set_field(&mut self, id: &ConnectionId, column: &str, value: Option<String>) {
+        if !self.editable(id) {
+            return;
+        }
+        let Some(tab) = self.data_tab(id) else { return };
+        let Some(col) = tab
+            .rows
+            .as_ref()
+            .and_then(|r| r.columns.iter().position(|c| c == column))
+        else {
+            return;
+        };
+        for row in tab.selected_rows.clone() {
+            if !tab.deleted.contains(&row) {
+                tab.set_cell(row, col, value.clone());
+            }
+        }
+    }
+
+    pub(crate) fn revert_field(&mut self, id: &ConnectionId, column: &str) {
+        let Some(tab) = self.data_tab(id) else { return };
+        for row in tab.selected_rows.clone() {
+            tab.revert_cell(row, column);
+        }
+    }
+
+    /// ⌫ ou o botão Delete: marca as linhas selecionadas para apagar; todas já marcadas, desmarca.
+    pub(crate) fn toggle_delete(&mut self, id: &ConnectionId) {
+        if !self.editable(id) {
+            return;
+        }
+        let Some(tab) = self.data_tab(id) else { return };
+        if tab.selected_rows.is_empty() {
+            return;
+        }
+        let all_marked = tab.selected_rows.iter().all(|r| tab.deleted.contains(r));
+        for row in tab.selected_rows.clone() {
+            if all_marked {
+                tab.deleted.remove(&row);
+            } else {
+                tab.deleted.insert(row);
+            }
+        }
+        tab.editing = None;
+    }
+
+    /// Commit (botão ou ⌘S): confirma a célula em edição, monta o lote e abre a caixa com o SQL
+    /// exato; o usuário executa.
+    pub(crate) fn open_commit(&mut self, id: &ConnectionId) {
+        self.finish_edit(id, true);
+        let keys = self.key_columns(id);
+        let Some(tab) = self.data_tab(id) else { return };
+        if !tab.has_changes() || tab.commit.is_some() {
+            return;
+        }
+        let (updates, deletes) = tab.change_counts();
+        let (schema, table) = (tab.schema.clone(), tab.table.clone());
+        let Some(changes) = tab.change_set(&keys) else {
+            tab.error = Some(batch_error(&keys).to_owned());
+            return;
+        };
+        match preview_sql(&schema, &table, &changes) {
+            Ok(sql) => {
+                tab.commit = Some(CommitDialog {
+                    sql,
+                    updates,
+                    deletes,
+                    running: false,
+                    error: None,
+                    failed: None,
+                });
+            }
+            Err(error) => tab.error = Some(error.to_string()),
+        }
+    }
+
+    /// Executar na caixa: manda o lote ao engine; o resultado chega por evento.
+    pub(crate) fn execute_changes(&mut self, id: &ConnectionId) {
+        let keys = self.key_columns(id);
+        let Some(ws) = self.workspaces.get_mut(id) else {
+            return;
+        };
+        let Some(database) = ws.database.clone() else {
+            return;
+        };
+        let Some(tab) = ws.data.as_mut() else { return };
+        let Some(running) = tab.commit.as_ref().map(|d| d.running) else {
+            return;
+        };
+        if running {
+            return;
+        }
+        let changes = tab.change_set(&keys);
+        let Some(dialog) = tab.commit.as_mut() else {
+            return;
+        };
+        let Some(changes) = changes else {
+            dialog.error = Some(batch_error(&keys).to_owned());
+            return;
+        };
+        dialog.running = true;
+        dialog.error = None;
+        dialog.failed = None;
+        let (schema, table) = (tab.schema.clone(), tab.table.clone());
+        self.deps
+            .sessions
+            .apply_changes(id, &database, &schema, &table, &changes);
+    }
+
+    pub(crate) fn cancel_commit(&mut self, id: &ConnectionId) {
+        if let Some(tab) = self.data_tab(id)
+            && !tab.commit.as_ref().is_some_and(|d| d.running)
+        {
+            tab.commit = None;
+        }
+    }
+
+    /// Descartar: limpa as pendências sem tocar no banco.
+    pub(crate) fn discard_changes(&mut self, id: &ConnectionId) {
+        if let Some(tab) = self.data_tab(id)
+            && tab.commit.is_none()
+        {
+            tab.clear_changes();
         }
     }
 

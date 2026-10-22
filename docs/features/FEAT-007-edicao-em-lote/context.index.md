@@ -1,4 +1,4 @@
-<!-- FEAT_EM_ANDAMENTO — docs criados em 22/10/2026; próximo: discutir o desenho e começar por catalog::edit -->
+<!-- FEAT_EM_ANDAMENTO — implementada em 22/10/2026; falta push, CI e conferência do Jean -->
 <!-- PRIO_ALTA -->
 # @file: docs/features/FEAT-007-edicao-em-lote/context.index.md
 
@@ -32,12 +32,13 @@ as pendências; Descartar limpa. `+ Row` fica fora.
 4. docs/features/FEAT-006-painel-de-registro/ → seleção e painel que esta feature torna editáveis
 ```
 
-## Onde está o quê (quando existir)
+## Onde está o quê
 
 ```
 crates/catalog/src/edit.rs        ChangeSet, RowUpdate, changes_sql (UPDATE por linha, DELETE … IN)
 crates/driver/src/lib.rs          Connection::execute_batch (BEGIN … COMMIT, ROLLBACK em erro ou contagem)
 crates/engine/src/session.rs      apply_changes, preview_sql, ChangesApplied / ChangesFailed
+crates/ui-egui/src/app.rs         DataTab.pending/deleted/editing/commit, change_set, start_edit, toggle_delete, open_commit
 crates/ui-egui/src/data.rs        edição na célula, ⌫, chip "N alterações", travas de navegação
 crates/ui-egui/src/record.rs      campos editáveis no Form, NULL, Reverter
 crates/ui-egui/src/commit.rs      caixa de Commit: SQL, Executar, erro

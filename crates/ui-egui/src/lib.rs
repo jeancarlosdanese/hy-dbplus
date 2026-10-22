@@ -4,6 +4,7 @@
 //! Camada 4: depende só do `engine`. M1: telas 3.1 (conexões) e 3.2 (conexão aberta); M2: paleta ⌘K e árvore (3.3).
 
 mod app;
+mod commit;
 mod connections;
 mod data;
 mod palette;

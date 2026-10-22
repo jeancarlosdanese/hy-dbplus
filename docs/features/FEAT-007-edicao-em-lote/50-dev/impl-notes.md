@@ -12,8 +12,9 @@ _Atualizado em 22/10/2026._
   `Transaction` do tokio-postgres sob `RwLock`, `DriverError::Statement` e `RowCount`; teste com servidor).
 - **Feito também:** `engine::apply_changes` e `preview_sql`, eventos `ChangesApplied`/`ChangesFailed`
   (teste com driver falso que grava os lotes).
-- **Em curso:** revisão e commit do engine.
-- **Falta:** `ui-egui`; verificação do Jean.
+- **Feito também:** `ui-egui` (edição na célula e no Form, ⌫, chip, caixa de Commit, travas; teste kittest).
+- **Em curso:** commit da UI.
+- **Falta:** push, CI e verificação do Jean.
 - **Depende de:** FEAT-006 (seleção múltipla, painel Form, `Column::is_primary_key` no cache de colunas).
 - **Para retomar:** esta pasta, o brief (Must 1–5) e o `CLAUDE.md`.
 
@@ -118,3 +119,50 @@ _Atualizado em 22/10/2026._
   prova real é o teste com servidor do driver).
 - Para o passo 4: ao receber `ChangesApplied`, pedir os stats sempre (não reaproveitar `retry_data`, que só
   os pede quando `tab.stats` está vazio).
+
+### 22/10/2026 — `ui-egui`
+
+- [x] `DataTab`: `pending` (linha → coluna → valor), `deleted`, `editing: CellEdit`, `commit: CommitDialog`;
+  `set_cell` (valor igual ao da página some da pendência), `change_set(key_columns)` lê a chave de cada
+  linha da página. `App`: `key_columns` (do cache de colunas, por `is_primary_key`), `editable`,
+  `start_edit`/`finish_edit`, `set_field`/`revert_field` (todas as linhas selecionadas), `toggle_delete`,
+  `open_commit` (`preview_sql` → caixa), `execute_changes`, `cancel_commit`, `discard_changes`.
+- [x] Grid (`data.rs`): duplo clique abre `TextEdit` na célula (Enter/clicar fora confirma, Esc cancela);
+  célula pendente com fundo `accent_soft`; linha marcada riscada em vermelho; ⌫ sem campo em foco marca a
+  seleção; rodapé com Delete, chip "N alterações", Commit (⌘S) e Descartar; com pendência, ordenar,
+  paginar, tamanho da página, "Tentar de novo" e o ↻ da árvore ficam desabilitados com `LOCK_HINT`;
+  `open_table` e `load_data_page` ignoram pedidos com pendência. Sem chave: `READ_ONLY_HINT` ao lado do nome.
+- [x] Form (`record.rs`): com chave, cada campo é `TextEdit` multiline (hint "NULL" ou "Múltiplos valores"),
+  botões NULL e Reverter, rótulo "alterado"; o JSON e o Form mostram os valores pendentes.
+- [x] Caixa (`commit.rs`): `egui::Modal` com "N updates, M deletes", o SQL statement a statement (o que falhou
+  em vermelho), Copiar, Executar e Cancelar; "Executando…" trava os botões; erro fica na caixa.
+- [x] Eventos: `ChangesApplied` fecha a caixa, limpa pendências e seleção, recarrega página e stats (sempre, não
+  por `retry_data`); `ChangesFailed` vai à caixa (com `failed = position`) ou à faixa da aba.
+- [x] Teste `editar_celula_apagar_commit_executar_e_descartar`: duplo clique, digitar, Enter, trava da ordenação,
+  ⌫, caixa com o SQL exato, Executar (lote gravado pelo driver falso, recarga), erro do servidor na caixa com
+  pendência mantida, Cancelar, Descartar, Form com Reverter, view sem chave só leitura. Teste do grid da FEAT-006
+  ajustado ao Form editável (campos por papel `MultilineTextInput`).
+- Lições do kittest: duplo clique só com os dois pares press/release no mesmo frame e na mesma posição (o egui
+  exige < 6 px e < 0,3 s, e o primeiro clique abre o painel e mexe no layout); botões do rodapé e da caixa
+  por `click_accesskit()`; a dica de só leitura precisa vir logo após o nome da tabela, senão fica fora da
+  janela e some da árvore de acessibilidade.
+
+### 22/10/2026 — Revisão da UI (`process:reviewer`, 1ª rodada): cinco médios, aplicados
+
+- [x] Célula NULL aberta e fechada sem digitar virava pendência `''`: `CellEdit.original`; texto vazio sobre
+  NULL continua NULL. Teste unitário sem harness.
+- [x] Form com seleção mista (linhas vivas + marcadas) apagava o que se digitava a cada tecla: o Form editável
+  olha só as linhas vivas; o JSON mostra todas. Teste unitário de `set_field`/`change_set`.
+- [x] Pendência por índice sobre página recarregada: `editable` exige `requested.is_none()`, e
+  `DataTab::accept_page` (usado por `PageLoaded`) descarta pendência, edição e caixa com `DROPPED_HINT` se
+  uma página nova chegar com algo pendente. Teste unitário.
+- [x] Trocar de tabela com pendência degradava calada: as outras tabelas da árvore ficam desabilitadas com
+  `LOCK_HINT` (a aberta continua selecionável).
+- [x] Trocar de banco pela paleta ⌘K com pendência zerava o workspace: a paleta avisa e não troca.
+- [x] Baixos: Esc e clique fora fecham a caixa quando nada roda (`should_close`); "só leitura" só depois de as
+  colunas chegarem (antes é "ainda não"); Commit/⌘S confirma a célula em edição em vez de descartá-la;
+  lote que não monta (linha sem chave na página) avisa com a razão certa, na aba ou na caixa; comentários
+  que diziam "nada foi gravado" para qualquer erro agora distinguem conexão caída no COMMIT; brief alinhado
+  (linhas apagadas riscadas em vermelho); aceite do workflow volta a aberto até o push.
+- Não feito (anotado): `TextEdit::multiline` no Form aceita quebra de linha (intencional: valores
+  multilinha); timeout para a caixa presa em "Executando…" se o engine não responder (hoje teórico).

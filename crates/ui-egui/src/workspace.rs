@@ -6,7 +6,7 @@
 use hy_dbplus_engine::{ConnectionId, Driver};
 
 use crate::app::{App, Status, View};
-use crate::{data, palette, record, theme, tree};
+use crate::{commit, data, palette, record, theme, tree};
 
 pub fn show<D>(app: &mut App<D>, ui: &mut egui::Ui, id: &ConnectionId)
 where
@@ -124,6 +124,7 @@ where
     }
     if data_tab.is_some() {
         data::show(app, ui, id);
+        commit::show(app, ui.ctx(), id);
     } else {
         egui::CentralPanel::default_margins().show(ui, |ui| {
             ui.centered_and_justified(|ui| {
