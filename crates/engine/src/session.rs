@@ -94,6 +94,11 @@ pub enum Event {
         table: String,
         error: DriverError,
     },
+    /// Um banco da conexão foi fechado por `close_database` (a sessão e os outros bancos seguem).
+    DatabaseClosed {
+        connection: ConnectionId,
+        database: String,
+    },
     /// O lote de edição gravou (`updated` linhas alteradas, `deleted` apagadas). O cache de stats
     /// da tabela foi esvaziado: a UI recarrega a página e os stats.
     ChangesApplied {
@@ -150,6 +155,7 @@ impl Event {
             | Event::StatsLoaded { connection, .. }
             | Event::PageLoaded { connection, .. }
             | Event::DataFailed { connection, .. }
+            | Event::DatabaseClosed { connection, .. }
             | Event::ChangesApplied { connection, .. }
             | Event::ChangesFailed { connection, .. } => connection,
         }
@@ -334,6 +340,24 @@ where
 
     pub fn is_open(&self, id: &str) -> bool {
         self.session(id).is_some()
+    }
+
+    /// Fecha um banco da conexão (FEAT-008): solta os caches dele e a conexão própria cai quando o
+    /// último `Arc` some (uma tarefa em voo termina e o evento dela ainda sai; a UI, sem o banco,
+    /// o ignora). A sessão e os outros bancos continuam. Avisa só se o banco estava aberto.
+    pub fn close_database(&self, id: &str, database: &str) {
+        let closed = match self.slots.lock() {
+            Ok(mut map) => map
+                .get_mut(id)
+                .is_some_and(|slot| slot.databases.remove(database).is_some()),
+            Err(_) => false,
+        };
+        if closed {
+            self.emit(Event::DatabaseClosed {
+                connection: id.to_owned(),
+                database: database.to_owned(),
+            });
+        }
     }
 
     /// Abre o banco (conexão própria) e lê os schemas; `DatabaseSelected` ou `CatalogFailed`.
@@ -1567,5 +1591,84 @@ mod tests {
         h.sessions.disconnect(&c.id);
         assert!(matches!(next(&h.rx), Event::Disconnected { .. }));
         assert!(h.rx.recv_timeout(Duration::from_millis(150)).is_err());
+    }
+
+    /// `close_database` fecha só aquele banco: os outros seguem no cache, o fechado volta a ir ao
+    /// servidor se for aberto de novo, e banco desconhecido não avisa.
+    #[test]
+    fn fechar_um_banco_avisa_e_mantem_os_outros() {
+        let h = setup();
+        let c = conn();
+        connected(&h, &c);
+        for db in ["loja", "postgres"] {
+            h.sessions.select_database(&c.id, db);
+            assert!(matches!(next(&h.rx), Event::DatabaseSelected { .. }));
+        }
+        h.sessions.close_database(&c.id, "loja");
+        assert_eq!(
+            next(&h.rx),
+            Event::DatabaseClosed {
+                connection: c.id.clone(),
+                database: "loja".into(),
+            }
+        );
+        h.sessions.close_database(&c.id, "loja");
+        h.sessions.close_database(&c.id, "nunca-aberto");
+        assert!(
+            h.rx.try_recv().is_err(),
+            "fechar banco fechado ou desconhecido não avisa"
+        );
+        // O outro banco segue aberto (responde do cache, sem query); o fechado reabre pelo servidor.
+        let before = h.queries.load(Ordering::SeqCst);
+        h.sessions.select_database(&c.id, "postgres");
+        assert!(matches!(next(&h.rx), Event::DatabaseSelected { .. }));
+        assert_eq!(
+            h.queries.load(Ordering::SeqCst),
+            before,
+            "postgres veio do cache"
+        );
+        h.sessions.select_database(&c.id, "loja");
+        assert!(matches!(next(&h.rx), Event::DatabaseSelected { .. }));
+        assert_eq!(
+            h.queries.load(Ordering::SeqCst),
+            before + 1,
+            "loja releu os schemas"
+        );
+        assert!(h.sessions.is_open(&c.id));
+        h.sessions.close_database("conexao-inexistente", "loja");
+        assert!(h.rx.try_recv().is_err());
+    }
+
+    /// Fechar com uma página em voo: a tarefa termina e o evento ainda sai (a UI, sem o banco, o
+    /// ignora), mas nada recria o banco no engine: abri-lo de novo vai ao servidor. Falharia se
+    /// algum commit trocasse `databases.get_mut` por `entry().or_insert`.
+    #[test]
+    fn fechar_com_pagina_em_voo_nao_ressuscita_o_banco() {
+        let h = setup();
+        let c = conn();
+        connected(&h, &c);
+        h.sessions.select_database(&c.id, "loja");
+        assert!(matches!(next(&h.rx), Event::DatabaseSelected { .. }));
+        h.sessions
+            .load_page(&c.id, "loja", "public", "pedido", Page::default());
+        h.sessions.close_database(&c.id, "loja");
+        assert!(matches!(next(&h.rx), Event::DatabaseClosed { .. }));
+        // A página em voo chega (colunas + página), fora de ordem com o fechamento.
+        let mut seen = Vec::new();
+        for _ in 0..2 {
+            seen.push(next(&h.rx));
+        }
+        assert!(
+            seen.iter().any(|e| matches!(e, Event::PageLoaded { .. })),
+            "{seen:?}"
+        );
+        let before = h.queries.load(Ordering::SeqCst);
+        h.sessions.select_database(&c.id, "loja");
+        assert!(matches!(next(&h.rx), Event::DatabaseSelected { .. }));
+        assert_eq!(
+            h.queries.load(Ordering::SeqCst),
+            before + 1,
+            "loja foi reaberto pelo servidor"
+        );
     }
 }

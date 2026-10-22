@@ -6,10 +6,10 @@
 
 _Atualizado em 22/10/2026._
 
-- **Feito:** documentação.
-- **Em curso:** nada.
-- **Falta:** `engine::close_database`; UI passo 1 (workspace por banco e faixa); UI passo 2 (abas);
-  verificação do Jean.
+- **Feito:** documentação; `engine::close_database` + `DatabaseClosed` (teste: fecha só aquele banco, os
+  outros seguem do cache, o fechado reabre pelo servidor, desconhecido não avisa).
+- **Em curso:** revisão e commit do engine.
+- **Falta:** UI passo 1 (workspace por banco e faixa); UI passo 2 (abas); verificação do Jean.
 - **Depende de:** FEAT-007 (edição por aba).
 - **Para retomar:** esta pasta, a captura do TablePlus citada no brief e o `CLAUDE.md`.
 
@@ -43,3 +43,21 @@ _Atualizado em 22/10/2026._
 
 - [x] Brief, aceite, notas e índice a partir do pedido do Jean ("abrir mais de um DB e mais de uma tabela
   por DB ao mesmo tempo") e da captura do TablePlus.
+
+### 22/10/2026 — `engine::close_database`
+
+- [x] `Sessions::close_database(id, database)`: tira o banco de `slot.databases` (caches e a conexão própria
+  somem quando o último `Arc` cai) e emite `DatabaseClosed`; a sessão e os outros bancos seguem. Tarefa em
+  voo daquele banco termina e o evento dela ainda sai: a UI, sem o banco, ignora (mesmo caso de hoje para
+  tabela fechada). `disconnect` continua limpando tudo.
+- [x] Na UI, só o braço `DatabaseClosed => {}` para compilar; a faixa o trata no passo 1.
+
+### 22/10/2026 — Revisão do engine (`process:reviewer`): nada bloqueante
+
+- [x] Comentário na UI apontava "passo 2" (é o passo 1 que trata `DatabaseClosed`).
+- [x] Teste do caso em voo: `load_page` pendente, `close_database`, o `PageLoaded` ainda sai e o banco não
+  ressuscita (reabrir vai ao servidor); `close_database` em conexão desconhecida não avisa.
+- Para o passo 1 da UI: `close_database` de um banco ainda abrindo (`select_database` em voo) é no-op e o
+  banco entra aberto depois. A faixa só ganha o item no `DatabaseSelected`, então o × nunca aparece
+  enquanto abre; se a UI um dia mostrar "abrindo…" com ×, tem de repetir o `close_database` ao receber o
+  `DatabaseSelected` de um banco que já fechou.

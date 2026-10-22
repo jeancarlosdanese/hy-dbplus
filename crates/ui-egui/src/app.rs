@@ -484,6 +484,8 @@ where
                         tab.error = Some(error.to_string());
                     }
                 }
+                // FEAT-008 passo 1 da UI: a faixa de bancos tira o banco fechado.
+                Event::DatabaseClosed { .. } => {}
                 Event::ChangesApplied {
                     database,
                     schema,
