@@ -12,8 +12,8 @@ pub mod store;
 
 pub use error::EngineError;
 pub use hy_dbplus_catalog::{
-    ChangeSet, Column, Direction, EditError, Function, Order, RowUpdate, Schema, Table, TableKind,
-    TableStats,
+    ChangeSet, Column, Constraint, ConstraintKind, Direction, EditError, Function, Index, Order,
+    Reference, RowUpdate, Schema, Table, TableKind, TableStats, TableStructure, table_ddl,
 };
 pub use hy_dbplus_driver::postgres::PostgresDriver;
 pub use hy_dbplus_driver::{

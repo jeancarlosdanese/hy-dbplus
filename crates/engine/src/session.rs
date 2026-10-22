@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 
 use hy_dbplus_catalog::{
     self as catalog, ChangeSet, Column, Direction, EditError, Function, Order, Schema, Table,
-    TableStats,
+    TableStats, TableStructure,
 };
 use hy_dbplus_driver::{
     Connection as DriverConnection, ConnectionConfig, DatabaseInfo, Driver, DriverError, Secret,
@@ -94,6 +94,15 @@ pub enum Event {
         table: String,
         error: DriverError,
     },
+    /// A estrutura de uma tabela (colunas, restrições, índices, view) para Structure, Index e DDL
+    /// (FEAT-009); falha vai em `DataFailed`.
+    StructureLoaded {
+        connection: ConnectionId,
+        database: String,
+        schema: String,
+        table: String,
+        structure: TableStructure,
+    },
     /// Um banco da conexão foi fechado por `close_database` (a sessão e os outros bancos seguem).
     DatabaseClosed {
         connection: ConnectionId,
@@ -155,6 +164,7 @@ impl Event {
             | Event::StatsLoaded { connection, .. }
             | Event::PageLoaded { connection, .. }
             | Event::DataFailed { connection, .. }
+            | Event::StructureLoaded { connection, .. }
             | Event::DatabaseClosed { connection, .. }
             | Event::ChangesApplied { connection, .. }
             | Event::ChangesFailed { connection, .. } => connection,
@@ -200,6 +210,7 @@ struct Database<C> {
     objects: HashMap<String, (Vec<Table>, Vec<Function>)>,
     columns: HashMap<(String, String), Vec<Column>>,
     stats: HashMap<(String, String), TableStats>,
+    structures: HashMap<(String, String), TableStructure>,
 }
 
 /// O estado de uma conexão: a geração corrente, a sessão aberta, a senha (só em memória, para
@@ -415,6 +426,7 @@ where
                                 objects: HashMap::new(),
                                 columns: HashMap::new(),
                                 stats: HashMap::new(),
+                                structures: HashMap::new(),
                             },
                         );
                         Event::DatabaseSelected {
@@ -567,7 +579,7 @@ where
         });
     }
 
-    /// Esvazia tabelas, funções, colunas e stats do cache do banco (a conexão e a lista de schemas ficam:
+    /// Esvazia tabelas, funções, colunas, stats e estruturas do cache do banco (a conexão e a lista de schemas ficam:
     /// schema criado fora do app aparece ao reselecionar o banco); a UI recarrega o que mostra.
     pub fn refresh(&self, id: &str, database: &str) {
         if let Ok(mut map) = self.slots.lock()
@@ -576,7 +588,77 @@ where
             db.objects.clear();
             db.columns.clear();
             db.stats.clear();
+            db.structures.clear();
         }
+    }
+
+    /// Colunas, restrições, índices e definição de view de uma tabela: do cache na hora, ou as
+    /// queries do catálogo e `StructureLoaded`; falha em `DataFailed`. O ↻ (`refresh`) esvazia o
+    /// cache. Mesma pré-condição de `load_schema`.
+    pub fn load_structure(&self, id: &str, database: &str, schema: &str, table: &str) {
+        let (generation, conn) = {
+            let Ok(map) = self.slots.lock() else { return };
+            let Some(slot) = map.get(id) else { return };
+            let Some(db) = slot.databases.get(database) else {
+                return;
+            };
+            if let Some(structure) = db.structures.get(&(schema.to_owned(), table.to_owned())) {
+                let event = Event::StructureLoaded {
+                    connection: id.to_owned(),
+                    database: database.to_owned(),
+                    schema: schema.to_owned(),
+                    table: table.to_owned(),
+                    structure: structure.clone(),
+                };
+                drop(map);
+                self.emit(event);
+                return;
+            }
+            (slot.generation, Arc::clone(&db.conn))
+        };
+        let (id, database, schema, table) = (
+            id.to_owned(),
+            database.to_owned(),
+            schema.to_owned(),
+            table.to_owned(),
+        );
+        let events = self.events.clone();
+        let repaint = Arc::clone(&self.repaint);
+        let slots = Arc::clone(&self.slots);
+        self.runtime.spawn(async move {
+            let sent = match catalog::structure(&*conn, &schema, &table).await {
+                Ok(structure) => commit_if_current(&slots, &events, &id, generation, |slot| {
+                    if let Some(db) = slot.databases.get_mut(&database) {
+                        // As colunas da estrutura servem à árvore e à edição também: sem isso
+                        // ficariam duas cópias, e uma query a mais ao abrir a tabela depois.
+                        db.columns
+                            .entry((schema.clone(), table.clone()))
+                            .or_insert_with(|| structure.columns.clone());
+                        db.structures
+                            .insert((schema.clone(), table.clone()), structure.clone());
+                    }
+                    Event::StructureLoaded {
+                        connection: id.clone(),
+                        database: database.clone(),
+                        schema: schema.clone(),
+                        table: table.clone(),
+                        structure,
+                    }
+                }),
+                Err(error) => {
+                    commit_if_current(&slots, &events, &id, generation, |_| Event::DataFailed {
+                        connection: id.clone(),
+                        database: database.clone(),
+                        schema: schema.clone(),
+                        table: table.clone(),
+                        error,
+                    })
+                }
+            };
+            if sent {
+                repaint();
+            }
+        });
     }
 
     /// Tamanhos, contagem e comentário da tabela: do cache na hora, ou duas queries e `StatsLoaded`.
@@ -977,7 +1059,7 @@ mod tests {
             }
 
             // Da mais específica para a mais geral: tabelas e funções também citam pg_namespace.
-            let rows = if sql.contains("\"quebrada\"") {
+            let rows = if sql.contains("\"quebrada\"") || sql.contains("E'quebrada'") {
                 return Err(DriverError::Db(
                     "relation \"public.quebrada\" does not exist".into(),
                 ));
@@ -995,6 +1077,34 @@ mod tests {
                     columns: vec!["id".into(), "nome".into()],
                     rows: vec![row(&[Some("1"), Some("a")]), row(&[Some("2"), None])],
                 });
+            } else if sql.contains("pg_get_viewdef") {
+                vec![row(&[Some("r"), Some("pedidos"), None])]
+            } else if sql.contains("pg_am ") {
+                vec![row(&[
+                    Some("pedido_pkey"),
+                    Some("btree"),
+                    Some("t"),
+                    Some("t"),
+                    Some("CREATE UNIQUE INDEX pedido_pkey ON public.pedido USING btree (id)"),
+                    Some("id"),
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some("t"),
+                ])]
+            } else if sql.contains("pg_get_constraintdef") {
+                vec![row(&[
+                    Some("pedido_pkey"),
+                    Some("p"),
+                    Some("PRIMARY KEY (id)"),
+                    Some("id"),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                ])]
             } else if sql.contains("pg_attribute") {
                 vec![row(&[
                     Some("id"),
@@ -1670,5 +1780,54 @@ mod tests {
             before + 1,
             "loja foi reaberto pelo servidor"
         );
+    }
+
+    /// `load_structure`: as queries do catálogo uma vez, depois do cache; o ↻ esvazia; erro em
+    /// `DataFailed`.
+    #[test]
+    fn estrutura_vem_do_cache_e_o_refresh_a_esvazia() {
+        let h = setup();
+        let c = conn();
+        connected(&h, &c);
+        h.sessions.select_database(&c.id, "loja");
+        let _ = next(&h.rx);
+        let before = h.queries.load(Ordering::SeqCst);
+        h.sessions.load_structure(&c.id, "loja", "public", "pedido");
+        let event = next(&h.rx);
+        let Event::StructureLoaded { structure, .. } = &event else {
+            panic!("{event:?}")
+        };
+        assert_eq!(structure.table.comment.as_deref(), Some("pedidos"));
+        assert_eq!(structure.columns.len(), 1);
+        assert_eq!(structure.constraints.len(), 1);
+        assert_eq!(structure.indexes.len(), 1);
+        assert!(structure.indexes[0].is_constraint);
+        assert_eq!(
+            h.queries.load(Ordering::SeqCst),
+            before + 4,
+            "cabeçalho, colunas, restrições e índices"
+        );
+        h.sessions.load_structure(&c.id, "loja", "public", "pedido");
+        assert!(matches!(next(&h.rx), Event::StructureLoaded { .. }));
+        assert_eq!(h.queries.load(Ordering::SeqCst), before + 4, "do cache");
+        // As colunas lidas pela estrutura também abastecem o cache de colunas.
+        h.sessions.load_columns(&c.id, "loja", "public", "pedido");
+        assert!(matches!(next(&h.rx), Event::ColumnsLoaded { .. }));
+        assert_eq!(
+            h.queries.load(Ordering::SeqCst),
+            before + 4,
+            "colunas do cache"
+        );
+        h.sessions.refresh(&c.id, "loja");
+        h.sessions.load_structure(&c.id, "loja", "public", "pedido");
+        assert!(matches!(next(&h.rx), Event::StructureLoaded { .. }));
+        assert_eq!(
+            h.queries.load(Ordering::SeqCst),
+            before + 8,
+            "relido depois do ↻"
+        );
+        h.sessions
+            .load_structure(&c.id, "loja", "public", "quebrada");
+        assert!(matches!(next(&h.rx), Event::DataFailed { .. }));
     }
 }

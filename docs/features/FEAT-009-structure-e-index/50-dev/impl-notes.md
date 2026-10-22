@@ -8,9 +8,10 @@ _Atualizado em 22/10/2026._
 
 - **Feito:** documentação; `catalog::structure` e `catalog::ddl` (modelo, carregador em quatro queries,
   gerador de DDL; testes puros e com servidor, inclusive o round-trip do DDL).
-- **Em curso:** revisão e commit do catálogo.
-- **Falta:** `engine::load_structure`; `ui-egui` (sub-abas, Structure, Index, caixa do DDL); verificação do
-  Jean.
+- **Feito também:** `engine::load_structure` com cache por tabela, `StructureLoaded`, `refresh` esvazia
+  (teste com driver falso).
+- **Em curso:** revisão e commit do engine.
+- **Falta:** `ui-egui` (sub-abas, Structure, Index, caixa do DDL); verificação do Jean.
 - **Depende de:** FEAT-008 (aba de tabela).
 - **Para retomar:** esta pasta, BRIEF §3.5 e §3.6, e o `CLAUDE.md`.
 
@@ -75,3 +76,21 @@ _Atualizado em 22/10/2026._
   o Won't de collation e `WITH NO DATA`.
 - Para o Jean: o órfão `hy_dbplus_test_59947_728128000_2` no banco local pode ser apagado com
   `DROP SCHEMA hy_dbplus_test_59947_728128000_2 CASCADE` (eu não apago nada no seu banco sem pedir).
+
+### 22/10/2026 — `engine::load_structure`
+
+- [x] `Database.structures: HashMap<(schema, tabela), TableStructure>`; `load_structure` no molde de
+  `load_stats` (cache na hora, senão tarefa com `catalog::structure` e `commit_if_current`); `StructureLoaded`
+  com a estrutura; erro em `DataFailed`; `refresh` esvazia junto com objetos, colunas e stats. `table_ddl` e
+  os tipos novos reexportados pelo engine.
+- [x] Teste: quatro queries na primeira vez, zero na segunda (cache), quatro de novo depois do ↻; tabela que o
+  driver falso recusa vira `DataFailed`. O driver falso responde às três queries novas (cabeçalho, restrições,
+  índices): o cabeçalho antes dos ramos de `pg_class`/`pg_namespace`, restrições e índices antes do de colunas
+  (as duas também citam `pg_attribute`).
+- [x] UI: só o braço `StructureLoaded => {}` para compilar.
+
+### 22/10/2026 — Revisão do engine (`process:reviewer`): nada bloqueante
+
+- [x] Doc do `refresh` cita as estruturas; nota do driver falso com a justificativa certa.
+- [x] As colunas lidas pela estrutura abastecem `db.columns` (`entry().or_insert_with`), como `load_page` faz:
+  sem duas cópias e sem query a mais ao abrir Structure depois de Data; teste cobre.

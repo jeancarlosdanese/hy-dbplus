@@ -567,6 +567,8 @@ where
                         tab.error = Some(error.to_string());
                     }
                 }
+                // FEAT-009 passo 3: a aba guarda a estrutura para Structure, Index e DDL.
+                Event::StructureLoaded { .. } => {}
                 Event::DatabaseClosed { database, .. } => {
                     self.forget_database(&(id, database));
                 }
