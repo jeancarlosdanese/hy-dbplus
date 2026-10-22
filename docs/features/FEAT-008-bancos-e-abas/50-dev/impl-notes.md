@@ -87,3 +87,20 @@ _Atualizado em 22/10/2026._
   "a" caía sob o painel direito nos 800 px padrão e o clique não chegava ao grid.
 - Fica para o passo 2: "Desconectar" com pendência sem confirmação (hoje fecha tudo); `open_table` ainda troca
   a tabela da aba única e mantém a trava de trocar de tabela.
+
+### 22/10/2026 — Revisão da UI passo 1 (`process:reviewer`): um alto, um médio, aplicados
+
+- [x] **Alto:** o × da faixa nunca recebia o clique do mouse: o retângulo clicável do item era registrado
+  depois dos filhos e, no empate do hit test do egui, o último registrado ganha. O teste passava porque
+  clicava o × por acessibilidade. Agora o fundo clicável é alocado antes dos filhos
+  (`allocate_exact_size` + `scope_builder`, altura fixa, nome truncado) e o teste clica com o ponteiro:
+  falha sem o conserto.
+- [x] **Médio:** com um banco ativo, "Abrindo…" e o erro do ⌘K ficavam invisíveis (só apareciam no painel
+  esquerdo sem banco). Faixa de aviso abaixo da barra, com OK para dispensar o erro; teste.
+- [x] Dois ⌘K seguidos: o erro do primeiro é registrado mesmo com `opening` já no segundo; `opening` só
+  some quando o `DatabaseSelected`/`CatalogFailed` é do mesmo banco.
+- [x] Brief: 84 px (era 72) e sem ⌘⇧W. Testes a mais: ⌘K num banco já na faixa mantém a pendência; fechar
+  o único banco deixa a faixa vazia com o convite.
+- Anotado: "Abrir" na lista para conexão sem banco na faixa deixa `active = None`; `key_of` escolhe o
+  primeiro da faixa quando o ativo é de outra conexão (guardar o último ativo por conexão seria mais
+  previsível). Fica para quando incomodar.

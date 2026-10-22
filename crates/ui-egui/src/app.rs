@@ -426,7 +426,9 @@ where
                     // o ativo. Já aberto na UI, só vira o ativo, sem perder árvore e aba.
                     let key = (id.clone(), database.clone());
                     if let Some(state) = self.conn_state.get_mut(&id) {
-                        state.opening = None;
+                        if state.opening.as_deref() == Some(database.as_str()) {
+                            state.opening = None;
+                        }
                         state.error = None;
                     }
                     if !self.workspaces.contains_key(&key) {
@@ -568,12 +570,12 @@ where
                     if let Some(ws) = self.workspaces.get_mut(&(id.clone(), database.clone())) {
                         ws.loading = false;
                         ws.error = Some(error.to_string());
-                    } else if let Some(state) = self
-                        .conn_state
-                        .get_mut(&id)
-                        .filter(|s| s.opening.as_deref() == Some(database.as_str()))
-                    {
-                        state.opening = None;
+                    } else if let Some(state) = self.conn_state.get_mut(&id) {
+                        // Dois ⌘K seguidos: o erro do primeiro ainda aparece, mesmo que `opening` já
+                        // seja o segundo.
+                        if state.opening.as_deref() == Some(database.as_str()) {
+                            state.opening = None;
+                        }
                         state.error = Some(format!("{database}: {error}"));
                     }
                 }

@@ -8,6 +8,7 @@ use crate::app::{App, DbKey};
 use crate::theme;
 
 pub const WIDTH: f32 = 84.0;
+const ITEM_HEIGHT: f32 = 92.0;
 
 pub fn show<D>(app: &mut App<D>, ui: &mut egui::Ui)
 where
@@ -39,47 +40,52 @@ where
                     } else {
                         tokens.panel
                     };
-                    let frame = egui::Frame::new()
-                        .fill(fill)
-                        .stroke(egui::Stroke::new(if active { 2.0 } else { 1.0 }, color))
-                        .corner_radius(tokens.radius)
-                        .inner_margin(4.0);
-                    let response = frame
-                        .show(ui, |ui| {
-                            ui.set_width(WIDTH - 16.0);
-                            ui.vertical_centered(|ui| {
-                                // Rótulos sem seleção de texto: o clique tem de chegar ao item.
-                                ui.add(
-                                    egui::Label::new(egui::RichText::new("🛢").size(18.0))
-                                        .selectable(false),
-                                );
-                                ui.add(
-                                    egui::Label::new(
-                                        egui::RichText::new(database).small().strong(),
-                                    )
-                                    .wrap()
+                    // O fundo clicável é registrado ANTES dos filhos: no hit test do egui o empate
+                    // vai ao último registrado, e com o fundo por cima o × nunca receberia o clique
+                    // (achado do revisor, 22/10/2026). Altura fixa: nome truncado, sem quebra.
+                    let (rect, response) = ui.allocate_exact_size(
+                        egui::vec2(WIDTH - 16.0, ITEM_HEIGHT),
+                        egui::Sense::click(),
+                    );
+                    ui.painter().rect(
+                        rect,
+                        tokens.radius,
+                        fill,
+                        egui::Stroke::new(if active { 2.0 } else { 1.0 }, color),
+                        egui::StrokeKind::Inside,
+                    );
+                    ui.scope_builder(egui::UiBuilder::new().max_rect(rect.shrink(4.0)), |ui| {
+                        ui.vertical_centered(|ui| {
+                            // Rótulos sem seleção de texto: o clique tem de chegar ao item.
+                            ui.add(
+                                egui::Label::new(egui::RichText::new("🛢").size(18.0))
                                     .selectable(false),
-                                );
-                                ui.add(
-                                    egui::Label::new(
-                                        egui::RichText::new(&name).small().color(tokens.text_muted),
-                                    )
+                            );
+                            ui.add(
+                                egui::Label::new(egui::RichText::new(database).small().strong())
                                     .truncate()
                                     .selectable(false),
-                                );
-                                if ui
-                                    .small_button("×")
-                                    .on_hover_text("Fechar este banco")
-                                    .clicked()
-                                {
-                                    close = Some(key.clone());
-                                }
-                            });
-                        })
-                        .response
-                        .interact(egui::Sense::click())
-                        .on_hover_text(format!("{name} : {database}"));
-                    if response.clicked() {
+                            );
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(&name).small().color(tokens.text_muted),
+                                )
+                                .truncate()
+                                .selectable(false),
+                            );
+                            if ui
+                                .small_button("×")
+                                .on_hover_text("Fechar este banco")
+                                .clicked()
+                            {
+                                close = Some(key.clone());
+                            }
+                        });
+                    });
+                    if response
+                        .on_hover_text(format!("{name} : {database}"))
+                        .clicked()
+                    {
                         activate = Some(key.clone());
                     }
                     ui.add_space(4.0);

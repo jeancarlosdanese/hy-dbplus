@@ -75,6 +75,30 @@ where
                 });
             });
         });
+    // Com um banco ativo a árvore ocupa o painel esquerdo: o "Abrindo…" e o erro do ⌘K vão numa
+    // faixa abaixo da barra, senão o usuário escolhe um banco e nada acontece (achado do revisor).
+    let state = app.conn_state.get(&id).cloned().unwrap_or_default();
+    if active.is_some() && (state.opening.is_some() || state.error.is_some()) {
+        let mut dismiss = false;
+        egui::Panel::top("workspace-notice").show(ui, |ui| {
+            ui.horizontal(|ui| {
+                if let Some(db) = &state.opening {
+                    ui.label(
+                        egui::RichText::new(format!("Abrindo {db}…")).color(tokens.text_muted),
+                    );
+                }
+                if let Some(error) = &state.error {
+                    ui.colored_label(theme::error_color(), error);
+                    if ui.small_button("OK").clicked() {
+                        dismiss = true;
+                    }
+                }
+            });
+        });
+        if dismiss && let Some(state) = app.conn_state.get_mut(&id) {
+            state.error = None;
+        }
+    }
     rail::show(app, ui);
     egui::Panel::left("workspace-left")
         .default_size(260.0)
@@ -89,7 +113,6 @@ where
             if let Some(key) = &active {
                 tree::show(app, ui, key);
             } else {
-                let state = app.conn_state.get(&id).cloned().unwrap_or_default();
                 if state.opening.is_some() {
                     ui.label(egui::RichText::new("Abrindo banco…").color(tokens.text_muted));
                 } else {
@@ -97,7 +120,7 @@ where
                         egui::RichText::new("Nenhum banco selecionado.").color(tokens.text_muted),
                     );
                 }
-                if let Some(error) = state.error {
+                if let Some(error) = &state.error {
                     ui.colored_label(theme::error_color(), error);
                 }
                 if ui.button("Escolher banco (⌘K)").clicked() {

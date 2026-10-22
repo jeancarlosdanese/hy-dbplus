@@ -26,9 +26,9 @@ abrir outra aba.
    conexão: mostra o banco ativo. Todo evento do engine traz conexão e banco e vai ao workspace certo; os de
    dados (`ColumnsLoaded`, `StatsLoaded`, `PageLoaded`, `DataFailed`, `ChangesApplied`, `ChangesFailed`)
    vão à aba daquela tabela.
-2. **Faixa de bancos** (`rail.rs`, 72 px à esquerda): um item por banco aberto, ícone de banco, nome do
+2. **Faixa de bancos** (`rail.rs`, 84 px à esquerda): um item por banco aberto, ícone de banco, nome do
    banco em duas linhas se precisar, cor do ambiente da conexão na borda; o ativo em destaque; clique troca;
-   × (ou ⌘⇧W) fecha o banco: fecha as abas dele (confirmação se alguma tem pendência) e pede ao engine
+   × fecha o banco: fecha as abas dele (confirmação se alguma tem pendência) e pede ao engine
    `close_database`. "← Conexões" no topo volta à lista sem fechar nada; "Desconectar" na lista fecha os
    bancos daquela conexão (com a mesma confirmação).
 3. **⌘K** abre o banco escolhido: se já está na faixa, só seleciona; senão o engine abre (`select_database`

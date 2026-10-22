@@ -1310,7 +1310,8 @@ mod tests {
         let open_db = |harness: &mut Harness<'_, App<FakeDriver>>, db: &str| {
             harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::K);
             harness.step();
-            harness.get_by_label(db).click();
+            // O nome do banco também está na faixa: o da paleta (janela, por cima) é o último nó.
+            harness.get_all_by_label(db).last().unwrap().click();
             wait_for(harness, "DatabaseSelected", |app| {
                 app.active.as_ref().is_some_and(|k| k.1 == db)
                     && app
@@ -1365,27 +1366,40 @@ mod tests {
         harness.get_by_label("1 alteração");
         harness.get_by_label("public.pedido");
 
-        // × no banco com pendência: confirmação; Cancelar mantém; Descartar e fechar tira da faixa.
-        harness
-            .get_all_by_label("×")
-            .next()
-            .unwrap()
-            .click_accesskit();
+        // ⌘K num banco já na faixa só o seleciona: nada se perde (a pendência da FEAT-007 fica).
+        open_db(&mut harness, "postgres");
+        open_db(&mut harness, "loja");
+        assert_eq!(harness.state().rail.len(), 2);
+        harness.get_by_label("1 alteração");
+        // ⌘K num banco que não abre, com outro ativo: o erro aparece numa faixa, não some.
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::K);
+        harness.step();
+        harness.get_by_label("template0").click();
+        wait_for(&mut harness, "CatalogFailed", |app| {
+            app.conn_state.get(&id).is_some_and(|s| s.error.is_some())
+        });
+        harness.get_by_label_contains("template0: ");
+        harness.get_by_label("OK").click();
         harness.step();
         harness.step();
+        assert!(harness.query_by_label_contains("template0: ").is_none());
+        assert_eq!(harness.state().rail.len(), 2);
+
+        // × no banco com pendência, com clique de ponteiro (o × fica dentro do item clicável):
+        // confirmação; Cancelar mantém; Descartar e fechar tira da faixa.
+        let close_first = |harness: &mut Harness<'_, App<FakeDriver>>| {
+            harness.get_all_by_label("×").next().unwrap().click();
+            harness.step();
+            harness.step();
+        };
+        close_first(&mut harness);
         harness.get_by_label("Fechar o banco?");
         harness.get_by_label("Cancelar").click_accesskit();
         harness.step();
         harness.step();
         assert!(harness.query_by_label("Fechar o banco?").is_none());
         assert_eq!(harness.state().rail.len(), 2);
-        harness
-            .get_all_by_label("×")
-            .next()
-            .unwrap()
-            .click_accesskit();
-        harness.step();
-        harness.step();
+        close_first(&mut harness);
         harness.get_by_label("Descartar e fechar").click_accesskit();
         wait_for(&mut harness, "DatabaseClosed", |app| app.rail.len() == 1);
         assert_eq!(
@@ -1394,6 +1408,13 @@ mod tests {
         );
         assert!(harness.query_by_label("1 alteração").is_none());
         harness.get_by_label("Escolha uma tabela na árvore.");
+
+        // Fechar o único banco: faixa vazia, conexão em foco, convite ao ⌘K.
+        close_first(&mut harness);
+        wait_for(&mut harness, "faixa vazia", |app| app.rail.is_empty());
+        assert!(harness.state().active.is_none());
+        assert_eq!(harness.state().view, View::Workspace);
+        harness.get_by_label("Nenhum banco selecionado.");
     }
 
     /// `select_row` sem harness: ⇧ estende da âncora (para frente e para trás, ou da própria linha sem
