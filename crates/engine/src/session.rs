@@ -7,15 +7,18 @@
 //!
 //! Banco selecionado (M2): no PostgreSQL cada banco é uma conexão própria, aberta com a mesma
 //! configuração e a senha guardada em memória na sessão. O catálogo é lido por demanda (schemas ao
-//! selecionar; tabelas e funções por schema; colunas por tabela) e fica em cache até `refresh`.
+//! selecionar; tabelas e funções por schema; colunas e stats por tabela) e fica em cache até `refresh`.
 
 use std::collections::HashMap;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
-use hy_dbplus_catalog::{self as catalog, Column, Function, Schema, Table};
+use hy_dbplus_catalog::{
+    self as catalog, Column, Direction, Function, Order, Schema, Table, TableStats,
+};
 use hy_dbplus_driver::{
     Connection as DriverConnection, ConnectionConfig, DatabaseInfo, Driver, DriverError, Secret,
+    TextRows,
 };
 
 use crate::store::{Connection, ConnectionId};
@@ -65,6 +68,49 @@ pub enum Event {
         database: String,
         error: DriverError,
     },
+    /// Tamanhos, contagem e comentário de uma tabela (aba Data).
+    StatsLoaded {
+        connection: ConnectionId,
+        database: String,
+        schema: String,
+        table: String,
+        stats: TableStats,
+    },
+    /// Uma página de linhas de uma tabela e a página pedida (o total vem dos `stats`).
+    PageLoaded {
+        connection: ConnectionId,
+        database: String,
+        schema: String,
+        table: String,
+        page: Page,
+        rows: TextRows,
+    },
+    /// Falha de stats ou de página de uma tabela (a árvore e a sessão continuam como estavam).
+    DataFailed {
+        connection: ConnectionId,
+        database: String,
+        schema: String,
+        table: String,
+        error: DriverError,
+    },
+}
+
+/// O que uma página pede: ordenação opcional, tamanho e deslocamento (`LIMIT/OFFSET`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Page {
+    pub order: Option<Order>,
+    pub limit: u32,
+    pub offset: u64,
+}
+
+impl Default for Page {
+    fn default() -> Self {
+        Self {
+            order: None,
+            limit: 100,
+            offset: 0,
+        }
+    }
 }
 
 impl Event {
@@ -77,7 +123,10 @@ impl Event {
             | Event::DatabaseSelected { connection, .. }
             | Event::SchemaLoaded { connection, .. }
             | Event::ColumnsLoaded { connection, .. }
-            | Event::CatalogFailed { connection, .. } => connection,
+            | Event::CatalogFailed { connection, .. }
+            | Event::StatsLoaded { connection, .. }
+            | Event::PageLoaded { connection, .. }
+            | Event::DataFailed { connection, .. } => connection,
         }
     }
 }
@@ -119,6 +168,7 @@ struct Database<C> {
     current_schema: Option<String>,
     objects: HashMap<String, (Vec<Table>, Vec<Function>)>,
     columns: HashMap<(String, String), Vec<Column>>,
+    stats: HashMap<(String, String), TableStats>,
 }
 
 /// O estado de uma conexão: a geração corrente, a sessão aberta, a senha (só em memória, para
@@ -315,6 +365,7 @@ where
                                 current_schema: current_schema.clone(),
                                 objects: HashMap::new(),
                                 columns: HashMap::new(),
+                                stats: HashMap::new(),
                             },
                         );
                         Event::DatabaseSelected {
@@ -467,7 +518,7 @@ where
         });
     }
 
-    /// Esvazia tabelas, funções e colunas do cache do banco (a conexão e a lista de schemas ficam:
+    /// Esvazia tabelas, funções, colunas e stats do cache do banco (a conexão e a lista de schemas ficam:
     /// schema criado fora do app aparece ao reselecionar o banco); a UI recarrega o que mostra.
     pub fn refresh(&self, id: &str, database: &str) {
         if let Ok(mut map) = self.slots.lock()
@@ -475,13 +526,172 @@ where
         {
             db.objects.clear();
             db.columns.clear();
+            db.stats.clear();
         }
+    }
+
+    /// Tamanhos, contagem e comentário da tabela: do cache na hora, ou duas queries e `StatsLoaded`.
+    /// Mesma pré-condição de `load_schema`.
+    pub fn load_stats(&self, id: &str, database: &str, schema: &str, table: &str) {
+        let (generation, conn) = {
+            let Ok(map) = self.slots.lock() else { return };
+            let Some(slot) = map.get(id) else { return };
+            let Some(db) = slot.databases.get(database) else {
+                return;
+            };
+            if let Some(stats) = db.stats.get(&(schema.to_owned(), table.to_owned())) {
+                let event = Event::StatsLoaded {
+                    connection: id.to_owned(),
+                    database: database.to_owned(),
+                    schema: schema.to_owned(),
+                    table: table.to_owned(),
+                    stats: stats.clone(),
+                };
+                drop(map);
+                self.emit(event);
+                return;
+            }
+            (slot.generation, Arc::clone(&db.conn))
+        };
+        let (id, database, schema, table) = (
+            id.to_owned(),
+            database.to_owned(),
+            schema.to_owned(),
+            table.to_owned(),
+        );
+        let events = self.events.clone();
+        let repaint = Arc::clone(&self.repaint);
+        let slots = Arc::clone(&self.slots);
+        self.runtime.spawn(async move {
+            let sent = match catalog::stats(&*conn, &schema, &table).await {
+                Ok(stats) => commit_if_current(&slots, &events, &id, generation, |slot| {
+                    if let Some(db) = slot.databases.get_mut(&database) {
+                        db.stats
+                            .insert((schema.clone(), table.clone()), stats.clone());
+                    }
+                    Event::StatsLoaded {
+                        connection: id.clone(),
+                        database: database.clone(),
+                        schema: schema.clone(),
+                        table: table.clone(),
+                        stats,
+                    }
+                }),
+                Err(error) => {
+                    commit_if_current(&slots, &events, &id, generation, |_| Event::DataFailed {
+                        connection: id.clone(),
+                        database: database.clone(),
+                        schema: schema.clone(),
+                        table: table.clone(),
+                        error,
+                    })
+                }
+            };
+            if sent {
+                repaint();
+            }
+        });
+    }
+
+    /// Uma página de linhas (`LIMIT/OFFSET`), ordenada pela coluna pedida e, como desempate, pela
+    /// chave primária: se as colunas da tabela ainda não estão em cache, a tarefa as lê antes da
+    /// primeira página (uma query a mais, uma vez por tabela), para todas as páginas saírem sob a
+    /// mesma ordem. Sem cache de página: `PageLoaded` a cada chamada; o total vem de `load_stats`.
+    /// Mesma pré-condição de `load_schema`.
+    pub fn load_page(&self, id: &str, database: &str, schema: &str, table: &str, page: Page) {
+        let (generation, conn, cached_columns) = {
+            let Ok(map) = self.slots.lock() else { return };
+            let Some(slot) = map.get(id) else { return };
+            let Some(db) = slot.databases.get(database) else {
+                return;
+            };
+            (
+                slot.generation,
+                Arc::clone(&db.conn),
+                db.columns
+                    .get(&(schema.to_owned(), table.to_owned()))
+                    .cloned(),
+            )
+        };
+        let (id, database, schema, table) = (
+            id.to_owned(),
+            database.to_owned(),
+            schema.to_owned(),
+            table.to_owned(),
+        );
+        let events = self.events.clone();
+        let repaint = Arc::clone(&self.repaint);
+        let slots = Arc::clone(&self.slots);
+        self.runtime.spawn(async move {
+            let result = async {
+                let fetched = match cached_columns {
+                    Some(_) => None,
+                    None => Some(catalog::columns(&*conn, &schema, &table).await?),
+                };
+                let columns = cached_columns
+                    .as_deref()
+                    .or(fetched.as_deref())
+                    .unwrap_or_default();
+                let order = order_with_primary_key(page.order.as_ref(), columns);
+                let rows =
+                    catalog::page(&*conn, &schema, &table, &order, page.limit, page.offset).await?;
+                Ok::<_, DriverError>((fetched, rows))
+            }
+            .await;
+            let sent = match result {
+                Ok((fetched, rows)) => {
+                    commit_if_current(&slots, &events, &id, generation, |slot| {
+                        if let (Some(columns), Some(db)) =
+                            (fetched, slot.databases.get_mut(&database))
+                        {
+                            db.columns
+                                .entry((schema.clone(), table.clone()))
+                                .or_insert(columns);
+                        }
+                        Event::PageLoaded {
+                            connection: id.clone(),
+                            database: database.clone(),
+                            schema: schema.clone(),
+                            table: table.clone(),
+                            page,
+                            rows,
+                        }
+                    })
+                }
+                Err(error) => {
+                    commit_if_current(&slots, &events, &id, generation, |_| Event::DataFailed {
+                        connection: id.clone(),
+                        database: database.clone(),
+                        schema: schema.clone(),
+                        table: table.clone(),
+                        error,
+                    })
+                }
+            };
+            if sent {
+                repaint();
+            }
+        });
     }
 
     fn emit(&self, event: Event) {
         let _ = self.events.send(event);
         (self.repaint)();
     }
+}
+
+/// A coluna pedida e, depois dela, as colunas de chave primária que ainda não estão na lista.
+fn order_with_primary_key(chosen: Option<&Order>, columns: &[Column]) -> Vec<Order> {
+    let mut order: Vec<Order> = chosen.into_iter().cloned().collect();
+    for pk in columns.iter().filter(|c| c.is_primary_key) {
+        if order.iter().all(|o| o.column != pk.name) {
+            order.push(Order {
+                column: pk.name.clone(),
+                direction: Direction::Asc,
+            });
+        }
+    }
+    order
 }
 
 /// Sob o lock: se a geração ainda é a da tentativa, aplica a mudança ao `Slot` e envia o evento
@@ -538,9 +748,11 @@ mod tests {
     #[derive(Default)]
     struct FakeDriver {
         queries: Arc<AtomicUsize>,
+        last_sql: Arc<Mutex<String>>,
     }
     struct FakeConn {
         queries: Arc<AtomicUsize>,
+        last_sql: Arc<Mutex<String>>,
     }
 
     fn row(cells: &[Option<&str>]) -> Vec<Option<String>> {
@@ -566,8 +778,30 @@ mod tests {
         }
         async fn query_text(&self, sql: &str) -> Result<TextRows, DriverError> {
             self.queries.fetch_add(1, Ordering::SeqCst);
+            if let Ok(mut last) = self.last_sql.lock() {
+                *last = sql.to_owned();
+            }
+
             // Da mais específica para a mais geral: tabelas e funções também citam pg_namespace.
-            let rows = if sql.contains("pg_attribute") {
+            let rows = if sql.contains("\"quebrada\"") {
+                return Err(DriverError::Db(
+                    "relation \"public.quebrada\" does not exist".into(),
+                ));
+            } else if sql.starts_with("SELECT count(*)") {
+                vec![row(&[Some("3")])]
+            } else if sql.contains("pg_total_relation_size") {
+                vec![row(&[
+                    Some("24 kB"),
+                    Some("8192 bytes"),
+                    Some("16 kB"),
+                    Some("pedidos"),
+                ])]
+            } else if sql.starts_with("SELECT * FROM") {
+                return Ok(TextRows {
+                    columns: vec!["id".into(), "nome".into()],
+                    rows: vec![row(&[Some("1"), Some("a")]), row(&[Some("2"), None])],
+                });
+            } else if sql.contains("pg_attribute") {
                 vec![row(&[
                     Some("id"),
                     Some("integer"),
@@ -621,6 +855,7 @@ mod tests {
             }
             Ok(FakeConn {
                 queries: Arc::clone(&self.queries),
+                last_sql: Arc::clone(&self.last_sql),
             })
         }
     }
@@ -631,6 +866,7 @@ mod tests {
         rx: Receiver<Event>,
         repaints: Arc<AtomicUsize>,
         queries: Arc<AtomicUsize>,
+        last_sql: Arc<Mutex<String>>,
     }
 
     fn setup() -> Harness {
@@ -639,6 +875,7 @@ mod tests {
         let counter = Arc::clone(&repaints);
         let driver = FakeDriver::default();
         let queries = Arc::clone(&driver.queries);
+        let last_sql = Arc::clone(&driver.last_sql);
         let (sessions, rx) = Sessions::new(driver, rt.handle().clone(), move || {
             counter.fetch_add(1, Ordering::SeqCst);
         });
@@ -648,6 +885,7 @@ mod tests {
             rx,
             repaints,
             queries,
+            last_sql,
         }
     }
 
@@ -910,5 +1148,124 @@ mod tests {
         // Depois do disconnect a senha sai da memória: selecionar banco não abre nada.
         h.sessions.select_database(&c.id, "loja");
         assert!(h.rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn stats_vem_do_cache_e_a_pagina_leva_ordem_limite_e_offset_ao_sql() {
+        let h = setup();
+        let c = conn();
+        connected(&h, &c);
+        h.sessions.select_database(&c.id, "loja");
+        let _ = next(&h.rx);
+        let before = h.queries.load(Ordering::SeqCst);
+        h.sessions.load_stats(&c.id, "loja", "public", "pedido");
+        let event = next(&h.rx);
+        let Event::StatsLoaded { stats, table, .. } = &event else {
+            panic!("{event:?}")
+        };
+        assert_eq!(table, "pedido");
+        assert_eq!(
+            (
+                stats.row_count,
+                stats.total_size.as_str(),
+                stats.comment.as_deref()
+            ),
+            (3, "24 kB", Some("pedidos"))
+        );
+        assert_eq!(
+            h.queries.load(Ordering::SeqCst),
+            before + 2,
+            "tamanhos + count"
+        );
+        h.sessions.load_stats(&c.id, "loja", "public", "pedido");
+        assert!(matches!(next(&h.rx), Event::StatsLoaded { .. }));
+        assert_eq!(h.queries.load(Ordering::SeqCst), before + 2, "cache");
+        h.sessions.refresh(&c.id, "loja");
+        h.sessions.load_stats(&c.id, "loja", "public", "pedido");
+        let _ = next(&h.rx);
+        assert_eq!(
+            h.queries.load(Ordering::SeqCst),
+            before + 4,
+            "refresh invalida"
+        );
+
+        // Página: sem colunas em cache, a tarefa as lê antes (uma query) e a PK já entra no desempate.
+        let page = Page {
+            order: Some(Order {
+                column: "nome".into(),
+                direction: Direction::Desc,
+            }),
+            limit: 50,
+            offset: 100,
+        };
+        let before = h.queries.load(Ordering::SeqCst);
+        h.sessions
+            .load_page(&c.id, "loja", "public", "pedido", page.clone());
+        let event = next(&h.rx);
+        let Event::PageLoaded {
+            rows, page: got, ..
+        } = &event
+        else {
+            panic!("{event:?}")
+        };
+        assert_eq!(got, &page);
+        assert_eq!(rows.columns, ["id", "nome"]);
+        assert_eq!(rows.cell(1, 1), None);
+        assert_eq!(
+            *h.last_sql.lock().unwrap(),
+            "SELECT * FROM \"public\".\"pedido\" ORDER BY \"nome\" DESC, \"id\" ASC LIMIT 50 OFFSET 100"
+        );
+        assert_eq!(
+            h.queries.load(Ordering::SeqCst),
+            before + 2,
+            "colunas + página"
+        );
+        // Segunda página: colunas do cache, só a página; e a árvore recebe as colunas sem nova query.
+        h.sessions.load_page(
+            &c.id,
+            "loja",
+            "public",
+            "pedido",
+            Page {
+                offset: 150,
+                ..page
+            },
+        );
+        let _ = next(&h.rx);
+        assert_eq!(h.queries.load(Ordering::SeqCst), before + 3);
+        h.sessions.load_columns(&c.id, "loja", "public", "pedido");
+        assert!(matches!(next(&h.rx), Event::ColumnsLoaded { .. }));
+        assert_eq!(
+            h.queries.load(Ordering::SeqCst),
+            before + 3,
+            "cache preenchido pela página"
+        );
+        // Sem banco aberto, load_page é ignorado.
+        h.sessions
+            .load_page(&c.id, "outro", "public", "pedido", Page::default());
+        assert!(h.rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn falha_de_pagina_ou_stats_vem_como_data_failed_com_a_tabela() {
+        let h = setup();
+        let c = conn();
+        connected(&h, &c);
+        h.sessions.select_database(&c.id, "loja");
+        let _ = next(&h.rx);
+        h.sessions
+            .load_page(&c.id, "loja", "public", "quebrada", Page::default());
+        let event = next(&h.rx);
+        assert!(
+            matches!(&event, Event::DataFailed { table, error: DriverError::Db(_), .. } if table == "quebrada"),
+            "{event:?}"
+        );
+        h.sessions.load_stats(&c.id, "loja", "public", "quebrada");
+        let event = next(&h.rx);
+        assert!(
+            matches!(&event, Event::DataFailed { table, error: DriverError::Db(_), .. } if table == "quebrada"),
+            "{event:?}"
+        );
+        assert!(h.sessions.is_open(&c.id));
     }
 }

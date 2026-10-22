@@ -8,8 +8,8 @@ _Atualizado em 22/10/2026._
 
 - **Feito:** documentação (`b6e4f88`); no scratchpad (cópia completa do workspace): `catalog::data`, `engine`
   (`load_stats`, `load_page`, `Page`, eventos) e `ui-egui` (aba Data, árvore com nome e seta separados).
-- **Em curso:** `catalog` na árvore do repositório (este commit).
-- **Falta:** trazer do scratchpad o `engine` e a `ui-egui`, dois commits; verificação do Jean.
+- **Em curso:** `engine` na árvore do repositório (este commit); `catalog` commitado (`874431f`).
+- **Falta:** trazer do scratchpad a `ui-egui`; verificação do Jean.
 - **Depende de:** FEAT-004 concluída (M2).
 - **Para retomar:** esta pasta, o `CLAUDE.md` da raiz e o BRIEF §3.4, §5 e decisão 3.
 
@@ -47,7 +47,7 @@ _Atualizado em 22/10/2026._
   `pg_table_size`, `pg_indexes_size`, `obj_description`, mais `count(*)`). Testes puros do SQL (ordem, limite,
   offset, nomes com aspas e `; drop`) e com servidor (3 linhas, ordem desc, página 2, NULL, comentário).
   O suporte de teste com servidor virou `postgres::test_support` (`connect`, `schema_name`), reusado.
-- [x] `engine`: `Page { order, limit: 100, offset }`, eventos `StatsLoaded` e `PageLoaded { page, rows, total }`,
+- [x] (superado em 22/10, abaixo) `engine`: `Page { order, limit: 100, offset }`, eventos `StatsLoaded` e `PageLoaded { page, rows, total }`,
   `load_stats` (cache por tabela no `Database`, invalidado no `refresh`) e `load_page` (sem cache: página +
   `count(*)`), ambos por `commit_if_current`. Driver falso guarda o último SQL; teste de cache, refresh, ordem
   e offset no SQL, e `load_page` ignorado sem banco aberto (19 testes).
@@ -73,4 +73,20 @@ _Atualizado em 22/10/2026._
   (decisão acima); a contagem dupla sai no passo do engine (decisão acima). `schema_name()` dos testes ganhou
   um contador: dois testes no mesmo microssegundo colidiam no nome do schema (falha intermitente vista aqui).
   O engine e a UI do scratchpad precisam acompanhar a assinatura nova de `page`/`page_sql` e o `PageLoaded`
-  sem `total`.
+  sem `total`. Commit `874431f`.
+
+### 22/10/2026 — `engine` no repositório
+
+- [x] `session.rs` e `lib.rs` do scratchpad, já adaptados: `PageLoaded { page, rows }` sem total; `load_page`
+  monta a ordem com a coluna pedida e, se as colunas da tabela estão em cache, as de chave primária como
+  desempate (teste confere o SQL antes e depois de `load_columns`); `load_stats` com cache por tabela e
+  `refresh` invalidando; sem `count(*)` por página. A UI do M2 ganhou um braço que ignora `StatsLoaded` e
+  `PageLoaded` até o passo seguinte, como na FEAT-004.
+- [x] Revisor (um médio, três baixos): o desempate dependia de as colunas estarem em cache, e expandir a tabela
+  na árvore entre duas páginas trocava a ordem (linhas repetidas ou puladas). Agora `load_page` lê as colunas
+  antes da primeira página quando não estão em cache (uma query a mais, uma vez por tabela), guarda no cache
+  e monta a ordem com a PK desde a primeira página; a árvore recebe as colunas do cache sem query (teste).
+  Falha de página ou de stats sai como `DataFailed { schema, table, error }`, para a aba Data saber que foi
+  dela (antes era `CatalogFailed` sem tabela; teste). Docs de `refresh` e do módulo citam os stats. Pendência
+  registrada: o esqueleto lock → cache → task → `commit_if_current` → falha se repete em cinco métodos; um
+  `refactor(engine)` com helper fica para depois do M3, separado das feats.

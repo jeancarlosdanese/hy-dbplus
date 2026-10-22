@@ -10,9 +10,9 @@
 
 ## `engine`
 
-- [ ] `load_stats` emite `StatsLoaded` e a segunda chamada sai do cache; `refresh` invalida (teste com driver
+- [x] `load_stats` emite `StatsLoaded` e a segunda chamada sai do cache; `refresh` invalida (teste com driver
       falso contando queries).
-- [ ] `load_page` emite `PageLoaded { rows, page }` com o SQL contendo `ORDER BY` (coluna pedida e a PK como
+- [x] `load_page` emite `PageLoaded { rows, page }` com o SQL contendo `ORDER BY` (coluna pedida e a PK como
       desempate quando as colunas estão em cache), `LIMIT` e `OFFSET` (driver falso guarda o último SQL); o
       total vem de `StatsLoaded`.
 

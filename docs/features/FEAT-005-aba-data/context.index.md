@@ -1,4 +1,4 @@
-<!-- FEAT_EM_ANDAMENTO — docs e catalog em 22/10/2026; próximo: engine -->
+<!-- FEAT_EM_ANDAMENTO — docs, catalog e engine em 22/10/2026; próximo: ui-egui -->
 <!-- PRIO_ALTA -->
 # @file: docs/features/FEAT-005-aba-data/context.index.md
 

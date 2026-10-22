@@ -191,6 +191,9 @@ where
                         ws.columns.insert((schema, table), columns);
                     }
                 }
+                // M3: stats e página da aba Data; a tela entra no passo seguinte da FEAT-005.
+                Event::StatsLoaded { .. } | Event::PageLoaded { .. } | Event::DataFailed { .. } => {
+                }
                 Event::CatalogFailed {
                     database, error, ..
                 } => {
