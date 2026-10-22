@@ -640,22 +640,31 @@ where
             .await;
             let sent = match result {
                 Ok((fetched, rows)) => {
-                    commit_if_current(&slots, &events, &id, generation, |slot| {
-                        if let (Some(columns), Some(db)) =
-                            (fetched, slot.databases.get_mut(&database))
-                        {
-                            db.columns
-                                .entry((schema.clone(), table.clone()))
-                                .or_insert(columns);
-                        }
-                        Event::PageLoaded {
-                            connection: id.clone(),
-                            database: database.clone(),
-                            schema: schema.clone(),
-                            table: table.clone(),
-                            page,
-                            rows,
-                        }
+                    // Colunas lidas aqui vão ao cache e à UI (`ColumnsLoaded`), antes da página: quem abre a
+                    // tabela recebe os tipos sem pedir à parte.
+                    if let Some(columns) = fetched {
+                        commit_if_current(&slots, &events, &id, generation, |slot| {
+                            if let Some(db) = slot.databases.get_mut(&database) {
+                                db.columns
+                                    .entry((schema.clone(), table.clone()))
+                                    .or_insert_with(|| columns.clone());
+                            }
+                            Event::ColumnsLoaded {
+                                connection: id.clone(),
+                                database: database.clone(),
+                                schema: schema.clone(),
+                                table: table.clone(),
+                                columns,
+                            }
+                        });
+                    }
+                    commit_if_current(&slots, &events, &id, generation, |_| Event::PageLoaded {
+                        connection: id.clone(),
+                        database: database.clone(),
+                        schema: schema.clone(),
+                        table: table.clone(),
+                        page,
+                        rows,
                     })
                 }
                 Err(error) => {
@@ -1201,6 +1210,11 @@ mod tests {
         let before = h.queries.load(Ordering::SeqCst);
         h.sessions
             .load_page(&c.id, "loja", "public", "pedido", page.clone());
+        let event = next(&h.rx);
+        assert!(
+            matches!(event, Event::ColumnsLoaded { .. }),
+            "colunas lidas pela página chegam à UI: {event:?}"
+        );
         let event = next(&h.rx);
         let Event::PageLoaded {
             rows, page: got, ..

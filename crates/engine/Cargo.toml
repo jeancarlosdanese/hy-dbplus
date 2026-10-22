@@ -21,6 +21,8 @@ serde = { workspace = true }
 toml = { workspace = true }
 keyring = { workspace = true }
 uuid = { workspace = true }
+# JSON das linhas (painel de registro, CLI e MCP): tipos pelo catálogo.
+serde_json = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros"] }

@@ -28,7 +28,9 @@ hy-dbplus-ui-egui = { path = "crates/ui-egui" }
 
 # Externas. Cada entrada é uma decisão registrada no impl-notes da FEAT que a trouxe.
 # serde_json (MIT OR Apache-2.0): o xtask lê o `cargo metadata` (FEAT-002).
-serde_json = "1"
+# preserve_order: chaves do JSON na ordem das colunas; arbitrary_precision: o número sai como o servidor
+# mandou ("12.50", não 12.5). Entram pelo engine (FEAT-006); o xtask não se importa.
+serde_json = { version = "1", features = ["preserve_order", "arbitrary_precision"] }
 # egui e eframe 0.36 (MIT OR Apache-2.0): a interface (FEAT-002). eframe sem as features
 # padrão: desenha com glow (OpenGL), sem wgpu até o M3; wayland e x11 para o build Linux.
 egui = "0.36"

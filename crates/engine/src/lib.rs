@@ -5,6 +5,7 @@
 //! é do app: o engine recebe um `Handle` e nunca bloqueia quem o chama.
 
 pub mod error;
+pub mod record;
 pub mod secrets;
 pub mod session;
 pub mod store;
