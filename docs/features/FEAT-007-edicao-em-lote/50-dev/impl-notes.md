@@ -6,9 +6,10 @@
 
 _Atualizado em 22/10/2026._
 
-- **Feito:** documentação.
-- **Em curso:** discussão do desenho com o Jean.
-- **Falta:** `catalog::edit`; `driver::execute_batch`; `engine::apply_changes`; `ui-egui`; verificação do Jean.
+- **Feito:** documentação (desenho aceito pelo Jean em 22/10); `catalog::edit` (`ChangeSet`, `RowUpdate`,
+  `Statement { sql, expected_rows }`, `changes_sql`, `EditError`; 4 testes).
+- **Em curso:** `driver::execute_batch`.
+- **Falta:** `engine::apply_changes`; `ui-egui`; verificação do Jean.
 - **Depende de:** FEAT-006 (seleção múltipla, painel Form, `Column::is_primary_key` no cache de colunas).
 - **Para retomar:** esta pasta, o brief (Must 1–5) e o `CLAUDE.md`.
 
@@ -49,3 +50,10 @@ _Atualizado em 22/10/2026._
 ### 22/10/2026 — Criação
 
 - [x] Brief, aceite, notas e índice a partir da decisão 6 do BRIEF e do pedido do Jean na conferência do M3.
+
+### 22/10/2026 — `catalog::edit`
+
+- [x] `changes_sql(schema, table, &ChangeSet) -> Result<Vec<Statement>, EditError>`: um `UPDATE` por linha
+  com colunas em `set` (linha sem coluna alterada não gera statement), `DELETE … IN` único por último;
+  `Statement.expected_rows` (1 por `UPDATE`, N no `DELETE`) é o que o engine confere. Sem chave primária
+  ou chave com número de valores errado → `EditError` (sem SQL). Valor `None` → `NULL` literal.
