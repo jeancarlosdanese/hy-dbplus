@@ -57,8 +57,11 @@ num banco de desenvolvimento local. Servem como especificação visual e funcion
 - Colunas com **FK** mostram seta para navegar ao registro referenciado.
 - Rodapé: abas **Data / Structure / Index**, `+ Row`, contador
   `1-24 of 24 rows`, **Filters**, **Columns**, paginação.
-- Painel direito: `total_size`, `data_size`, `index_size`, `comment` da tabela;
-  ao selecionar uma linha, mostra os campos dela.
+- Tamanhos (`total_size`, `data_size`, `index_size`), contagem e `comment` da tabela numa linha acima do
+  grid (FEAT-006; o painel não os repete).
+- Painel direito, recolhido por padrão: abre ao selecionar a primeira linha e mostra os campos dela em
+  **Form** (nome, tipo, valor) ou **JSON** com botão Copiar; seleção múltipla mostra "Múltiplos valores"
+  nos campos que diferem (FEAT-006).
 
 ### 3.5 Aba Structure
 - Campos editáveis **Name** e **Primary**.
