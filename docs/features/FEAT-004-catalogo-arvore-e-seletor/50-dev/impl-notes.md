@@ -6,10 +6,10 @@
 
 _Atualizado em 21/10/2026._
 
-- **Feito:** documentação (`a418d93`); `driver::query_text` e `catalog` (`f4ffd77`); `engine` com banco
-  selecionado, cache do catálogo e eventos novos no repositório.
+- **Feito:** documentação (`a418d93`); `driver::query_text` e `catalog` (`f4ffd77`); `engine` (`6b280fb`);
+  `ui-egui` com paleta ⌘K, árvore e seletor de schema no repositório, com os dois testes de interação.
 - **Em curso:** nada.
-- **Falta:** trazer do scratchpad a `ui-egui` (um commit); verificação do Jean.
+- **Falta:** push e CI; verificação do Jean (⌘K, árvore até as colunas, troca de schema).
 - **Depende de:** FEAT-003 concluída (M1).
 - **Para retomar:** esta pasta, o `CLAUDE.md` da raiz e o BRIEF §3.2, §3.3 e §5.
 
@@ -67,6 +67,24 @@ _Atualizado em 21/10/2026._
 - [x] Segundo teste `egui_kittest`: schema que o servidor recusa mostra o erro na árvore sem derrubar a sessão
   nem o banco, e "Tentar de novo" consulta o servidor outra vez (driver falso falha em `E'quebrado'`). A UI
   do scratchpad compila e passa contra o driver e o engine já commitados no repositório.
+
+### 21/10/2026 — `ui-egui` no repositório
+
+- [x] Arquivos do scratchpad trazidos sem mudança (`app.rs`, `connections.rs`, `lib.rs`, `palette.rs`, `tree.rs`,
+  `workspace.rs`; `theme.rs` já era igual); `main.rs` do app com `PgApp`; `egui_kittest` no workspace como
+  dev-dependency da `ui-egui`, sem `wgpu` nem `snapshot`. O braço temporário que ignorava os eventos do M2 saiu:
+  `drain_events` os trata de verdade.
+- [x] Revisor (três médios, quatro baixos, aplicados antes do commit): falha ao abrir o primeiro banco era muda
+  (a paleta fechava e o painel seguia em "Nenhum banco selecionado."); o painel sem banco agora mostra o erro
+  com o nome do banco, e "Abrindo banco…" enquanto carrega. O ↻ (e o "Tentar de novo") não esvaziava a lista
+  de tabelas expandidas, e a tabela aberta ficava em "carregando…" para sempre; agora esvazia, e fechar uma
+  tabela a tira da lista (reabrir pede de novo; o engine responde do cache). `CatalogFailed` só vale para o
+  banco selecionado ou quando ainda não há banco. A paleta pede o foco só ao abrir. O `return` depois de
+  escolher o schema saiu. Dois testes novos, provados contra a UI anterior (os dois falhavam).
+- [x] Revisor, 2ª rodada (um alto): a correção do foco tinha deixado `focus_pending` sempre `false` (o `toggle`
+  não fora alterado) e a busca da paleta não recebia o foco. Corrigido no `toggle`, com teste que digita por
+  `egui::Event::Text` (texto cru só chega ao campo com foco; o `type_text` do kittest foca o nó por AccessKit
+  e esconderia a regressão) e filtra a lista; provado revertendo o `toggle`.
 
 ### 21/10/2026 — `driver` e `catalog` no repositório
 

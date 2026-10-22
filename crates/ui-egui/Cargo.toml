@@ -19,3 +19,6 @@ eframe = { workspace = true }
 [dev-dependencies]
 # Runtime para o teste de cadeia completa (formulário, store, conectar, evento).
 tokio = { workspace = true }
+# Harness sem janela para os testes de interação (paleta, árvore); driver só para o driver falso.
+egui_kittest = { workspace = true }
+hy-dbplus-driver = { workspace = true }

@@ -23,17 +23,17 @@
 
 ## `ui-egui`
 
-- [ ] ⌘K abre a paleta com a lista de bancos e busca; Enter/clique seleciona; Esc fecha; a barra superior
-      mostra `: banco`.
-- [ ] Árvore com **Functions** e **Tables**; views com ícone próprio; tabela expande até as colunas `nome
+- [x] ⌘K abre a paleta com a lista de bancos e busca; Enter/clique seleciona; Esc fecha; a barra superior
+      mostra `: banco` (teste de interação; Enter e Esc conferidos a olho).
+- [x] Árvore com **Functions** e **Tables**; views com ícone próprio; tabela expande até as colunas `nome
       tipo`; PK com ícone de chave; seletor de schema no rodapé troca a árvore; busca filtra por nome.
-- [ ] Teste `egui_kittest`: com um engine falso, abrir ⌘K, escolher o banco, ver os dois grupos, expandir uma
-      tabela e encontrar a coluna com a chave.
-- [ ] Erro de carga aparece na árvore e um botão "tentar de novo" refaz a query.
+- [x] Teste `egui_kittest`: com um engine falso, abrir ⌘K, escolher o banco, ver os dois grupos, expandir uma
+      tabela e encontrar a coluna com a chave; e trocar o schema.
+- [x] Erro de carga aparece na árvore e um botão "tentar de novo" refaz a query (teste de interação).
 
 ## Portão e CI
 
-- [ ] `scripts/quality-gate.sh --full` verde; cargo-deny verde com `egui_kittest`; workflow verde.
+- [x] `scripts/quality-gate.sh --full` verde; cargo-deny verde com `egui_kittest`. [ ] Workflow verde (push).
 
 ## Do Jean
 

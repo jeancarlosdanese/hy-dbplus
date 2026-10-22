@@ -5,7 +5,7 @@ use std::process::ExitCode;
 
 use eframe::egui;
 use hy_dbplus_engine::{ConnectionStore, KeyringSecrets, MemorySecrets, PgSessions, SecretStore};
-use hy_dbplus_ui_egui::{App, Deps};
+use hy_dbplus_ui_egui::{Deps, PgApp};
 
 /// Bundle id (docs/BRIEF.md decisão 2): janela no Wayland e nome do app para o sistema.
 const APP_ID: &str = "br.com.hy.dbplus";
@@ -56,7 +56,7 @@ fn run() -> Result<(), String> {
                 handle,
                 move || ctx.request_repaint(),
             );
-            Ok(Box::new(App::new(
+            Ok(Box::new(PgApp::new(
                 cc,
                 Deps {
                     store,

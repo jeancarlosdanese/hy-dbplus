@@ -1,4 +1,4 @@
-<!-- FEAT_EM_ANDAMENTO — docs, driver, catalog e engine em 21/10/2026; próximo: ui-egui -->
+<!-- FEAT_EM_ANDAMENTO — driver, catalog, engine e UI em 21/10/2026; falta push, CI e a conferência do Jean -->
 <!-- PRIO_ALTA -->
 # @file: docs/features/FEAT-004-catalogo-arvore-e-seletor/context.index.md
 
@@ -33,7 +33,7 @@ paleta ⌘K de bancos, a árvore Functions/Tables expansível até as colunas e 
 5. CLAUDE.md (raiz)           → regras de engenharia
 ```
 
-## Onde está o quê (quando existir)
+## Onde está o quê
 
 ```
 crates/driver/src/lib.rs          Connection::query_text, TextRows

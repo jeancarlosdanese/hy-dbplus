@@ -1,7 +1,7 @@
 //! Tela 3.1: lista de conexões (tag, nome, `host : database`), busca, `+`, formulário de criar
 //! e editar, remover com confirmação, conectar.
 
-use hy_dbplus_engine::{Connection, ConnectionConfig, ConnectionId, Secret, Tag, TlsMode};
+use hy_dbplus_engine::{Connection, ConnectionConfig, ConnectionId, Driver, Secret, Tag, TlsMode};
 
 use crate::app::{App, Status};
 use crate::theme;
@@ -110,7 +110,11 @@ impl Default for ConnectionForm {
     }
 }
 
-pub fn show(app: &mut App, ui: &mut egui::Ui) {
+pub fn show<D>(app: &mut App<D>, ui: &mut egui::Ui)
+where
+    D: Driver + 'static,
+    D::Conn: 'static,
+{
     let tokens = theme::current(ui.ctx());
     egui::Panel::top("connections-top").show(ui, |ui| {
         ui.add_space(6.0);
@@ -176,7 +180,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     confirm_remove_window(app, ui.ctx());
 }
 
-fn row(app: &mut App, ui: &mut egui::Ui, c: &Connection) {
+fn row<D>(app: &mut App<D>, ui: &mut egui::Ui, c: &Connection)
+where
+    D: Driver + 'static,
+    D::Conn: 'static,
+{
     let tokens = theme::current(ui.ctx());
     let status = app.status_of(&c.id);
     let selected = app.connections.selected.as_deref() == Some(c.id.as_str());
@@ -253,7 +261,11 @@ fn row(app: &mut App, ui: &mut egui::Ui, c: &Connection) {
 }
 
 /// Conecta com a senha do chaveiro (ou vazia, para autenticação `trust`).
-pub fn connect(app: &mut App, c: &Connection) {
+pub fn connect<D>(app: &mut App<D>, c: &Connection)
+where
+    D: Driver + 'static,
+    D::Conn: 'static,
+{
     app.connections.selected = Some(c.id.clone());
     // Sem senha guardada (`None`) vale `trust`; chaveiro indisponível não conecta, senão o erro
     // de autenticação do servidor esconderia a causa real.
@@ -267,7 +279,11 @@ pub fn connect(app: &mut App, c: &Connection) {
     app.deps.sessions.connect(c, secret);
 }
 
-fn form_window(app: &mut App, ctx: &egui::Context) {
+fn form_window<D>(app: &mut App<D>, ctx: &egui::Context)
+where
+    D: Driver + 'static,
+    D::Conn: 'static,
+{
     let Some(form) = app.form.as_mut() else {
         return;
     };
@@ -353,7 +369,11 @@ fn form_window(app: &mut App, ctx: &egui::Context) {
     }
 }
 
-fn save_form(app: &mut App) {
+fn save_form<D>(app: &mut App<D>)
+where
+    D: Driver + 'static,
+    D::Conn: 'static,
+{
     let Some(form) = app.form.as_mut() else {
         return;
     };
@@ -382,7 +402,11 @@ fn save_form(app: &mut App) {
     app.form = None;
 }
 
-fn confirm_remove_window(app: &mut App, ctx: &egui::Context) {
+fn confirm_remove_window<D>(app: &mut App<D>, ctx: &egui::Context)
+where
+    D: Driver + 'static,
+    D::Conn: 'static,
+{
     let Some(id) = app.connections.confirm_remove.clone() else {
         return;
     };
