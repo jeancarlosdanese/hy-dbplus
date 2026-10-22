@@ -4,13 +4,14 @@
 
 ## `driver`
 
-- [ ] `ConnectionConfig` e `TlsMode` (`Disable`, `Prefer`, `Require`) serializáveis; `Secret` sem `Display`,
-      com `Debug` que imprime `Secret(***)` (teste).
-- [ ] `Driver::connect` falha com `DriverError` legível (host inválido, senha errada, TLS exigido sem suporte),
-      sem a senha no texto do erro (teste com senha errada contra o PostgreSQL local, atrás de `HY_DBPLUS_TEST_PG`).
-- [ ] `list_databases` devolve os bancos do servidor (sem templates) e `server_version` a versão (teste com a
+- [x] `ConnectionConfig` e `TlsMode` (`disable`, `prefer`, `require`, `verify-full`) serializáveis; `Secret` sem
+      `Display`, com `Debug` que imprime `Secret(***)` (teste).
+- [x] `Driver::connect` falha com `DriverError` legível (porta fechada, usuário inexistente), sem a senha no texto
+      do erro (testes; o de usuário contra o PostgreSQL local, atrás de `HY_DBPLUS_TEST_PG`; senha errada não é
+      testável no Postgres.app, que autentica `trust`).
+- [x] `list_databases` devolve os bancos do servidor (sem templates) e `server_version` a versão (teste com a
       variável).
-- [ ] Nenhuma crate abaixo da `ui-egui` ganhou dependência de UI (`cargo xtask layers`).
+- [x] Nenhuma crate abaixo da `ui-egui` ganhou dependência de UI (`cargo xtask layers`).
 
 ## `engine`
 
@@ -28,13 +29,14 @@
 - [ ] Editar e remover funcionam; remover pede confirmação.
 - [ ] Conectar mostra "conectando", depois a barra `LOCAL | PostgreSQL 15.x : pg-localhost` e a lista de bancos;
       senha errada mostra o erro na tela e volta para a lista.
-- [ ] A interface não congela durante a conexão (host inexistente com timeout de 10 s).
+- [ ] A interface não congela durante a conexão (host inexistente ou servidor mudo, com timeout de 10 s no driver
+      cobrindo DNS, TCP, TLS e autenticação).
 - [ ] `app id` é `br.com.hy.dbplus`.
 
 ## Portão e CI
 
 - [ ] `scripts/quality-gate.sh --full` verde; cargo-deny verde com as dependências novas; workflow verde.
-- [ ] Testes que dependem do PostgreSQL local ficam atrás de `HY_DBPLUS_TEST_PG` e são pulados sem ela.
+- [x] Testes que dependem do PostgreSQL local ficam atrás de `HY_DBPLUS_TEST_PG` e são pulados sem ela.
 
 ## Do Jean
 

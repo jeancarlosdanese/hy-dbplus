@@ -1,4 +1,4 @@
-<!-- FEAT_EM_ANDAMENTO — docs criados em 21/10/2026; próximo: driver -->
+<!-- FEAT_EM_ANDAMENTO — docs e driver em 21/10/2026; próximo: engine (store, keyring, session) -->
 <!-- PRIO_ALTA -->
 # @file: docs/features/FEAT-003-driver-postgres-e-conexoes/context.index.md
 
@@ -39,7 +39,7 @@ senha no Keychain, conectar e listar bancos.
 ```
 crates/driver/src/config.rs       ConnectionConfig, TlsMode, Secret
 crates/driver/src/error.rs        DriverError
-crates/driver/src/lib.rs          trait Driver (connect, ping, list_databases; query no M3)
+crates/driver/src/lib.rs          traits Driver (connect) e Connection (ping, server_version, list_databases; query no M3)
 crates/driver/src/postgres.rs     implementação tokio-postgres + rustls
 crates/engine/src/store.rs        ConnectionStore (TOML) e Connection (id, nome, tag, host, porta, usuário, banco)
 crates/engine/src/secrets.rs      trait SecretStore; keyring e memória

@@ -12,3 +12,16 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+tokio = { workspace = true }
+tokio-postgres = { workspace = true }
+tokio-postgres-rustls = { workspace = true }
+rustls = { workspace = true }
+rustls-native-certs = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+# #[tokio::test] nos testes atrás de HY_DBPLUS_TEST_PG.
+tokio = { workspace = true, features = ["macros"] }
+# Ida e volta do ConnectionConfig no formato do arquivo de conexões.
+toml = { workspace = true }
