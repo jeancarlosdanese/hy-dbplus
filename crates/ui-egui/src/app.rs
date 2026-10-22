@@ -3,11 +3,12 @@
 //! [`PgApp`].
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 
 use hy_dbplus_engine::{
-    Column, ConnectionId, ConnectionStore, DatabaseInfo, Driver, Event, Function, PostgresDriver,
-    Schema, SecretStore, Sessions, Table,
+    Column, ConnectionId, ConnectionStore, DatabaseInfo, Driver, Event, Function, Page,
+    PostgresDriver, Schema, SecretStore, Sessions, Table, TableStats, TextRows,
 };
 
 use crate::connections::{ConnectionForm, Connections};
@@ -57,6 +58,40 @@ pub struct Workspace {
     pub loading: bool,
     pub error: Option<String>,
     pub search: String,
+    /// A tabela aberta na aba Data, se houver.
+    pub data: Option<DataTab>,
+}
+
+/// A aba Data de uma tabela (tela 3.4): página atual, ordenação, contagem, tamanhos e seleção.
+#[derive(Debug, Clone)]
+pub struct DataTab {
+    pub schema: String,
+    pub table: String,
+    /// A página confirmada (a das `rows`); `requested` é a pedida e ainda não chegada.
+    pub page: Page,
+    pub requested: Option<Page>,
+    /// `Arc`: a aba é clonada a cada frame para desenhar; as linhas não.
+    pub rows: Option<Arc<TextRows>>,
+    pub stats: Option<TableStats>,
+    pub selected_row: Option<usize>,
+    pub loading: bool,
+    pub error: Option<String>,
+}
+
+impl DataTab {
+    pub fn new(schema: &str, table: &str) -> Self {
+        Self {
+            schema: schema.into(),
+            table: table.into(),
+            page: Page::default(),
+            requested: Some(Page::default()),
+            rows: None,
+            stats: None,
+            selected_row: None,
+            loading: true,
+            error: None,
+        }
+    }
 }
 
 /// A paleta ⌘K (tela 3.2): busca entre os bancos da conexão.
@@ -191,8 +226,52 @@ where
                         ws.columns.insert((schema, table), columns);
                     }
                 }
-                // M3: stats e página da aba Data; a tela entra no passo seguinte da FEAT-005.
-                Event::StatsLoaded { .. } | Event::PageLoaded { .. } | Event::DataFailed { .. } => {
+                Event::StatsLoaded {
+                    database,
+                    schema,
+                    table,
+                    stats,
+                    ..
+                } => {
+                    if let Some(tab) = self.data_tab_mut(&id, &database, &schema, &table) {
+                        tab.stats = Some(stats);
+                    }
+                }
+                Event::PageLoaded {
+                    database,
+                    schema,
+                    table,
+                    page,
+                    rows,
+                    ..
+                } => {
+                    // Só a página pedida por último: resposta atrasada de outra ordem ou offset é descartada.
+                    if let Some(tab) = self
+                        .data_tab_mut(&id, &database, &schema, &table)
+                        .filter(|t| t.requested.as_ref() == Some(&page))
+                    {
+                        tab.page = page;
+                        tab.requested = None;
+                        tab.rows = Some(Arc::new(rows));
+                        tab.loading = false;
+                        tab.error = None;
+                        tab.selected_row = None;
+                    }
+                }
+                Event::DataFailed {
+                    database,
+                    schema,
+                    table,
+                    error,
+                    ..
+                } => {
+                    // Página ou stats: o grid já carregado continua na tela, com o erro em cima. A página pedida
+
+                    // fica: se a falha foi dos stats, a página em voo ainda chega; se foi dela, "Tentar de novo" a repete.
+                    if let Some(tab) = self.data_tab_mut(&id, &database, &schema, &table) {
+                        tab.loading = false;
+                        tab.error = Some(error.to_string());
+                    }
                 }
                 Event::CatalogFailed {
                     database, error, ..
@@ -212,6 +291,75 @@ where
                     }
                 }
             }
+        }
+    }
+
+    fn data_tab_mut(
+        &mut self,
+        id: &str,
+        database: &str,
+        schema: &str,
+        table: &str,
+    ) -> Option<&mut DataTab> {
+        self.workspaces
+            .get_mut(id)
+            .filter(|ws| ws.database.as_deref() == Some(database))
+            .and_then(|ws| ws.data.as_mut())
+            .filter(|tab| tab.schema == schema && tab.table == table)
+    }
+
+    /// Abre (ou troca) a tabela da aba Data e pede a primeira página e os tamanhos.
+    pub(crate) fn open_table(&mut self, id: &ConnectionId, schema: &str, table: &str) {
+        let Some(database) = self.workspaces.get(id).and_then(|ws| ws.database.clone()) else {
+            return;
+        };
+        let tab = DataTab::new(schema, table);
+        let page = tab.page.clone();
+        if let Some(ws) = self.workspaces.get_mut(id) {
+            ws.data = Some(tab);
+        }
+        self.deps
+            .sessions
+            .load_page(id, &database, schema, table, page);
+        self.deps.sessions.load_stats(id, &database, schema, table);
+    }
+
+    /// Recarrega a aba Data com a página pedida (ordem, limite, offset).
+    pub(crate) fn load_data_page(&mut self, id: &ConnectionId, page: Page) {
+        let Some(ws) = self.workspaces.get_mut(id) else {
+            return;
+        };
+        let Some(database) = ws.database.clone() else {
+            return;
+        };
+        let Some(tab) = ws.data.as_mut() else { return };
+        tab.requested = Some(page.clone());
+        tab.loading = true;
+        tab.error = None;
+        tab.selected_row = None;
+        let (schema, table) = (tab.schema.clone(), tab.table.clone());
+        self.deps
+            .sessions
+            .load_page(id, &database, &schema, &table, page);
+    }
+
+    /// Repete a página pedida (ou a atual) e, se os tamanhos ainda não vieram, os stats.
+    pub(crate) fn retry_data(&mut self, id: &ConnectionId) {
+        let Some(ws) = self.workspaces.get(id) else {
+            return;
+        };
+        let Some(database) = ws.database.clone() else {
+            return;
+        };
+        let Some(tab) = ws.data.as_ref() else { return };
+        let (schema, table, stats_missing) =
+            (tab.schema.clone(), tab.table.clone(), tab.stats.is_none());
+        let page = tab.requested.clone().unwrap_or_else(|| tab.page.clone());
+        self.load_data_page(id, page);
+        if stats_missing {
+            self.deps
+                .sessions
+                .load_stats(id, &database, &schema, &table);
         }
     }
 

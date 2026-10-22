@@ -8,8 +8,9 @@ _Atualizado em 22/10/2026._
 
 - **Feito:** documentação (`b6e4f88`); no scratchpad (cópia completa do workspace): `catalog::data`, `engine`
   (`load_stats`, `load_page`, `Page`, eventos) e `ui-egui` (aba Data, árvore com nome e seta separados).
-- **Em curso:** `engine` na árvore do repositório (este commit); `catalog` commitado (`874431f`).
-- **Falta:** trazer do scratchpad a `ui-egui`; verificação do Jean.
+- **Em curso:** `ui-egui` na árvore do repositório (este commit); `catalog` (`874431f`) e `engine` (`5a0d5e3`)
+  commitados.
+- **Falta:** push e CI; verificação do Jean (abrir tabela, ordenar, paginar, selecionar linha).
 - **Depende de:** FEAT-004 concluída (M2).
 - **Para retomar:** esta pasta, o `CLAUDE.md` da raiz e o BRIEF §3.4, §5 e decisão 3.
 
@@ -27,9 +28,8 @@ _Atualizado em 22/10/2026._
   valores repetidos embaralham as páginas (revisor do catálogo).
 - **[2026-10-21]** Grid com `egui_extras::TableBuilder` e `body.rows(altura, n, ...)`: só as linhas visíveis
   são desenhadas; a página inteira (até 1000 linhas de texto) fica em memória na UI.
-- **[2026-10-21]** Clicar no nome da tabela abre a aba; a seta expande. Na árvore, `CollapsingState` com
-  `show_header` permite o cabeçalho customizado (seta + rótulo selecionável), em vez do `CollapsingHeader`
-  que faz do cabeçalho inteiro o toggle.
+- **[2026-10-21]** Clicar no nome da tabela abre a aba; a seta expande. Na árvore, `CollapsingState` com cabeçalho próprio (botão `▸`/`▾` + rótulo
+  selecionável) e `show_body_indented`, em vez do `CollapsingHeader`, que faz do cabeçalho inteiro o toggle.
 - **[2026-10-21]** `egui_extras` 0.36 (MIT OR Apache-2.0) com `default-features = false`: só a tabela; sem
   carregadores de imagem.
 
@@ -89,4 +89,21 @@ _Atualizado em 22/10/2026._
   Falha de página ou de stats sai como `DataFailed { schema, table, error }`, para a aba Data saber que foi
   dela (antes era `CatalogFailed` sem tabela; teste). Docs de `refresh` e do módulo citam os stats. Pendência
   registrada: o esqueleto lock → cache → task → `commit_if_current` → falha se repete em cinco métodos; um
-  `refactor(engine)` com helper fica para depois do M3, separado das feats.
+  `refactor(engine)` com helper fica para depois do M3, separado das feats. Commit `5a0d5e3`.
+
+### 22/10/2026 — `ui-egui` no repositório
+
+- [x] `data.rs`, `app.rs` (`DataTab`, `open_table`, `load_data_page`, eventos `StatsLoaded`, `PageLoaded` e
+  `DataFailed`), `tree.rs` (seta e nome separados) e `workspace.rs` (centro e painel direito) do scratchpad,
+  já adaptados ao engine commitado: o contador usa `stats.row_count` (`…` até chegar), o teste do grid conta
+  3 + 2 + 1 + 4 queries (catálogo, stats, colunas antes da primeira página, quatro páginas). `egui_extras`
+  0.36 no workspace, sem features. O braço temporário que ignorava os eventos do M3 saiu.
+- [x] Revisor (dois médios, cinco baixos, aplicados antes do commit): a falha dos stats escondia o grid já
+  carregado e o "Tentar de novo" só repetia a página; agora o erro é uma faixa em cima do grid, e "Tentar de
+  novo" repete a página pedida e, se os tamanhos faltam, os stats. A aba (até mil linhas de texto) era clonada
+  duas vezes por frame: `rows` virou `Arc<TextRows>`. `DataTab.requested` guarda a página pedida; `PageLoaded`
+  só vale se é ela (resposta atrasada de outra ordem é descartada) e a numeração e o contador seguem a página
+  confirmada; cabeçalho e tamanho da página respeitam o carregamento, como `‹ ›`. Sem total ainda, página
+  cheia habilita `›`. Tooltips sem jargão de marco. Fica anotado: `DataFailed` não distingue página de stats
+  (o engine pode ganhar um discriminador depois) e a UI não tem teste do caminho de erro da aba nem do terceiro
+  estado do cabeçalho (sem ordem).

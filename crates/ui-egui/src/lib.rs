@@ -5,6 +5,7 @@
 
 mod app;
 mod connections;
+mod data;
 mod palette;
 pub mod theme;
 mod tree;

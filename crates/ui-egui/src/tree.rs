@@ -118,6 +118,7 @@ where
             .filter(|f| search.is_empty() || f.name.to_lowercase().contains(&search))
             .collect();
         let mut to_load: Vec<String> = Vec::new();
+        let mut to_open: Option<String> = None;
         egui::ScrollArea::vertical().show(ui, |ui| {
             egui::CollapsingHeader::new(format!("Functions ({})", functions.len()))
                 .default_open(false)
@@ -136,31 +137,62 @@ where
                             TableKind::Table => "▦",
                         };
                         let key = (schema.clone(), t.name.clone());
-                        let header = egui::CollapsingHeader::new(format!("{icon} {}", t.name))
-                            .id_salt(&key)
-                            .show(ui, |ui| match ws.columns.get(&key) {
-                                Some(columns) => {
-                                    for c in columns {
-                                        let marker = if c.is_primary_key { "🔑" } else { "  " };
-                                        ui.horizontal(|ui| {
-                                            ui.label(format!("{marker} {}", c.name));
-                                            ui.label(
-                                                egui::RichText::new(&c.data_type)
-                                                    .small()
-                                                    .color(tokens.text_muted),
-                                            );
-                                        });
-                                    }
+                        // A seta expande as colunas (botão com rótulo, acessível); o nome abre a aba Data (tela 3.4).
+                        let state_id = ui.make_persistent_id(&key);
+                        let mut state =
+                            egui::collapsing_header::CollapsingState::load_with_default_open(
+                                ui.ctx(),
+                                state_id,
+                                false,
+                            );
+                        let was_open = state.is_open();
+                        let header = ui
+                            .horizontal(|ui| {
+                                if ui
+                                    .add(
+                                        egui::Button::new(if was_open { "▾" } else { "▸" })
+                                            .frame(false)
+                                            .small(),
+                                    )
+                                    .clicked()
+                                {
+                                    state.toggle(ui);
                                 }
-                                None => {
-                                    ui.label(
-                                        egui::RichText::new("carregando…")
-                                            .small()
-                                            .color(tokens.text_muted),
-                                    );
+                                let selected = ws
+                                    .data
+                                    .as_ref()
+                                    .is_some_and(|d| d.schema == schema && d.table == t.name);
+                                if ui
+                                    .selectable_label(selected, format!("{icon} {}", t.name))
+                                    .clicked()
+                                {
+                                    to_open = Some(t.name.clone());
                                 }
-                            });
-                        if header.openness > 0.0 {
+                            })
+                            .response;
+                        state.show_body_indented(&header, ui, |ui| match ws.columns.get(&key) {
+                            Some(columns) => {
+                                for c in columns {
+                                    let marker = if c.is_primary_key { "🔑" } else { "  " };
+                                    ui.horizontal(|ui| {
+                                        ui.label(format!("{marker} {}", c.name));
+                                        ui.label(
+                                            egui::RichText::new(&c.data_type)
+                                                .small()
+                                                .color(tokens.text_muted),
+                                        );
+                                    });
+                                }
+                            }
+                            None => {
+                                ui.label(
+                                    egui::RichText::new("carregando…")
+                                        .small()
+                                        .color(tokens.text_muted),
+                                );
+                            }
+                        });
+                        if was_open {
                             if ws.expanded.insert(key.clone()) {
                                 to_load.push(t.name.clone());
                             }
@@ -175,6 +207,9 @@ where
             app.deps
                 .sessions
                 .load_columns(id, &database, &schema, &table);
+        }
+        if let Some(table) = to_open {
+            app.open_table(id, &schema, &table);
         }
     });
 }
@@ -191,7 +226,7 @@ mod tests {
         Connection as DriverConnection, ConnectionConfig, DatabaseInfo, Driver, DriverError,
         Secret, TextRows,
     };
-    use hy_dbplus_engine::{Connection, Tag};
+    use hy_dbplus_engine::{Connection, Direction, Tag};
 
     use crate::app::{App, View, tests::deps};
 
@@ -231,7 +266,28 @@ mod tests {
         }
         async fn query_text(&self, sql: &str) -> Result<TextRows, DriverError> {
             self.queries.fetch_add(1, Ordering::SeqCst);
-            let rows = if sql.contains("pg_attribute") {
+            let rows = if sql.starts_with("SELECT count(*)") {
+                vec![row(&[Some("250")])]
+            } else if sql.contains("pg_total_relation_size") {
+                vec![row(&[
+                    Some("24 kB"),
+                    Some("8192 bytes"),
+                    Some("16 kB"),
+                    Some("pedidos"),
+                ])]
+            } else if sql.starts_with("SELECT * FROM") {
+                let desc = sql.contains("DESC");
+                let first = if desc { "b" } else { "a" };
+                let second = if desc { "a" } else { "b" };
+                return Ok(TextRows {
+                    columns: vec!["id".into(), "nome".into()],
+                    rows: vec![
+                        row(&[Some("1"), Some(first)]),
+                        row(&[Some("2"), Some(second)]),
+                        row(&[Some("3"), None]),
+                    ],
+                });
+            } else if sql.contains("pg_attribute") {
                 vec![
                     row(&[
                         Some("id"),
@@ -355,7 +411,7 @@ mod tests {
         );
 
         // Expandir a tabela pede as colunas uma vez; a chave primária tem o ícone.
-        harness.get_by_label("▦ pedido").click();
+        harness.get_all_by_label("▸").next().unwrap().click();
         wait_for(&mut harness, "ColumnsLoaded", |app| {
             app.workspaces.get(&id).is_some_and(|ws| {
                 ws.columns
@@ -503,7 +559,7 @@ mod tests {
                 .get(&id)
                 .is_some_and(|ws| ws.objects.contains_key("public"))
         });
-        harness.get_by_label("▦ pedido").click();
+        harness.get_all_by_label("▸").next().unwrap().click();
         wait_for(&mut harness, "ColumnsLoaded", |app| {
             app.workspaces
                 .get(&id)
@@ -570,5 +626,112 @@ mod tests {
                 .get(&id)
                 .is_some_and(|ws| ws.database.as_deref() == Some("loja"))
         });
+    }
+
+    #[test]
+    fn abrir_a_tabela_mostra_o_grid_ordena_pagina_e_seleciona() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let driver = FakeDriver::default();
+        let queries = Arc::clone(&driver.queries);
+        let mut app = App::with_deps(deps(driver, &rt));
+        let c = Connection::new("pg-localhost", Tag::Local, ConnectionConfig::default());
+        app.deps.store.upsert(c.clone());
+        crate::connections::connect(&mut app, &c);
+        let id = c.id.clone();
+        let mut harness = Harness::new_ui_state(|ui, app: &mut App<FakeDriver>| app.ui(ui), app);
+        wait_for(&mut harness, "Connected", |app| {
+            matches!(app.view, View::Workspace { .. })
+        });
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::K);
+        harness.step();
+        harness.get_by_label("loja").click();
+        wait_for(&mut harness, "SchemaLoaded", |app| {
+            app.workspaces
+                .get(&id)
+                .is_some_and(|ws| ws.objects.contains_key("public"))
+        });
+        harness.get_by_label("Escolha uma tabela na árvore.");
+
+        // O nome abre a aba Data: página, contagem e tamanhos.
+        harness.get_by_label("▦ pedido").click();
+        wait_for(&mut harness, "PageLoaded", |app| {
+            app.workspaces
+                .get(&id)
+                .is_some_and(|ws| ws.data.as_ref().is_some_and(|d| d.rows.is_some()))
+        });
+        wait_for(&mut harness, "StatsLoaded", |app| {
+            app.workspaces
+                .get(&id)
+                .is_some_and(|ws| ws.data.as_ref().is_some_and(|d| d.stats.is_some()))
+        });
+        harness.get_by_label("public.pedido");
+        harness.get_by_label("1-3 of 250 rows");
+        harness.get_by_label("24 kB");
+        harness.get_by_label("pedidos");
+        let names = |app: &App<FakeDriver>| -> Vec<String> {
+            app.workspaces[&id]
+                .data
+                .as_ref()
+                .unwrap()
+                .rows
+                .as_ref()
+                .unwrap()
+                .rows
+                .iter()
+                .map(|r| r[1].clone().unwrap_or_default())
+                .collect()
+        };
+        assert_eq!(names(harness.state()), ["a", "b", ""]);
+
+        // Clique no cabeçalho ordena: asc, depois desc.
+        harness.get_by_label("nome").click();
+        wait_for(&mut harness, "asc", |app| {
+            app.workspaces[&id].data.as_ref().is_some_and(|d| {
+                !d.loading
+                    && d.page
+                        .order
+                        .as_ref()
+                        .is_some_and(|o| o.direction == Direction::Asc)
+            })
+        });
+        harness.get_by_label("nome ▲").click();
+        wait_for(&mut harness, "desc", |app| {
+            app.workspaces[&id].data.as_ref().is_some_and(|d| {
+                !d.loading
+                    && d.page
+                        .order
+                        .as_ref()
+                        .is_some_and(|o| o.direction == Direction::Desc)
+            })
+        });
+        assert_eq!(names(harness.state()), ["b", "a", ""]);
+
+        // Próxima página: offset 100.
+        // Botão no rodapé: a ação do AccessKit (o clique por ponteiro não alcança o rodapé no harness).
+        harness.get_by_label("›").click_accesskit();
+        wait_for(&mut harness, "página 2", |app| {
+            app.workspaces[&id]
+                .data
+                .as_ref()
+                .is_some_and(|d| !d.loading && d.page.offset == 100)
+        });
+        harness.get_by_label("101-103 of 250 rows");
+
+        // Selecionar a primeira linha mostra os campos no painel direito.
+        harness.get_by_label("101").click_accesskit();
+        harness.step();
+        harness.step(); // o painel direito é desenhado antes do grid: lê a seleção no frame seguinte
+        assert_eq!(
+            harness.state().workspaces[&id]
+                .data
+                .as_ref()
+                .unwrap()
+                .selected_row,
+            Some(0)
+        );
+        harness.get_by_label("Linha 101");
+        // schemas, tabelas e funções (3), stats (tamanhos + count = 2), colunas antes da primeira página (1),
+        // quatro páginas (1 cada): sem count a cada página.
+        assert_eq!(queries.load(Ordering::SeqCst), 3 + 2 + 1 + 4);
     }
 }

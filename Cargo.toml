@@ -32,6 +32,8 @@ serde_json = "1"
 # egui e eframe 0.36 (MIT OR Apache-2.0): a interface (FEAT-002). eframe sem as features
 # padrão: desenha com glow (OpenGL), sem wgpu até o M3; wayland e x11 para o build Linux.
 egui = "0.36"
+# egui_extras 0.36 (MIT OR Apache-2.0): a tabela virtualizada da aba Data (FEAT-005); sem features.
+egui_extras = { version = "0.36", default-features = false }
 eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
 # FEAT-003 (M1), ver impl-notes: runtime, PostgreSQL por rustls com ring (sem aws-lc nem openssl),
 # raízes do sistema, erros e serialização.

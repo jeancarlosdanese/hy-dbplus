@@ -1,4 +1,4 @@
-<!-- FEAT_EM_ANDAMENTO — docs, catalog e engine em 22/10/2026; próximo: ui-egui -->
+<!-- FEAT_EM_ANDAMENTO — catalog, engine e UI em 22/10/2026; falta push, CI e a conferência do Jean -->
 <!-- PRIO_ALTA -->
 # @file: docs/features/FEAT-005-aba-data/context.index.md
 
@@ -33,7 +33,7 @@ destacada; rodapé com contador e paginação; painel direito com tamanhos, come
 5. CLAUDE.md (raiz)           → regras de engenharia
 ```
 
-## Onde está o quê (quando existir)
+## Onde está o quê
 
 ```
 crates/catalog/src/data.rs        TableStats, Order, page_sql, count_sql, stats

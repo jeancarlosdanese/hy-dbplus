@@ -5,7 +5,7 @@
 use hy_dbplus_engine::{ConnectionId, Driver};
 
 use crate::app::{App, Status, View};
-use crate::{palette, theme, tree};
+use crate::{data, palette, theme, tree};
 
 pub fn show<D>(app: &mut App<D>, ui: &mut egui::Ui, id: &ConnectionId)
 where
@@ -90,22 +90,32 @@ where
                 }
             }
         });
+    let data_tab = app.workspaces.get(id).and_then(|ws| ws.data.clone());
     egui::Panel::right("workspace-right")
-        .default_size(220.0)
-        .show(ui, |ui| {
+        .default_size(240.0)
+        .show(ui, |ui| match &data_tab {
+            Some(tab) => data::side_panel(ui, tab),
+            None => {
+                ui.centered_and_justified(|ui| {
+                    ui.label(
+                        egui::RichText::new("Nenhuma linha selecionada").color(tokens.text_muted),
+                    );
+                });
+            }
+        });
+    if data_tab.is_some() {
+        data::show(app, ui, id);
+    } else {
+        egui::CentralPanel::default_margins().show(ui, |ui| {
             ui.centered_and_justified(|ui| {
-                ui.label(egui::RichText::new("Nenhuma linha selecionada").color(tokens.text_muted));
+                let text = if database.is_some() {
+                    "Escolha uma tabela na árvore."
+                } else {
+                    "Nenhum banco selecionado. ⌘K para escolher."
+                };
+                ui.label(egui::RichText::new(text).color(tokens.text_muted));
             });
         });
-    egui::CentralPanel::default_margins().show(ui, |ui| {
-        ui.centered_and_justified(|ui| {
-            let text = if database.is_some() {
-                "Escolha uma tabela (aba Data no M3)."
-            } else {
-                "Nenhum banco selecionado. ⌘K para escolher."
-            };
-            ui.label(egui::RichText::new(text).color(tokens.text_muted));
-        });
-    });
+    }
     palette::show(app, ui.ctx(), id);
 }
