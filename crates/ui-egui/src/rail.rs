@@ -34,7 +34,7 @@ where
                         .map(|c| c.name.clone())
                         .unwrap_or_default();
                     let active = app.active.as_ref() == Some(&key);
-                    let running = app.commit_running(&key);
+                    let running = app.busy(&key);
                     let color = tag.map(theme::tag_color).unwrap_or(tokens.border);
                     let fill = if active {
                         tokens.accent_soft
@@ -77,7 +77,7 @@ where
                             if ui
                                 .add_enabled(!running, egui::Button::new("×").small())
                                 .on_hover_text("Fechar este banco")
-                                .on_disabled_hover_text("Aguarde o Commit terminar")
+                                .on_disabled_hover_text("Aguarde a execução terminar")
                                 .clicked()
                             {
                                 close = Some(key.clone());
@@ -111,32 +111,55 @@ where
     let Some(target) = app.confirm_close.clone() else {
         return;
     };
+    // Aba de SQL perde o texto do editor; aba de tabela perde alterações pendentes ou a célula
+    // aberta. Banco e conexão podem perder os dois: a caixa fala só de texto quando nenhuma aba de
+    // tabela perderia algo.
+    let only_text = crate::app::Workspace::loses_only_sql_text;
+    let mut loses = "tem alterações pendentes";
     let (title, what) = match &target {
-        CloseTarget::Database(key) => ("Fechar o banco?", format!("O banco {}", key.1)),
+        CloseTarget::Database(key) => {
+            if app.workspaces.get(key).is_some_and(only_text) {
+                loses = "tem texto no editor SQL";
+            }
+            ("Fechar o banco?", format!("O banco {}", key.1))
+        }
         CloseTarget::Tab(key, index) => (
             "Fechar a aba?",
             app.workspaces
                 .get(key)
-                .and_then(|ws| ws.tabs.get(*index))
-                .map(|t| format!("A tabela {}.{}", t.schema, t.table))
+                .and_then(|ws| {
+                    let t = ws.tabs.get(*index)?;
+                    if t.query().is_some() {
+                        loses = "tem texto no editor";
+                    }
+                    Some(format!("A aba {}", t.title(ws.current_schema.as_deref())))
+                })
                 .unwrap_or_else(|| "A aba".to_owned()),
         ),
-        CloseTarget::Connection(id) => (
-            "Desconectar?",
-            app.deps
-                .store
-                .get(id)
-                .map(|c| format!("A conexão {}", c.name))
-                .unwrap_or_else(|| "A conexão".to_owned()),
-        ),
+        CloseTarget::Connection(id) => {
+            if app
+                .workspaces
+                .iter()
+                .filter(|(k, _)| &k.0 == id)
+                .all(|(_, ws)| only_text(ws))
+            {
+                loses = "tem texto no editor SQL";
+            }
+            (
+                "Desconectar?",
+                app.deps
+                    .store
+                    .get(id)
+                    .map(|c| format!("A conexão {}", c.name))
+                    .unwrap_or_else(|| "A conexão".to_owned()),
+            )
+        }
     };
     let mut decision: Option<bool> = None;
     let response = egui::Modal::new(egui::Id::new("confirm-close")).show(ctx, |ui| {
         ui.set_width(380.0);
         ui.heading(title);
-        ui.label(format!(
-            "{what} tem alterações pendentes. Fechar descarta tudo sem gravar."
-        ));
+        ui.label(format!("{what} {loses}. Fechar descarta tudo sem gravar."));
         ui.separator();
         ui.horizontal(|ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

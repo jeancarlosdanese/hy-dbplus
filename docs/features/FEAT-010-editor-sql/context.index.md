@@ -1,4 +1,4 @@
-<!-- FEAT_EM_ANDAMENTO — docs criados em 22/10/2026; próximo: discutir o desenho e começar pela crate sql -->
+<!-- FEAT_EM_ANDAMENTO — implementada em 22/10/2026, aguardando os commits (ver impl-notes), push, CI e conferência do Jean -->
 <!-- PRIO_ALTA -->
 # @file: docs/features/FEAT-010-editor-sql/context.index.md
 
@@ -33,25 +33,26 @@ highlight pelo tokenizador do `sqlparser`; formatação pelo `sqlformat`. Autoco
 4. docs/features/FEAT-008-bancos-e-abas/ → as abas por banco que ganham a aba de SQL
 ```
 
-## Onde está o quê (quando existir)
+## Onde está o quê
 
 ```
 crates/sql/src/split.rs           split, statement_at
 crates/sql/src/highlight.rs       highlight (spans por token)
 crates/sql/src/format.rs          beautify (sqlformat)
 crates/driver/src/lib.rs          Connection::execute(sql, limit) -> Outcome; cancel
-crates/engine/src/query.rs        run_sql, cancel_sql, histórico em memória; eventos Sql*
-crates/ui-egui/src/app.rs         Tab::Table | Tab::Query, QueryTab
+crates/engine/src/session.rs      run_sql, cancel_sql, histórico em memória; eventos Sql* (usa slots/commit_if_current)
+crates/ui-egui/src/app.rs         Tab::Table | Tab::Query, QueryTab, run_current/run_all/cancel_sql/beautify, eventos Sql*
 crates/ui-egui/src/editor.rs      editor com highlight, gutter, status, controles
 crates/ui-egui/src/results.rs     sub-abas Query N, grid só leitura, mensagem, erro
 crates/ui-egui/src/tabs.rs        + SQL (⌘T)
+crates/ui-egui/src/record.rs      JSON da linha do resultado no painel direito
 ```
 
 ## Workflow Claude Code
 
 ```
 1. Ler este arquivo, o brief, o acceptance e o "Estado atual" do impl-notes.
-2. sql/split, driver, engine/session.rs e engine/query.rs são sensíveis: reviewer antes de cada commit.
-3. Commit só com o "pode commitar" do Jean, na ordem: docs; sql; driver; engine; ui (editor); ui (resultados).
+2. sql/split, driver e engine/session.rs são sensíveis: reviewer antes de cada commit.
+3. Commit só com o "pode commitar" do Jean, na ordem da "Sequência de commits" do impl-notes.
 4. Registrar no impl-notes.md (log + Estado atual) a cada passo.
 ```

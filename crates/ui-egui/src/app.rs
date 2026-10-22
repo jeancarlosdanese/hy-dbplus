@@ -6,10 +6,12 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 
+use std::time::{Duration, Instant};
+
 use hy_dbplus_engine::{
-    ChangeSet, Column, ConnectionId, ConnectionStore, DatabaseInfo, Driver, Event, Function, Page,
-    PostgresDriver, RowUpdate, Schema, SecretStore, Sessions, Table, TableStats, TableStructure,
-    TextRows, preview_sql,
+    ChangeSet, Column, ConnectionId, ConnectionStore, DatabaseInfo, Driver, Event, Function,
+    Outcome, Page, PostgresDriver, QueryTabId, RowUpdate, Schema, SecretStore, Sessions, Table,
+    TableStats, TableStructure, TextRows, preview_sql,
 };
 
 use crate::connections::{ConnectionForm, Connections};
@@ -74,6 +76,123 @@ pub enum CloseTarget {
     Connection(ConnectionId),
 }
 
+/// Uma aba do banco: de tabela (Data/Structure/Index) ou de SQL (FEAT-010).
+#[derive(Debug, Clone)]
+pub enum Tab {
+    /// Em `Box`: a aba de tabela é bem maior que a de SQL (clippy `large_enum_variant`).
+    Table(Box<DataTab>),
+    Query(QueryTab),
+}
+
+impl Tab {
+    pub fn table(&self) -> Option<&DataTab> {
+        match self {
+            Tab::Table(t) => Some(t.as_ref()),
+            Tab::Query(_) => None,
+        }
+    }
+
+    pub fn table_mut(&mut self) -> Option<&mut DataTab> {
+        match self {
+            Tab::Table(t) => Some(t.as_mut()),
+            Tab::Query(_) => None,
+        }
+    }
+
+    pub fn query(&self) -> Option<&QueryTab> {
+        match self {
+            Tab::Query(q) => Some(q),
+            Tab::Table(_) => None,
+        }
+    }
+
+    pub fn query_mut(&mut self) -> Option<&mut QueryTab> {
+        match self {
+            Tab::Query(q) => Some(q),
+            Tab::Table(_) => None,
+        }
+    }
+
+    /// O rótulo da aba: `tabela` (ou `schema.tabela` fora do schema atual) ou o título da SQL.
+    pub fn title(&self, current_schema: Option<&str>) -> String {
+        match self {
+            Tab::Table(t) if current_schema == Some(t.schema.as_str()) => t.table.clone(),
+            Tab::Table(t) => format!("{}.{}", t.schema, t.table),
+            Tab::Query(q) => q.title.clone(),
+        }
+    }
+
+    /// Fechar perde algo: pendência de edição, ou texto no editor.
+    pub fn would_lose_work(&self) -> bool {
+        match self {
+            Tab::Table(t) => t.has_changes() || t.editing.is_some(),
+            Tab::Query(q) => !q.buffer.trim().is_empty(),
+        }
+    }
+
+    /// Algo roda no banco por esta aba: Commit em execução ou SQL em execução.
+    pub fn busy(&self) -> bool {
+        match self {
+            Tab::Table(t) => t.commit_running(),
+            Tab::Query(q) => q.running,
+        }
+    }
+}
+
+/// O resultado de um statement do editor, como chegou do engine.
+#[derive(Debug, Clone)]
+pub struct QueryResult {
+    pub index: usize,
+    pub sql: String,
+    pub result: Result<Outcome, String>,
+    pub elapsed: Duration,
+    /// Linha do grid mostrada em JSON no painel direito (⌘-clique).
+    pub selected_row: Option<usize>,
+}
+
+/// Uma aba "SQL Query" (FEAT-010): o buffer, o limite, a execução em curso e os resultados.
+#[derive(Debug, Clone)]
+pub struct QueryTab {
+    pub id: QueryTabId,
+    pub title: String,
+    pub buffer: String,
+    /// Cursor do editor, em caracteres (o egui conta assim); vira byte para `statement_at`.
+    pub cursor: usize,
+    pub limit: Option<usize>,
+    pub running: bool,
+    pub started: Option<Instant>,
+    pub results: Vec<QueryResult>,
+    pub active_result: usize,
+    pub notice: Option<String>,
+}
+
+pub const DEFAULT_LIMIT: Option<usize> = Some(100);
+
+impl QueryTab {
+    pub fn new(id: QueryTabId) -> Self {
+        Self {
+            id,
+            title: format!("SQL Query {id}"),
+            buffer: String::new(),
+            cursor: 0,
+            limit: DEFAULT_LIMIT,
+            running: false,
+            started: None,
+            results: Vec::new(),
+            active_result: 0,
+            notice: None,
+        }
+    }
+
+    /// O cursor em bytes, para `statement_at`.
+    pub fn cursor_byte(&self) -> usize {
+        self.buffer
+            .char_indices()
+            .nth(self.cursor)
+            .map_or(self.buffer.len(), |(b, _)| b)
+    }
+}
+
 /// Um banco aberto (conexão + banco) e o catálogo que a UI já recebeu (tela 3.3).
 #[derive(Debug, Default)]
 pub struct Workspace {
@@ -87,36 +206,82 @@ pub struct Workspace {
     pub loading: bool,
     pub error: Option<String>,
     pub search: String,
-    /// As abas de tabela abertas neste banco (FEAT-008) e a ativa.
-    pub tabs: Vec<DataTab>,
+    /// As abas abertas neste banco (FEAT-008: tabela; FEAT-010: SQL) e a ativa.
+    pub tabs: Vec<Tab>,
     pub active_tab: Option<usize>,
+    /// Um `BEGIN` do editor sem `COMMIT`/`ROLLBACK`: a transação é da conexão do banco, não da
+    /// aba; todas as abas SQL avisam e o Commit do grid espera.
+    pub open_transaction: bool,
+    /// Um erro dentro da transação aberta (qualquer um, inclusive cancel): o servidor a marca como
+    /// abortada e o `COMMIT` vai desfazer tudo. Volta a `false` quando a transação acaba.
+    pub transaction_aborted: bool,
 }
 
 impl Workspace {
-    /// A aba ativa.
+    /// A aba ativa, se é de tabela.
     pub fn data(&self) -> Option<&DataTab> {
-        self.tabs.get(self.active_tab?)
+        self.tabs.get(self.active_tab?)?.table()
     }
 
     pub fn data_mut(&mut self) -> Option<&mut DataTab> {
-        self.tabs.get_mut(self.active_tab?)
+        self.tabs.get_mut(self.active_tab?)?.table_mut()
+    }
+
+    /// A aba ativa, se é de SQL.
+    pub fn query(&self) -> Option<&QueryTab> {
+        self.tabs.get(self.active_tab?)?.query()
+    }
+
+    pub fn query_mut(&mut self) -> Option<&mut QueryTab> {
+        self.tabs.get_mut(self.active_tab?)?.query_mut()
     }
 
     pub fn tab_index(&self, schema: &str, table: &str) -> Option<usize> {
-        self.tabs
-            .iter()
-            .position(|t| t.schema == schema && t.table == table)
+        self.tabs.iter().position(|t| {
+            t.table()
+                .is_some_and(|t| t.schema == schema && t.table == table)
+        })
     }
 
     /// A aba daquela tabela, ativa ou não (os eventos de dados chegam por tabela).
     pub fn tab_mut(&mut self, schema: &str, table: &str) -> Option<&mut DataTab> {
         let i = self.tab_index(schema, table)?;
-        self.tabs.get_mut(i)
+        self.tabs.get_mut(i)?.table_mut()
     }
 
-    /// Alguma aba com edição pendente (↻ e desconectar precisam saber).
+    /// A aba de SQL com aquele id, ativa ou não (os eventos do editor chegam por aba).
+    pub fn query_tab_mut(&mut self, id: QueryTabId) -> Option<&mut QueryTab> {
+        self.tabs
+            .iter_mut()
+            .filter_map(Tab::query_mut)
+            .find(|q| q.id == id)
+    }
+
+    /// Alguma aba de tabela com edição pendente (↻ e desconectar precisam saber).
     pub fn has_pending_changes(&self) -> bool {
-        self.tabs.iter().any(DataTab::has_changes)
+        self.tabs
+            .iter()
+            .filter_map(Tab::table)
+            .any(DataTab::has_changes)
+    }
+
+    /// Alguma aba com Commit ou SQL em execução: nada fecha até o resultado chegar.
+    pub fn busy(&self) -> bool {
+        self.tabs.iter().any(Tab::busy)
+    }
+
+    /// Fechar o banco perderia algo: pendência de edição, célula aberta ou texto numa aba SQL.
+    pub fn would_lose_work(&self) -> bool {
+        self.tabs.iter().any(Tab::would_lose_work)
+    }
+
+    /// O que se perderia é só texto de aba SQL: nenhuma aba de tabela com pendência ou célula aberta
+    /// (a caixa de confirmação escolhe o texto por isso).
+    pub fn loses_only_sql_text(&self) -> bool {
+        !self
+            .tabs
+            .iter()
+            .any(|t| t.table().is_some() && t.would_lose_work())
     }
 
     /// Fecha uma aba. Era a ativa: a da direita assume (a da esquerda se era a última); estava à
@@ -401,6 +566,65 @@ fn batch_error(keys: &[String]) -> &'static str {
     }
 }
 
+/// Depois de um statement bem-sucedido: `BEGIN`/`START TRANSACTION` abre, `COMMIT`/`ROLLBACK`/`END`
+/// fecha (`ROLLBACK TO` não: volta ao savepoint com a transação aberta); o resto não muda (o
+/// editor avisa "transação aberta" na barra).
+fn transaction_state(sql: &str, open: bool) -> bool {
+    match transaction_effect(sql) {
+        TxEffect::Opens => true,
+        TxEffect::Commits { chain } | TxEffect::RollsBack { chain } => chain,
+        TxEffect::Recovers | TxEffect::Keeps => open,
+    }
+}
+
+/// O que um statement bem-sucedido faz com a transação da conexão.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TxEffect {
+    /// `BEGIN`, `START TRANSACTION`.
+    Opens,
+    /// `COMMIT`/`END`; com `AND CHAIN` abre outra na hora (`AND NO CHAIN` é o `COMMIT` comum).
+    Commits {
+        chain: bool,
+    },
+    /// `ROLLBACK`/`ABORT`; com `AND CHAIN` abre outra na hora.
+    RollsBack {
+        chain: bool,
+    },
+    /// `ROLLBACK [WORK | TRANSACTION] TO [SAVEPOINT] x`: a transação segue e sai do estado abortado.
+    Recovers,
+    Keeps,
+}
+
+fn transaction_effect(sql: &str) -> TxEffect {
+    let head: String = sql
+        .trim_start()
+        .chars()
+        .take_while(|c| c.is_ascii_alphabetic() || c.is_whitespace())
+        .collect::<String>()
+        .to_ascii_uppercase();
+    let words: Vec<&str> = head.split_whitespace().collect();
+    let chain = |rest: &[&str]| rest.windows(2).any(|w| w == ["AND", "CHAIN"]);
+    match words.as_slice() {
+        ["BEGIN", ..] | ["START", "TRANSACTION", ..] => TxEffect::Opens,
+        ["ROLLBACK", rest @ ..] if rest.contains(&"TO") => TxEffect::Recovers,
+        ["COMMIT", rest @ ..] | ["END", rest @ ..] => TxEffect::Commits { chain: chain(rest) },
+        ["ROLLBACK", rest @ ..] | ["ABORT", rest @ ..] => {
+            TxEffect::RollsBack { chain: chain(rest) }
+        }
+        _ => TxEffect::Keeps,
+    }
+}
+
+/// `COMMIT`/`END` (com ou sem `AND CHAIN`) de uma transação abortada: o servidor faz ROLLBACK e
+/// responde OK; nada foi gravado. `ROLLBACK`/`ABORT` de transação abortada não é perda.
+fn undoes_commit(effect: TxEffect, aborted: bool) -> bool {
+    aborted && matches!(effect, TxEffect::Commits { .. })
+}
+
+/// Erro do Commit do grid quando o editor SQL do banco está executando.
+const SQL_RUNNING_ERROR: &str =
+    "há uma execução em curso no editor SQL deste banco: aguarde o resultado antes do Commit";
+
 pub struct App<D: Driver> {
     pub(crate) deps: Deps<D>,
     pub(crate) view: View,
@@ -415,6 +639,8 @@ pub struct App<D: Driver> {
     pub(crate) conn_state: HashMap<ConnectionId, ConnState>,
     /// O que está esperando confirmação para fechar com edição pendente.
     pub(crate) confirm_close: Option<CloseTarget>,
+    /// Numeração das abas "SQL Query N" (global, para o id ser único por app).
+    pub(crate) next_query_id: QueryTabId,
     pub(crate) palette: Option<Palette>,
     /// Painel direito visível (botão na barra superior; abre sozinho na primeira seleção).
     pub(crate) side_panel_open: bool,
@@ -448,6 +674,7 @@ where
             focus: None,
             conn_state: HashMap::new(),
             confirm_close: None,
+            next_query_id: 0,
             palette: None,
             side_panel_open: false,
             panel_mode: PanelMode::default(),
@@ -460,229 +687,324 @@ where
     /// Lê o que o engine mandou desde o último frame.
     pub(crate) fn drain_events(&mut self) {
         while let Ok(event) = self.deps.events.try_recv() {
-            let id = event.connection().clone();
-            match event {
-                Event::Connecting { .. } => {
-                    self.status.insert(id, Status::Connecting);
-                }
-                Event::Connected {
-                    server_version,
-                    databases,
-                    ..
-                } => {
-                    self.status.insert(
-                        id.clone(),
-                        Status::Connected {
-                            server_version,
-                            databases,
-                        },
-                    );
-                    self.conn_state.insert(id.clone(), ConnState::default());
-                    self.focus = Some(id);
-                    self.view = View::Workspace;
-                }
-                Event::Failed { error, .. } => {
-                    self.status.insert(id, Status::Failed(error.to_string()));
-                }
-                Event::Disconnected { .. } => {
-                    // Conexão já removida da lista não volta ao mapa.
-                    if self.deps.store.get(&id).is_some() {
-                        self.status.insert(id.clone(), Status::Idle);
-                    }
-                    self.forget_connection(&id);
-                }
-                Event::DatabaseSelected {
-                    database,
-                    schemas,
-                    current_schema,
-                    ..
-                } => {
-                    // Banco aberto (ou já estava: o engine responde do cache): entra na faixa e vira
-                    // o ativo. Já aberto na UI, só vira o ativo, sem perder árvore e aba.
-                    let key = (id.clone(), database.clone());
-                    if let Some(state) = self.conn_state.get_mut(&id) {
-                        if state.opening.as_deref() == Some(database.as_str()) {
-                            state.opening = None;
-                        }
-                        state.error = None;
-                    }
-                    if !self.workspaces.contains_key(&key) {
-                        let mut ws = Workspace {
-                            schemas,
-                            current_schema: current_schema.clone(),
-                            ..Default::default()
-                        };
-                        if let Some(schema) = current_schema {
-                            ws.loading = true;
-                            self.deps.sessions.load_schema(&id, &database, &schema);
-                        }
-                        self.workspaces.insert(key.clone(), ws);
-                        self.rail.push(key.clone());
-                    }
-                    self.focus = Some(id);
-                    self.active = Some(key);
-                }
-                Event::SchemaLoaded {
-                    database,
-                    schema,
-                    tables,
-                    functions,
-                    ..
-                } => {
-                    if let Some(ws) = self.workspaces.get_mut(&(id, database)) {
-                        ws.objects.insert(schema, (tables, functions));
-                        ws.loading = false;
-                        ws.error = None;
-                    }
-                }
-                Event::ColumnsLoaded {
-                    database,
-                    schema,
-                    table,
-                    columns,
-                    ..
-                } => {
-                    if let Some(ws) = self.workspaces.get_mut(&(id, database)) {
-                        ws.columns.insert((schema, table), columns);
-                    }
-                }
-                Event::StatsLoaded {
-                    database,
-                    schema,
-                    table,
-                    stats,
-                    ..
-                } => {
-                    if let Some(tab) = self.data_tab_mut(&id, &database, &schema, &table) {
-                        tab.stats = Some(stats);
-                    }
-                }
-                Event::PageLoaded {
-                    database,
-                    schema,
-                    table,
-                    page,
-                    rows,
-                    ..
-                } => {
-                    // Só a página pedida por último: resposta atrasada de outra ordem ou offset é descartada.
-                    if let Some(tab) = self
-                        .data_tab_mut(&id, &database, &schema, &table)
-                        .filter(|t| t.requested.as_ref() == Some(&page))
-                    {
-                        tab.accept_page(page, rows);
-                    }
-                }
-                Event::DataFailed {
-                    database,
-                    schema,
-                    table,
-                    error,
-                    ..
-                } => {
-                    // Página ou stats: o grid já carregado continua na tela, com o erro em cima. A página pedida
+            self.apply_event(event);
+        }
+    }
 
-                    // fica: se a falha foi dos stats, a página em voo ainda chega; se foi dela, "Tentar de novo" a repete.
-                    if let Some(tab) = self.data_tab_mut(&id, &database, &schema, &table) {
-                        tab.loading = false;
-                        tab.error = Some(error.to_string());
+    /// Aplica um evento do engine ao estado (separado para os testes injetarem eventos).
+    pub(crate) fn apply_event(&mut self, event: Event) {
+        let id = event.connection().clone();
+        match event {
+            Event::Connecting { .. } => {
+                self.status.insert(id, Status::Connecting);
+            }
+            Event::Connected {
+                server_version,
+                databases,
+                ..
+            } => {
+                self.status.insert(
+                    id.clone(),
+                    Status::Connected {
+                        server_version,
+                        databases,
+                    },
+                );
+                self.conn_state.insert(id.clone(), ConnState::default());
+                self.focus = Some(id);
+                self.view = View::Workspace;
+            }
+            Event::Failed { error, .. } => {
+                self.status.insert(id, Status::Failed(error.to_string()));
+            }
+            Event::Disconnected { .. } => {
+                // Conexão já removida da lista não volta ao mapa.
+                if self.deps.store.get(&id).is_some() {
+                    self.status.insert(id.clone(), Status::Idle);
+                }
+                self.forget_connection(&id);
+            }
+            Event::DatabaseSelected {
+                database,
+                schemas,
+                current_schema,
+                ..
+            } => {
+                // Banco aberto (ou já estava: o engine responde do cache): entra na faixa e vira
+                // o ativo. Já aberto na UI, só vira o ativo, sem perder árvore e aba.
+                let key = (id.clone(), database.clone());
+                if let Some(state) = self.conn_state.get_mut(&id) {
+                    if state.opening.as_deref() == Some(database.as_str()) {
+                        state.opening = None;
                     }
+                    state.error = None;
                 }
-                Event::StructureLoaded {
-                    database,
-                    schema,
-                    table,
-                    structure,
-                    ..
-                } => {
-                    if let Some(tab) = self.data_tab_mut(&id, &database, &schema, &table) {
-                        tab.structure = Some(Arc::new(structure));
-                        tab.structure_requested = false;
-                        tab.structure_error = None;
+                if !self.workspaces.contains_key(&key) {
+                    let mut ws = Workspace {
+                        schemas,
+                        current_schema: current_schema.clone(),
+                        ..Default::default()
+                    };
+                    if let Some(schema) = current_schema {
+                        ws.loading = true;
+                        self.deps.sessions.load_schema(&id, &database, &schema);
                     }
+                    self.workspaces.insert(key.clone(), ws);
+                    self.rail.push(key.clone());
                 }
-                Event::StructureFailed {
-                    database,
-                    schema,
-                    table,
-                    error,
-                    ..
-                } => {
-                    // Só as sub-abas Structure/Index: a página e os stats não mudam, e o "Tentar de
-                    // novo" delas pede a estrutura de novo.
-                    if let Some(tab) = self.data_tab_mut(&id, &database, &schema, &table) {
-                        tab.structure_requested = false;
-                        tab.structure_error = Some(error.to_string());
-                    }
+                self.focus = Some(id);
+                self.active = Some(key);
+            }
+            Event::SchemaLoaded {
+                database,
+                schema,
+                tables,
+                functions,
+                ..
+            } => {
+                if let Some(ws) = self.workspaces.get_mut(&(id, database)) {
+                    ws.objects.insert(schema, (tables, functions));
+                    ws.loading = false;
+                    ws.error = None;
                 }
-                Event::DatabaseClosed { database, .. } => {
-                    self.forget_database(&(id, database));
+            }
+            Event::ColumnsLoaded {
+                database,
+                schema,
+                table,
+                columns,
+                ..
+            } => {
+                if let Some(ws) = self.workspaces.get_mut(&(id, database)) {
+                    ws.columns.insert((schema, table), columns);
                 }
-                Event::ChangesApplied {
-                    database,
-                    schema,
-                    table,
-                    ..
-                } => {
-                    // Gravou: fecha a caixa, limpa as pendências e recarrega a página e os stats
-                    // (o engine já esvaziou o cache deles).
-                    let page = self
-                        .data_tab_mut(&id, &database, &schema, &table)
-                        .map(|tab| {
-                            tab.commit = None;
-                            tab.clear_changes();
-                            tab.selected_rows.clear();
-                            tab.anchor = None;
-                            tab.page.clone()
-                        });
-                    if let Some(page) = page {
-                        self.load_tab_page(&(id.clone(), database.clone()), &schema, &table, page);
-                        self.deps
-                            .sessions
-                            .load_stats(&id, &database, &schema, &table);
-                    }
+            }
+            Event::StatsLoaded {
+                database,
+                schema,
+                table,
+                stats,
+                ..
+            } => {
+                if let Some(tab) = self.data_tab_mut(&id, &database, &schema, &table) {
+                    tab.stats = Some(stats);
                 }
-                Event::ChangesFailed {
-                    database,
-                    schema,
-                    table,
-                    error,
-                    position,
-                    ..
-                } => {
-                    // Statement ou contagem: desfeito; conexão caída: a mensagem do driver diz. As
-                    // pendências ficam para corrigir. O erro vai na caixa, se ela está aberta, senão
-                    // na faixa da aba.
-                    if let Some(tab) = self.data_tab_mut(&id, &database, &schema, &table) {
-                        match tab.commit.as_mut() {
-                            Some(dialog) => {
-                                dialog.running = false;
-                                dialog.error = Some(error);
-                                dialog.failed = position;
-                            }
-                            None => tab.error = Some(error),
+            }
+            Event::PageLoaded {
+                database,
+                schema,
+                table,
+                page,
+                rows,
+                ..
+            } => {
+                // Só a página pedida por último: resposta atrasada de outra ordem ou offset é descartada.
+                if let Some(tab) = self
+                    .data_tab_mut(&id, &database, &schema, &table)
+                    .filter(|t| t.requested.as_ref() == Some(&page))
+                {
+                    tab.accept_page(page, rows);
+                }
+            }
+            Event::DataFailed {
+                database,
+                schema,
+                table,
+                error,
+                ..
+            } => {
+                // Página ou stats: o grid já carregado continua na tela, com o erro em cima. A página pedida
+
+                // fica: se a falha foi dos stats, a página em voo ainda chega; se foi dela, "Tentar de novo" a repete.
+                if let Some(tab) = self.data_tab_mut(&id, &database, &schema, &table) {
+                    tab.loading = false;
+                    tab.error = Some(error.to_string());
+                }
+            }
+            Event::StructureLoaded {
+                database,
+                schema,
+                table,
+                structure,
+                ..
+            } => {
+                if let Some(tab) = self.data_tab_mut(&id, &database, &schema, &table) {
+                    tab.structure = Some(Arc::new(structure));
+                    tab.structure_requested = false;
+                    tab.structure_error = None;
+                }
+            }
+            Event::StructureFailed {
+                database,
+                schema,
+                table,
+                error,
+                ..
+            } => {
+                // Só as sub-abas Structure/Index: a página e os stats não mudam, e o "Tentar de
+                // novo" delas pede a estrutura de novo.
+                if let Some(tab) = self.data_tab_mut(&id, &database, &schema, &table) {
+                    tab.structure_requested = false;
+                    tab.structure_error = Some(error.to_string());
+                }
+            }
+            Event::SqlStarted { database, tab, .. } => {
+                if let Some(q) = self.query_tab_mut(&id, &database, tab) {
+                    q.running = true;
+                    q.started = Some(Instant::now());
+                    q.results.clear();
+                    q.active_result = 0;
+                    q.notice = None;
+                }
+            }
+            Event::SqlResult {
+                database,
+                tab,
+                index,
+                sql,
+                result,
+                elapsed,
+                ..
+            } => {
+                // Só a aba que está rodando: um resultado em voo de um banco fechado e
+                // reaberto (ou de uma aba que já não existe) não mexe em nada.
+                if !self
+                    .query_tab_mut(&id, &database, tab)
+                    .is_some_and(|q| q.running)
+                {
+                    return;
+                }
+                // O COMMIT de uma transação abortada vira ROLLBACK no servidor, com "OK" na resposta.
+                let mut commit_undone = false;
+                if let Some(ws) = self.workspaces.get_mut(&(id.clone(), database.clone())) {
+                    if result.is_ok() {
+                        let effect = transaction_effect(&sql);
+                        ws.open_transaction = transaction_state(&sql, ws.open_transaction);
+                        if effect != TxEffect::Keeps {
+                            // Abrir, fechar ou voltar a um savepoint sai do estado abortado.
+                            commit_undone = undoes_commit(effect, ws.transaction_aborted);
+                            ws.transaction_aborted = false;
                         }
+                    } else if ws.open_transaction {
+                        // Qualquer ERROR dentro da transação a aborta no servidor.
+                        ws.transaction_aborted = true;
                     }
                 }
-                Event::CatalogFailed {
-                    database, error, ..
-                } => {
-                    // Do banco que o ⌘K estava abrindo (vai ao painel da conexão) ou de um banco
-                    // aberto (schema que não carregou: vai à árvore dele).
-                    if let Some(ws) = self.workspaces.get_mut(&(id.clone(), database.clone())) {
-                        ws.loading = false;
-                        ws.error = Some(error.to_string());
-                    } else if let Some(state) = self.conn_state.get_mut(&id) {
-                        // Dois ⌘K seguidos: o erro do primeiro ainda aparece, mesmo que `opening` já
-                        // seja o segundo.
-                        if state.opening.as_deref() == Some(database.as_str()) {
-                            state.opening = None;
-                        }
-                        state.error = Some(format!("{database}: {error}"));
+                if let Some(q) = self.query_tab_mut(&id, &database, tab) {
+                    q.results.push(QueryResult {
+                        index,
+                        sql,
+                        result: result.map_err(|e| e.to_string()),
+                        elapsed,
+                        selected_row: None,
+                    });
+                    q.active_result = q.results.len() - 1;
+                    if commit_undone {
+                        q.notice = Some(
+                            "A transação estava abortada: o COMMIT virou ROLLBACK, nada foi gravado"
+                                .into(),
+                        );
                     }
                 }
             }
+            Event::SqlFinished {
+                database,
+                tab,
+                cancelled,
+                ..
+            } => {
+                if let Some(q) = self.query_tab_mut(&id, &database, tab) {
+                    q.running = false;
+                    q.started = None;
+                    if cancelled {
+                        q.notice = Some("Execução cancelada".into());
+                    }
+                }
+            }
+            Event::SqlBusy { database, tab, .. } => {
+                if let Some(q) = self.query_tab_mut(&id, &database, tab) {
+                    q.notice =
+                        Some("Outra execução ainda roda neste banco; aguarde ou cancele".into());
+                }
+            }
+            Event::DatabaseClosed { database, .. } => {
+                self.forget_database(&(id, database));
+            }
+            Event::ChangesApplied {
+                database,
+                schema,
+                table,
+                ..
+            } => {
+                // Gravou: fecha a caixa, limpa as pendências e recarrega a página e os stats
+                // (o engine já esvaziou o cache deles).
+                let page = self
+                    .data_tab_mut(&id, &database, &schema, &table)
+                    .map(|tab| {
+                        tab.commit = None;
+                        tab.clear_changes();
+                        tab.selected_rows.clear();
+                        tab.anchor = None;
+                        tab.page.clone()
+                    });
+                if let Some(page) = page {
+                    self.load_tab_page(&(id.clone(), database.clone()), &schema, &table, page);
+                    self.deps
+                        .sessions
+                        .load_stats(&id, &database, &schema, &table);
+                }
+            }
+            Event::ChangesFailed {
+                database,
+                schema,
+                table,
+                error,
+                position,
+                ..
+            } => {
+                // Statement ou contagem: desfeito; conexão caída: a mensagem do driver diz. As
+                // pendências ficam para corrigir. O erro vai na caixa, se ela está aberta, senão
+                // na faixa da aba.
+                if let Some(tab) = self.data_tab_mut(&id, &database, &schema, &table) {
+                    match tab.commit.as_mut() {
+                        Some(dialog) => {
+                            dialog.running = false;
+                            dialog.error = Some(error);
+                            dialog.failed = position;
+                        }
+                        None => tab.error = Some(error),
+                    }
+                }
+            }
+            Event::CatalogFailed {
+                database, error, ..
+            } => {
+                // Do banco que o ⌘K estava abrindo (vai ao painel da conexão) ou de um banco
+                // aberto (schema que não carregou: vai à árvore dele).
+                if let Some(ws) = self.workspaces.get_mut(&(id.clone(), database.clone())) {
+                    ws.loading = false;
+                    ws.error = Some(error.to_string());
+                } else if let Some(state) = self.conn_state.get_mut(&id) {
+                    // Dois ⌘K seguidos: o erro do primeiro ainda aparece, mesmo que `opening` já
+                    // seja o segundo.
+                    if state.opening.as_deref() == Some(database.as_str()) {
+                        state.opening = None;
+                    }
+                    state.error = Some(format!("{database}: {error}"));
+                }
+            }
         }
+    }
+
+    fn query_tab_mut(
+        &mut self,
+        id: &str,
+        database: &str,
+        tab: QueryTabId,
+    ) -> Option<&mut QueryTab> {
+        self.workspaces
+            .get_mut(&(id.to_owned(), database.to_owned()))
+            .and_then(|ws| ws.query_tab_mut(tab))
     }
 
     fn data_tab_mut(
@@ -784,7 +1106,7 @@ where
         }
         let tab = DataTab::new(schema, table);
         let page = tab.page.clone();
-        ws.tabs.push(tab);
+        ws.tabs.push(Tab::Table(Box::new(tab)));
         ws.active_tab = Some(ws.tabs.len() - 1);
         let (id, database) = key;
         self.deps
@@ -881,18 +1203,117 @@ where
         }
     }
 
-    /// Commit em execução em alguma aba do banco: nada fecha até o resultado chegar (fechar
-    /// esconderia um lote que ainda grava, ou o erro dele).
-    pub(crate) fn commit_running(&self, key: &DbKey) -> bool {
-        self.workspaces
-            .get(key)
-            .is_some_and(|ws| ws.tabs.iter().any(DataTab::commit_running))
+    /// Commit ou SQL em execução em alguma aba do banco: nada fecha até o resultado chegar
+    /// (fechar esconderia um lote que ainda grava, ou o erro dele).
+    pub(crate) fn busy(&self, key: &DbKey) -> bool {
+        self.workspaces.get(key).is_some_and(Workspace::busy)
     }
 
-    pub(crate) fn connection_commit_running(&self, id: &str) -> bool {
-        self.workspaces
+    pub(crate) fn connection_busy(&self, id: &str) -> bool {
+        self.workspaces.iter().any(|(k, ws)| k.0 == id && ws.busy())
+    }
+
+    /// **+ SQL** (⌘T): uma aba "SQL Query N" nova no banco, ativa.
+    pub(crate) fn open_query_tab(&mut self, key: &DbKey) {
+        let Some(ws) = self.workspaces.get_mut(key) else {
+            return;
+        };
+        self.next_query_id += 1;
+        ws.tabs.push(Tab::Query(QueryTab::new(self.next_query_id)));
+        ws.active_tab = Some(ws.tabs.len() - 1);
+    }
+
+    /// Run Current (⌘↩): o statement sob o cursor.
+    pub(crate) fn run_current(&mut self, key: &DbKey) {
+        let Some(q) = self.workspaces.get(key).and_then(|ws| ws.query()) else {
+            return;
+        };
+        let Some(statement) = hy_dbplus_sql::statement_at(&q.buffer, q.cursor_byte()) else {
+            self.run(key, Vec::new());
+            return;
+        };
+        if !statement.complete && statement.sql.contains(';') {
+            // A cauda incompleta vai até o fim do buffer e pode levar statements inteiros que o
+            // usuário não pediu (o tokenizador erra em sintaxe que o servidor aceita): não roda.
+            if let Some(q) = self.workspaces.get_mut(key).and_then(|ws| ws.query_mut()) {
+                q.notice = Some(
+                    "Statement incompleto (string, $$ ou comentário sem fechar) com `;` depois: o \
+                     editor não sabe onde ele termina. Corrija, tire o `;` ou use Run All"
+                        .into(),
+                );
+            }
+            return;
+        }
+        let incomplete = !statement.complete;
+        self.run(key, vec![statement.sql]);
+        if incomplete && let Some(q) = self.workspaces.get_mut(key).and_then(|ws| ws.query_mut()) {
+            q.notice = Some("Statement incompleto (string, $$ ou comentário sem fechar)".into());
+        }
+    }
+
+    /// Run All (⌘⇧↩): todos os statements do buffer, em ordem; o engine para no primeiro erro.
+    pub(crate) fn run_all(&mut self, key: &DbKey) {
+        let Some(q) = self.workspaces.get(key).and_then(|ws| ws.query()) else {
+            return;
+        };
+        let statements = hy_dbplus_sql::split(&q.buffer)
+            .into_iter()
+            .map(|s| s.sql)
+            .collect();
+        self.run(key, statements);
+    }
+
+    fn run(&mut self, key: &DbKey, statements: Vec<String>) {
+        let Some(ws) = self.workspaces.get_mut(key) else {
+            return;
+        };
+        // Commit do grid em curso neste banco: o editor esperaria o lock da conexão e um Cancelar
+        // dele derrubaria o lote no servidor (o cancel é por conexão, não por statement).
+        let commit_running = ws
+            .tabs
             .iter()
-            .any(|(k, ws)| k.0 == id && ws.tabs.iter().any(DataTab::commit_running))
+            .any(|t| matches!(t, Tab::Table(t) if t.commit_running()));
+        let Some(q) = ws.query_mut() else {
+            return;
+        };
+        if commit_running {
+            q.notice = Some("Há um Commit em curso neste banco; aguarde o resultado".into());
+            return;
+        }
+        if q.running {
+            q.notice = Some("Já há uma execução em curso; aguarde ou cancele".into());
+            return;
+        }
+        if statements.is_empty() {
+            q.notice = Some("Nada para executar".into());
+            return;
+        }
+        let (id, limit) = (q.id, q.limit);
+        self.deps
+            .sessions
+            .run_sql(&key.0, &key.1, id, statements, limit);
+    }
+
+    pub(crate) fn cancel_sql(&mut self, key: &DbKey) {
+        if self
+            .workspaces
+            .get(key)
+            .and_then(|ws| ws.query())
+            .is_some_and(|q| q.running)
+        {
+            self.deps.sessions.cancel_sql(&key.0, &key.1);
+        }
+    }
+
+    /// Beautify (⌘I): o buffer inteiro; `sql::beautify` devolve a entrada intacta se não puder.
+    pub(crate) fn beautify(&mut self, key: &DbKey) {
+        if let Some(q) = self.workspaces.get_mut(key).and_then(|ws| ws.query_mut()) {
+            let formatted = hy_dbplus_sql::beautify(&q.buffer);
+            if formatted != q.buffer {
+                q.buffer = formatted;
+                q.cursor = q.cursor.min(q.buffer.chars().count());
+            }
+        }
     }
 
     /// Troca a sub-aba da aba ativa; Structure e Index pedem a estrutura ao engine uma vez (ou de
@@ -920,24 +1341,16 @@ where
             .is_some_and(Workspace::has_pending_changes)
     }
 
-    /// Alguma aba de qualquer banco da conexão com edição pendente.
-    pub(crate) fn connection_has_pending_changes(&self, id: &str) -> bool {
-        self.workspaces
-            .iter()
-            .any(|(k, ws)| k.0 == id && ws.has_pending_changes())
-    }
-
     /// × numa aba ou ⌘W: fecha na hora, ou pede confirmação se há pendência.
     pub(crate) fn request_close_tab(&mut self, key: &DbKey, index: usize) {
         let Some(tab) = self.workspaces.get(key).and_then(|ws| ws.tabs.get(index)) else {
             return;
         };
-        if tab.commit_running() {
+        if tab.busy() {
             return;
         }
-        // Célula aberta com texto digitado também é trabalho a perder.
-        let pending = tab.has_changes() || tab.editing.is_some();
-        if pending {
+        // Pendência de edição, célula aberta com texto ou buffer de SQL: trabalho a perder.
+        if tab.would_lose_work() {
             self.confirm_close = Some(CloseTarget::Tab(key.clone(), index));
         } else if let Some(ws) = self.workspaces.get_mut(key) {
             ws.close_tab(index);
@@ -946,10 +1359,15 @@ where
 
     /// × na faixa: fecha na hora, ou pede confirmação se alguma aba tem pendência.
     pub(crate) fn request_close_database(&mut self, key: &DbKey) {
-        if self.commit_running(key) {
+        if self.busy(key) {
             return;
         }
-        if self.has_pending_changes(key) {
+        // Pendência de edição ou texto numa aba SQL: a mesma régua de fechar a aba.
+        if self
+            .workspaces
+            .get(key)
+            .is_some_and(Workspace::would_lose_work)
+        {
             self.confirm_close = Some(CloseTarget::Database(key.clone()));
         } else {
             self.close_database(key);
@@ -958,10 +1376,14 @@ where
 
     /// "Desconectar": fecha na hora, ou pede confirmação se alguma aba da conexão tem pendência.
     pub(crate) fn request_disconnect(&mut self, id: &ConnectionId) {
-        if self.connection_commit_running(id) {
+        if self.connection_busy(id) {
             return;
         }
-        if self.connection_has_pending_changes(id) {
+        let loses = self
+            .workspaces
+            .iter()
+            .any(|(k, ws)| &k.0 == id && ws.would_lose_work());
+        if loses {
             self.confirm_close = Some(CloseTarget::Connection(id.clone()));
         } else {
             self.deps.sessions.disconnect(id);
@@ -1115,10 +1537,29 @@ where
     pub(crate) fn open_commit(&mut self, key: &DbKey) {
         self.finish_edit(key, true);
         let keys = self.key_columns(key);
+        let open_transaction = self
+            .workspaces
+            .get(key)
+            .is_some_and(|ws| ws.open_transaction);
+        let sql_running = self.sql_running(key);
         let Some(tab) = self.data_tab(key) else {
             return;
         };
         if !tab.has_changes() || tab.commit.is_some() {
+            return;
+        }
+        if sql_running {
+            // Espelho de `run`: o lote esperaria o lock da conexão e um Cancelar do editor o
+            // derrubaria no servidor (o cancel é por conexão).
+            tab.error = Some(SQL_RUNNING_ERROR.into());
+            return;
+        }
+        if open_transaction {
+            // O lote faria BEGIN dentro da transação do editor e o COMMIT dele gravaria tudo junto.
+            tab.error = Some(
+                "há uma transação aberta no editor SQL deste banco: feche com COMMIT ou ROLLBACK antes"
+                    .into(),
+            );
             return;
         }
         let (updates, deletes) = tab.change_counts();
@@ -1143,7 +1584,23 @@ where
     }
 
     /// Executar na caixa: manda o lote ao engine; o resultado chega por evento.
+    /// Alguma aba SQL do banco com execução em curso.
+    fn sql_running(&self, key: &DbKey) -> bool {
+        self.workspaces.get(key).is_some_and(|ws| {
+            ws.tabs
+                .iter()
+                .any(|t| matches!(t, Tab::Query(q) if q.running))
+        })
+    }
+
     pub(crate) fn execute_changes(&mut self, key: &DbKey) {
+        if self.sql_running(key) {
+            if let Some(tab) = self.data_tab(key) {
+                tab.commit = None;
+                tab.error = Some(SQL_RUNNING_ERROR.into());
+            }
+            return;
+        }
         let keys = self.key_columns(key);
         let Some(ws) = self.workspaces.get_mut(key) else {
             return;
@@ -1217,6 +1674,78 @@ where
 #[cfg(test)]
 pub(crate) mod tests {
     use std::time::{Duration, Instant};
+
+    /// O aviso "transação aberta" segue BEGIN/START TRANSACTION e COMMIT/ROLLBACK/END, em qualquer
+    /// caixa e com espaço antes; o resto não muda o estado.
+    /// A caixa de fechar fala só de "texto no editor SQL" quando nenhuma aba de tabela perderia algo:
+    /// célula aberta numa aba de tabela conta como pendência (7ª revisão de 22/10/2026).
+    #[test]
+    fn caixa_de_fechar_distingue_texto_sql_de_pendencia_na_tabela() {
+        let mut ws = Workspace::default();
+        assert!(ws.loses_only_sql_text());
+        let mut q = QueryTab::new(1);
+        q.buffer = "select 1".into();
+        ws.tabs.push(Tab::Query(q));
+        assert!(ws.loses_only_sql_text());
+        let mut tab = DataTab::new("public", "a");
+        tab.editing = Some(CellEdit {
+            row: 0,
+            col: 0,
+            text: "x".into(),
+            original: None,
+            focus_pending: false,
+        });
+        ws.tabs.push(Tab::Table(Box::new(tab)));
+        assert!(ws.would_lose_work());
+        assert!(!ws.loses_only_sql_text());
+    }
+
+    #[test]
+    fn transacao_aberta_segue_begin_e_commit() {
+        assert!(transaction_state("begin", false));
+        assert!(transaction_state(
+            "  START TRANSACTION isolation level serializable",
+            false
+        ));
+        assert!(transaction_state("select 1", true));
+        assert!(!transaction_state("commit", true));
+        assert!(!transaction_state("ROLLBACK;", true));
+        // ROLLBACK TO volta ao savepoint: a transação continua (revisão de 22/10/2026).
+        assert!(transaction_state("rollback to savepoint a", true));
+        assert!(transaction_state("ROLLBACK WORK TO a;", true));
+        assert!(!transaction_state("rollback to savepoint a", false));
+        // Espaço interno não importa.
+        assert!(transaction_state("START  TRANSACTION", false));
+        assert!(transaction_state("start\ntransaction;", false));
+        // AND CHAIN fecha e abre outra na hora: segue aberta.
+        assert!(transaction_state("commit and chain", true));
+        assert!(transaction_state("ROLLBACK AND CHAIN;", true));
+        assert!(!transaction_state("commit and no chain", true));
+        assert_eq!(
+            transaction_effect("rollback to savepoint a"),
+            TxEffect::Recovers
+        );
+        assert_eq!(
+            transaction_effect("end and chain"),
+            TxEffect::Commits { chain: true }
+        );
+        assert_eq!(
+            transaction_effect("abort"),
+            TxEffect::RollsBack { chain: false }
+        );
+        assert_eq!(transaction_effect("select 1"), TxEffect::Keeps);
+        // Só COMMIT/END de transação abortada é perda (inclusive AND CHAIN); ROLLBACK não.
+        assert!(undoes_commit(TxEffect::Commits { chain: false }, true));
+        assert!(undoes_commit(TxEffect::Commits { chain: true }, true));
+        assert!(!undoes_commit(TxEffect::Commits { chain: false }, false));
+        assert!(!undoes_commit(TxEffect::RollsBack { chain: false }, true));
+        assert!(!undoes_commit(TxEffect::Recovers, true));
+        assert!(!transaction_state("end", true));
+        assert!(!transaction_state("END TRANSACTION", true));
+        assert!(!transaction_state("abort", true));
+        assert!(!transaction_state("select 1", false));
+        assert!(transaction_state("BEGIN; select 1", false));
+    }
 
     use hy_dbplus_engine::{Connection, ConnectionConfig, MemorySecrets, Secret, Tag};
 

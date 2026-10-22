@@ -1,6 +1,7 @@
-//! A barra de abas de tabela do banco ativo (FEAT-008): uma aba por tabela aberta, rótulo
-//! `schema.tabela` (só `tabela` no schema atual), × em cada aba e ⌘W na ativa; fechar uma aba com
-//! edição pendente passa pela confirmação. O ponto na aba marca pendência.
+//! A barra de abas do banco ativo (FEAT-008): uma aba por tabela aberta, rótulo `schema.tabela`
+//! (só `tabela` no schema atual), e as abas "SQL Query N" (FEAT-010, **+ SQL** ou ⌘T); × em cada
+//! aba e ⌘W na ativa; fechar uma aba com edição pendente ou com texto passa pela confirmação. O
+//! ponto na aba marca pendência (ou SQL em execução).
 
 use hy_dbplus_engine::Driver;
 
@@ -16,30 +17,38 @@ where
     let Some(ws) = app.workspaces.get(key) else {
         return;
     };
-    if ws.tabs.is_empty() {
-        return;
-    }
     let current_schema = ws.current_schema.clone();
     let active = ws.active_tab;
     let labels: Vec<(String, bool, bool)> = ws
         .tabs
         .iter()
         .map(|t| {
-            let label = if current_schema.as_deref() == Some(t.schema.as_str()) {
-                t.table.clone()
-            } else {
-                format!("{}.{}", t.schema, t.table)
-            };
-            (label, t.has_changes(), t.commit_running())
+            let pending =
+                t.table().is_some_and(|t| t.has_changes()) || t.query().is_some_and(|q| q.running);
+            (t.title(current_schema.as_deref()), pending, t.busy())
         })
         .collect();
     let mut focus: Option<usize> = None;
     let mut close: Option<usize> = None;
-    // ⌘W só sem campo em foco (num campo é dele) e sem Commit rodando na ativa.
-    let nothing_focused = ui.ctx().memory(|m| m.focused().is_none());
+    let mut new_query = false;
+    if ui.input_mut(|i| {
+        i.consume_shortcut(&egui::KeyboardShortcut::new(
+            egui::Modifiers::COMMAND,
+            egui::Key::T,
+        ))
+    }) {
+        new_query = true;
+    }
+    // ⌘W vale sem campo em foco ou com o foco no editor de SQL da aba ativa (o que se perderia
+    // passa pela confirmação, ver `Tab::would_lose_work`); noutro campo (busca da árvore, Form) é
+    // dele. Não com a paleta aberta nem com algo rodando.
     let active_running = active.and_then(|i| labels.get(i)).is_some_and(|l| l.2);
+    let editor_id = ws.query().map(|q| crate::editor::editor_id(key, q.id));
+    let focused = ui.ctx().memory(|m| m.focused());
+    let focus_ok = focused.is_none() || (focused.is_some() && focused == editor_id);
     if app.confirm_close.is_none()
-        && nothing_focused
+        && app.palette.is_none()
+        && focus_ok
         && !active_running
         && ui.input_mut(|i| {
             i.consume_shortcut(&egui::KeyboardShortcut::new(
@@ -69,16 +78,26 @@ where
                     if ui
                         .add_enabled(!running, egui::Button::new("×").small())
                         .on_hover_text("Fechar a aba (⌘W fecha a ativa)")
-                        .on_disabled_hover_text("Aguarde o Commit terminar")
+                        .on_disabled_hover_text("Aguarde a execução terminar")
                         .clicked()
                     {
                         close = Some(i);
                     }
                     ui.add_space(6.0);
                 }
+                if ui
+                    .small_button("+ SQL")
+                    .on_hover_text("Uma aba de SQL neste banco (⌘T)")
+                    .clicked()
+                {
+                    new_query = true;
+                }
             });
         });
     });
+    if new_query {
+        app.open_query_tab(key);
+    }
     if let Some(i) = close {
         app.request_close_tab(key, i);
     } else if let Some(i) = focus

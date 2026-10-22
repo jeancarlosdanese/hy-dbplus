@@ -82,13 +82,18 @@ num banco de desenvolvimento local. Servem como especificação visual e funcion
   `condition`, `include`, `storage_parameters`, `comment`.
 
 ### 3.7 Editor SQL
-- Aba própria ao lado das abas de tabela (`<tabela> | SQL Query`).
-- Syntax highlight, numeração de linhas, várias queries no mesmo buffer.
-- Barra de status `line, column, location`.
-- Controles: **No limit** (limite de linhas), **Beautify ⌘I**,
-  **Run Current ⌘↩** (executa a query sob o cursor).
-- Resultado em grid abaixo do editor.
-- **Autocomplete** de palavras-chave, tabelas, colunas e aliases.
+- Aba própria ao lado das abas de tabela (`<tabela> | SQL Query N`; **+ SQL** ou ⌘T), uma por banco,
+  quantas quiser (FEAT-010).
+- Syntax highlight, numeração de linhas, várias queries no mesmo buffer; o statement sob o cursor fica
+  destacado.
+- Barra de status `linha, coluna`.
+- Controles: limite de linhas (**No limit**, 100, 500, 1000; por leitura, sem envolver o SQL em
+  `LIMIT`), **Beautify ⌘I**, **Run Current ⌘↩** (a query sob o cursor), **Run All ⌘⇧↩** (para no
+  primeiro erro), **Cancelar**; aviso "transação aberta" depois de um `BEGIN` sem fim.
+- Resultado em sub-abas `Query N` abaixo do editor: grid só leitura, `OK, N linhas afetadas` ou o erro;
+  ⌘-clique numa linha mostra o JSON no painel direito.
+- **Autocomplete** de palavras-chave, tabelas, colunas e aliases (M6, FEAT-012); histórico persistido (M7).
+- **Queries salvas** (FEAT-011): cada aba SQL num arquivo em `~/.config/hy-dbplus/queries/<conexão>/<banco>/<n>.sql`, salvo ao perder o foco e ao fechar, restaurado ao abrir o banco; "Descartar e fechar" apaga.
 
 ## 4. Escopo do MVP (v0.1)
 

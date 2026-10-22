@@ -23,6 +23,41 @@ where
     let Some(ws) = app.workspaces.get(key) else {
         return;
     };
+    // Aba de SQL: só o JSON da linha escolhida com ⌘-clique no resultado (sem tipos do catálogo).
+    if let Some(q) = ws.query() {
+        let selected = q
+            .results
+            .get(q.active_result)
+            .and_then(|r| Some((r, r.selected_row?)))
+            .and_then(|(r, row)| {
+                r.result
+                    .as_ref()
+                    .ok()
+                    .and_then(|o| o.rows.as_ref())
+                    .and_then(|rows| Some((rows.columns.clone(), rows.rows.get(row)?.clone())))
+            });
+        match selected {
+            None => {
+                ui.centered_and_justified(|ui| {
+                    ui.label(
+                        egui::RichText::new("Nenhuma linha selecionada (⌘-clique no resultado)")
+                            .color(tokens.text_muted),
+                    );
+                });
+            }
+            Some((columns, row)) => {
+                let types: Vec<Option<String>> = vec![None; columns.len()];
+                let json = record::to_json(&columns, &types, &[row.as_slice()]);
+                if ui.button("Copiar").clicked() {
+                    ui.ctx().copy_text(json.clone());
+                }
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.add(egui::Label::new(egui::RichText::new(json).monospace()).wrap());
+                });
+            }
+        }
+        return;
+    }
     let Some(tab) = ws.data() else { return };
     // Em Structure e Index o grid não está na tela: nada de Form editável sobre uma linha invisível.
     if tab.view != TabView::Data {

@@ -6,7 +6,7 @@
 use hy_dbplus_engine::Driver;
 
 use crate::app::{App, Status, View};
-use crate::{commit, data, palette, rail, record, structure, tabs, theme, tree};
+use crate::{commit, data, editor, palette, rail, record, structure, tabs, theme, tree};
 
 pub fn show<D>(app: &mut App<D>, ui: &mut egui::Ui)
 where
@@ -54,11 +54,8 @@ where
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
-                        .add_enabled(
-                            !app.connection_commit_running(&id),
-                            egui::Button::new("Desconectar"),
-                        )
-                        .on_disabled_hover_text("Aguarde o Commit terminar")
+                        .add_enabled(!app.connection_busy(&id), egui::Button::new("Desconectar"))
+                        .on_disabled_hover_text("Aguarde a execução terminar")
                         .clicked()
                     {
                         app.request_disconnect(&id);
@@ -138,17 +135,19 @@ where
     if let Some(key) = &active {
         tabs::show(app, ui, key);
     }
-    let data_tab = active
+    // A aba ativa: de tabela, de SQL ou nenhuma.
+    let (is_table, is_query) = active
         .as_ref()
         .and_then(|key| app.workspaces.get(key))
-        .and_then(|ws| ws.data().cloned());
+        .map(|ws| (ws.data().is_some(), ws.query().is_some()))
+        .unwrap_or((false, false));
     if app.side_panel_open {
         egui::Panel::right("workspace-right")
             .default_size(300.0)
             .min_size(200.0)
             .max_size(640.0)
-            .show(ui, |ui| match (&active, &data_tab) {
-                (Some(key), Some(_)) => record::show(app, ui, key),
+            .show(ui, |ui| match &active {
+                Some(key) if is_table || is_query => record::show(app, ui, key),
                 _ => {
                     ui.centered_and_justified(|ui| {
                         ui.label(
@@ -158,11 +157,14 @@ where
                 }
             });
     }
-    match (&active, &data_tab) {
-        (Some(key), Some(_)) => {
+    match &active {
+        Some(key) if is_table => {
             data::show(app, ui, key);
             commit::show(app, ui.ctx(), key);
             structure::ddl_dialog(app, ui.ctx(), key);
+        }
+        Some(key) if is_query => {
+            editor::show(app, ui, key);
         }
         _ => {
             egui::CentralPanel::default_margins().show(ui, |ui| {
