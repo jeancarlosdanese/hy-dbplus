@@ -14,11 +14,12 @@
 
 ## `engine`
 
-- [ ] `select_database` abre a conexão do banco e emite `DatabaseSelected { database, schemas, current_schema }`
-      (`public` se existir, senão o primeiro); banco inválido emite `Failed` e a sessão continua aberta.
-- [ ] `load_schema` e `load_columns` emitem os eventos com os dados; segunda chamada sai do cache sem query;
-      `refresh` invalida (teste com driver falso contando as queries).
-- [ ] A senha guardada na sessão nunca aparece em evento, `Debug` ou erro (teste).
+- [x] `select_database` abre a conexão do banco e emite `DatabaseSelected { database, schemas, current_schema }`
+      (`public` se existir, senão o primeiro); banco inválido emite `CatalogFailed` e a sessão continua aberta.
+- [x] `load_schema` e `load_columns` emitem os eventos com os dados; segunda chamada sai do cache sem query;
+      `refresh` invalida tabelas, funções e colunas (schemas novos ao reselecionar o banco; teste com driver falso
+      contando as queries).
+- [x] A senha guardada na sessão nunca aparece em evento, `Debug` ou erro (teste); é descartada no `disconnect`.
 
 ## `ui-egui`
 

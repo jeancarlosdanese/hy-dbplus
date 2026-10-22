@@ -91,6 +91,11 @@ impl App {
                 Event::Failed { error, .. } => {
                     self.status.insert(id, Status::Failed(error.to_string()));
                 }
+                // M2: banco selecionado e catálogo; a tela entra no passo seguinte da FEAT-004.
+                Event::DatabaseSelected { .. }
+                | Event::SchemaLoaded { .. }
+                | Event::ColumnsLoaded { .. }
+                | Event::CatalogFailed { .. } => {}
                 Event::Disconnected { .. } => {
                     // Conexão já removida da lista não volta ao mapa.
                     if self.deps.store.get(&id).is_some() {

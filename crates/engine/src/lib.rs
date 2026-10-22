@@ -10,8 +10,11 @@ pub mod session;
 pub mod store;
 
 pub use error::EngineError;
+pub use hy_dbplus_catalog::{Column, Function, Schema, Table, TableKind};
 pub use hy_dbplus_driver::postgres::PostgresDriver;
-pub use hy_dbplus_driver::{ConnectionConfig, DatabaseInfo, DriverError, Secret, TlsMode};
+pub use hy_dbplus_driver::{
+    ConnectionConfig, DatabaseInfo, Driver, DriverError, Secret, TextRows, TlsMode,
+};
 pub use secrets::{KeyringSecrets, MemorySecrets, SecretStore};
 pub use session::{Event, Session, Sessions};
 

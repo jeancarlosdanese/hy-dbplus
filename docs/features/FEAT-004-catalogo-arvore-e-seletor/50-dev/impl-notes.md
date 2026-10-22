@@ -6,10 +6,10 @@
 
 _Atualizado em 21/10/2026._
 
-- **Feito:** documentação (`a418d93`); `driver::query_text` e `catalog` no repositório (49 testes no workspace
-  com o servidor local; portão `--full` verde).
+- **Feito:** documentação (`a418d93`); `driver::query_text` e `catalog` (`f4ffd77`); `engine` com banco
+  selecionado, cache do catálogo e eventos novos no repositório.
 - **Em curso:** nada.
-- **Falta:** trazer do scratchpad o `engine` e a `ui-egui` (dois commits); verificação do Jean.
+- **Falta:** trazer do scratchpad a `ui-egui` (um commit); verificação do Jean.
 - **Depende de:** FEAT-003 concluída (M1).
 - **Para retomar:** esta pasta, o `CLAUDE.md` da raiz e o BRIEF §3.2, §3.3 e §5.
 
@@ -44,7 +44,8 @@ _Atualizado em 21/10/2026._
   `literal()` (corrigido na rodada do revisor, abaixo) e quatro queries sobre `pg_catalog`. Teste com servidor cria o schema
   `hy_dbplus_test_<pid>_<nanos>` com tabela (PK, varchar(80), numeric(10,2) default 0), view e função,
   confere tudo e apaga com `CASCADE`.
-- [x] `engine`: `Slot` guarda `config`, `secret` (zerada no `disconnect`) e `databases: HashMap<nome,
+- [x] `engine`: `Slot` guarda `config`, `secret` (descartada no `disconnect`; sem `zeroize`, o valor deixa de ser
+  alcançável, não é sobrescrito) e `databases: HashMap<nome,
   Database { conn, schemas, current_schema, objects, columns }>`; `select_database` abre a conexão do banco e
   lê os schemas (`public` ou o primeiro), `load_schema` (tabelas + funções), `load_columns`, `refresh`; cache
   responde na hora sem query; `CatalogFailed` deixa a sessão do servidor viva; tudo conferindo a geração.
@@ -63,6 +64,9 @@ _Atualizado em 21/10/2026._
   por ponteiro do kittest não ativa item dentro do popup do ComboBox; `click_accesskit()` (ação do AccessKit)
   ativa. Dois nós com o mesmo texto fazem `get_by_label_contains` falhar: usar o rótulo exato.
 - [x] `egui_kittest` 0.36 como dev-dependency da `ui-egui` com `default-features = false`.
+- [x] Segundo teste `egui_kittest`: schema que o servidor recusa mostra o erro na árvore sem derrubar a sessão
+  nem o banco, e "Tentar de novo" consulta o servidor outra vez (driver falso falha em `E'quebrado'`). A UI
+  do scratchpad compila e passa contra o driver e o engine já commitados no repositório.
 
 ### 21/10/2026 — `driver` e `catalog` no repositório
 
@@ -77,3 +81,17 @@ _Atualizado em 21/10/2026._
   setup ganhou view materializada e procedure. `thiserror` saiu do `catalog` (não usava). BRIEF §5 diz que o
   cache do catálogo mora no engine. O parse da URL de teste está duplicado no driver e no catálogo, anotado
   nos dois.
+
+### 21/10/2026 — `engine` no repositório
+
+- [x] `session.rs` e `lib.rs` do scratchpad trazidos sem mudança (18 testes do engine). A UI do M1 ganhou um
+  braço que ignora os quatro eventos novos, para o commit do engine ficar verde sozinho; o passo seguinte
+  (ui-egui) o substitui pelo tratamento real. 53 testes no workspace com o servidor; portão `--full` verde.
+- [x] Revisor (um médio, cinco baixos): o evento de uma tarefa podia sair depois do `Disconnected` que a
+  superou (o lock era solto antes do `send`). Agora `commit_if_current` confere a geração, aplica a mudança
+  ao `Slot` e envia o evento sob o mesmo lock, nos quatro pontos (`Connected`/`Failed`, `DatabaseSelected`,
+  `SchemaLoaded`, `ColumnsLoaded` e os `CatalogFailed`); tentativa superada ou lock envenenado é descartada.
+  Documentado: `refresh` mantém a conexão e a lista de schemas (schema novo aparece ao reselecionar o banco);
+  `load_schema`/`load_columns` só valem entre `DatabaseSelected` e `Disconnected`; dois `select_database` do
+  mesmo banco em voo abrem duas conexões e a segunda vence (a paleta fecha ao escolher, então a UI não
+  dispara em dobro). A senha é descartada, não zerada (sem `zeroize`: dependência nova é decisão).

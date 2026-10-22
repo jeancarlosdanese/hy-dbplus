@@ -4,12 +4,19 @@
 //! Cada conexão tem uma geração: `connect` e `disconnect` a incrementam, e uma tentativa em voo
 //! só vira sessão se a geração ainda for a dela. Assim "desconectar" durante "conectando" não
 //! deixa a sessão abrir depois, e reconectar derruba a sessão antiga antes.
+//!
+//! Banco selecionado (M2): no PostgreSQL cada banco é uma conexão própria, aberta com a mesma
+//! configuração e a senha guardada em memória na sessão. O catálogo é lido por demanda (schemas ao
+//! selecionar; tabelas e funções por schema; colunas por tabela) e fica em cache até `refresh`.
 
 use std::collections::HashMap;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
-use hy_dbplus_driver::{Connection as DriverConnection, DatabaseInfo, Driver, DriverError, Secret};
+use hy_dbplus_catalog::{self as catalog, Column, Function, Schema, Table};
+use hy_dbplus_driver::{
+    Connection as DriverConnection, ConnectionConfig, DatabaseInfo, Driver, DriverError, Secret,
+};
 
 use crate::store::{Connection, ConnectionId};
 
@@ -31,6 +38,33 @@ pub enum Event {
     Disconnected {
         connection: ConnectionId,
     },
+    /// Banco aberto: os schemas e o schema inicial (`public` se existir, senão o primeiro).
+    DatabaseSelected {
+        connection: ConnectionId,
+        database: String,
+        schemas: Vec<Schema>,
+        current_schema: Option<String>,
+    },
+    SchemaLoaded {
+        connection: ConnectionId,
+        database: String,
+        schema: String,
+        tables: Vec<Table>,
+        functions: Vec<Function>,
+    },
+    ColumnsLoaded {
+        connection: ConnectionId,
+        database: String,
+        schema: String,
+        table: String,
+        columns: Vec<Column>,
+    },
+    /// Falha ao abrir o banco ou ao ler o catálogo; a sessão do servidor continua aberta.
+    CatalogFailed {
+        connection: ConnectionId,
+        database: String,
+        error: DriverError,
+    },
 }
 
 impl Event {
@@ -39,7 +73,11 @@ impl Event {
             Event::Connecting { connection }
             | Event::Connected { connection, .. }
             | Event::Failed { connection, .. }
-            | Event::Disconnected { connection } => connection,
+            | Event::Disconnected { connection }
+            | Event::DatabaseSelected { connection, .. }
+            | Event::SchemaLoaded { connection, .. }
+            | Event::ColumnsLoaded { connection, .. }
+            | Event::CatalogFailed { connection, .. } => connection,
         }
     }
 }
@@ -74,10 +112,23 @@ impl<C> std::fmt::Debug for Session<C> {
     }
 }
 
-/// O estado de uma conexão: a geração corrente e a sessão aberta, se houver.
+/// Um banco aberto dentro da sessão: a conexão dele e o catálogo em cache.
+struct Database<C> {
+    conn: Arc<C>,
+    schemas: Vec<Schema>,
+    current_schema: Option<String>,
+    objects: HashMap<String, (Vec<Table>, Vec<Function>)>,
+    columns: HashMap<(String, String), Vec<Column>>,
+}
+
+/// O estado de uma conexão: a geração corrente, a sessão aberta, a senha (só em memória, para
+/// abrir outros bancos) e os bancos abertos.
 struct Slot<C> {
     generation: u64,
     session: Option<Session<C>>,
+    config: ConnectionConfig,
+    secret: Secret,
+    databases: HashMap<String, Database<C>>,
 }
 
 type Slots<C> = Arc<Mutex<HashMap<ConnectionId, Slot<C>>>>;
@@ -126,11 +177,17 @@ where
                 });
                 return;
             };
-            let slot = map.entry(id.clone()).or_insert(Slot {
+            let slot = map.entry(id.clone()).or_insert_with(|| Slot {
                 generation: 0,
                 session: None,
+                config: connection.config.clone(),
+                secret: Secret::default(),
+                databases: HashMap::new(),
             });
             slot.generation += 1;
+            slot.config = connection.config.clone();
+            slot.secret = password.clone();
+            slot.databases.clear();
             let had_session = slot.session.take().is_some();
             let generation = slot.generation;
             drop(map);
@@ -151,29 +208,38 @@ where
         let slots = Arc::clone(&self.slots);
         self.runtime.spawn(async move {
             let result = open_session(&*driver, id.clone(), &config, &password).await;
-            let event = match result {
-                Ok(session) => settle(&slots, &id, generation, session),
-                Err(error) if is_current(&slots, &id, generation) => Some(Event::Failed {
-                    connection: id,
-                    error,
+            let sent = match result {
+                Ok(session) => commit_if_current(&slots, &events, &id, generation, |slot| {
+                    let event = Event::Connected {
+                        connection: id.clone(),
+                        server_version: session.server_version.clone(),
+                        databases: session.databases.clone(),
+                    };
+                    slot.session = Some(session);
+                    event
                 }),
-                Err(_) => None, // tentativa superada: o evento daquela geração já foi emitido
+                Err(error) => {
+                    commit_if_current(&slots, &events, &id, generation, |_| Event::Failed {
+                        connection: id.clone(),
+                        error,
+                    })
+                }
             };
-            if let Some(event) = event {
-                // Receptor fechado = UI já foi embora; nada a fazer.
-                let _ = events.send(event);
+            if sent {
                 repaint();
             }
         });
     }
 
-    /// Fecha a sessão (a conexão do driver cai quando o último `Arc` some) e invalida uma
-    /// tentativa em voo. Avisa só se havia sessão aberta.
+    /// Fecha a sessão (a conexão do driver cai quando o último `Arc` some), descarta a senha e
+    /// os bancos abertos e invalida uma tentativa em voo. Avisa só se havia sessão aberta.
     pub fn disconnect(&self, id: &str) {
         let had_session = match self.slots.lock() {
             Ok(mut map) => match map.get_mut(id) {
                 Some(slot) => {
                     slot.generation += 1;
+                    slot.secret = Secret::default();
+                    slot.databases.clear();
                     slot.session.take().is_some()
                 }
                 None => false,
@@ -195,52 +261,256 @@ where
         self.session(id).is_some()
     }
 
+    /// Abre o banco (conexão própria) e lê os schemas; `DatabaseSelected` ou `CatalogFailed`.
+    /// Banco já aberto responde do cache, na hora.
+    pub fn select_database(&self, id: &str, database: &str) {
+        let (generation, config, secret) = {
+            let Ok(map) = self.slots.lock() else { return };
+            let Some(slot) = map.get(id).filter(|s| s.session.is_some()) else {
+                return;
+            };
+            if let Some(db) = slot.databases.get(database) {
+                let event = Event::DatabaseSelected {
+                    connection: id.to_owned(),
+                    database: database.to_owned(),
+                    schemas: db.schemas.clone(),
+                    current_schema: db.current_schema.clone(),
+                };
+                drop(map);
+                self.emit(event);
+                return;
+            }
+            let config = ConnectionConfig {
+                database: database.to_owned(),
+                ..slot.config.clone()
+            };
+            (slot.generation, config, slot.secret.clone())
+        };
+        let id = id.to_owned();
+        let database = database.to_owned();
+        let driver = Arc::clone(&self.driver);
+        let events = self.events.clone();
+        let repaint = Arc::clone(&self.repaint);
+        let slots = Arc::clone(&self.slots);
+        self.runtime.spawn(async move {
+            let result = async {
+                let conn = driver.connect(&config, &secret).await?;
+                let schemas = catalog::schemas(&conn).await?;
+                Ok::<_, DriverError>((conn, schemas))
+            }
+            .await;
+            let sent = match result {
+                Ok((conn, schemas)) => {
+                    let current_schema = schemas
+                        .iter()
+                        .find(|s| s.name == "public")
+                        .or_else(|| schemas.first())
+                        .map(|s| s.name.clone());
+                    commit_if_current(&slots, &events, &id, generation, |slot| {
+                        slot.databases.insert(
+                            database.clone(),
+                            Database {
+                                conn: Arc::new(conn),
+                                schemas: schemas.clone(),
+                                current_schema: current_schema.clone(),
+                                objects: HashMap::new(),
+                                columns: HashMap::new(),
+                            },
+                        );
+                        Event::DatabaseSelected {
+                            connection: id.clone(),
+                            database: database.clone(),
+                            schemas,
+                            current_schema,
+                        }
+                    })
+                }
+                Err(error) => {
+                    commit_if_current(&slots, &events, &id, generation, |_| Event::CatalogFailed {
+                        connection: id.clone(),
+                        database: database.clone(),
+                        error,
+                    })
+                }
+            };
+            if sent {
+                repaint();
+            }
+        });
+    }
+
+    /// Tabelas e funções do schema: do cache na hora, ou duas queries e `SchemaLoaded`. Só para um
+    /// banco que recebeu `DatabaseSelected` e antes do `Disconnected`; fora disso, nada acontece.
+    pub fn load_schema(&self, id: &str, database: &str, schema: &str) {
+        let (generation, conn) = {
+            let Ok(mut map) = self.slots.lock() else {
+                return;
+            };
+            let Some(slot) = map.get_mut(id) else { return };
+            let Some(db) = slot.databases.get_mut(database) else {
+                return;
+            };
+            db.current_schema = Some(schema.to_owned());
+            if let Some((tables, functions)) = db.objects.get(schema) {
+                let event = Event::SchemaLoaded {
+                    connection: id.to_owned(),
+                    database: database.to_owned(),
+                    schema: schema.to_owned(),
+                    tables: tables.clone(),
+                    functions: functions.clone(),
+                };
+                drop(map);
+                self.emit(event);
+                return;
+            }
+            (slot.generation, Arc::clone(&db.conn))
+        };
+        let (id, database, schema) = (id.to_owned(), database.to_owned(), schema.to_owned());
+        let events = self.events.clone();
+        let repaint = Arc::clone(&self.repaint);
+        let slots = Arc::clone(&self.slots);
+        self.runtime.spawn(async move {
+            let result = async {
+                let tables = catalog::tables(&*conn, &schema).await?;
+                let functions = catalog::functions(&*conn, &schema).await?;
+                Ok::<_, DriverError>((tables, functions))
+            }
+            .await;
+            let sent = match result {
+                Ok((tables, functions)) => {
+                    commit_if_current(&slots, &events, &id, generation, |slot| {
+                        if let Some(db) = slot.databases.get_mut(&database) {
+                            db.objects
+                                .insert(schema.clone(), (tables.clone(), functions.clone()));
+                        }
+                        Event::SchemaLoaded {
+                            connection: id.clone(),
+                            database: database.clone(),
+                            schema: schema.clone(),
+                            tables,
+                            functions,
+                        }
+                    })
+                }
+                Err(error) => {
+                    commit_if_current(&slots, &events, &id, generation, |_| Event::CatalogFailed {
+                        connection: id.clone(),
+                        database: database.clone(),
+                        error,
+                    })
+                }
+            };
+            if sent {
+                repaint();
+            }
+        });
+    }
+
+    /// Colunas de uma tabela: do cache na hora, ou uma query e `ColumnsLoaded`. Mesma
+    /// pré-condição de `load_schema`.
+    pub fn load_columns(&self, id: &str, database: &str, schema: &str, table: &str) {
+        let (generation, conn) = {
+            let Ok(map) = self.slots.lock() else { return };
+            let Some(slot) = map.get(id) else { return };
+            let Some(db) = slot.databases.get(database) else {
+                return;
+            };
+            if let Some(columns) = db.columns.get(&(schema.to_owned(), table.to_owned())) {
+                let event = Event::ColumnsLoaded {
+                    connection: id.to_owned(),
+                    database: database.to_owned(),
+                    schema: schema.to_owned(),
+                    table: table.to_owned(),
+                    columns: columns.clone(),
+                };
+                drop(map);
+                self.emit(event);
+                return;
+            }
+            (slot.generation, Arc::clone(&db.conn))
+        };
+        let (id, database, schema, table) = (
+            id.to_owned(),
+            database.to_owned(),
+            schema.to_owned(),
+            table.to_owned(),
+        );
+        let events = self.events.clone();
+        let repaint = Arc::clone(&self.repaint);
+        let slots = Arc::clone(&self.slots);
+        self.runtime.spawn(async move {
+            let sent = match catalog::columns(&*conn, &schema, &table).await {
+                Ok(columns) => commit_if_current(&slots, &events, &id, generation, |slot| {
+                    if let Some(db) = slot.databases.get_mut(&database) {
+                        db.columns
+                            .insert((schema.clone(), table.clone()), columns.clone());
+                    }
+                    Event::ColumnsLoaded {
+                        connection: id.clone(),
+                        database: database.clone(),
+                        schema: schema.clone(),
+                        table: table.clone(),
+                        columns,
+                    }
+                }),
+                Err(error) => {
+                    commit_if_current(&slots, &events, &id, generation, |_| Event::CatalogFailed {
+                        connection: id.clone(),
+                        database: database.clone(),
+                        error,
+                    })
+                }
+            };
+            if sent {
+                repaint();
+            }
+        });
+    }
+
+    /// Esvazia tabelas, funções e colunas do cache do banco (a conexão e a lista de schemas ficam:
+    /// schema criado fora do app aparece ao reselecionar o banco); a UI recarrega o que mostra.
+    pub fn refresh(&self, id: &str, database: &str) {
+        if let Ok(mut map) = self.slots.lock()
+            && let Some(db) = map.get_mut(id).and_then(|s| s.databases.get_mut(database))
+        {
+            db.objects.clear();
+            db.columns.clear();
+        }
+    }
+
     fn emit(&self, event: Event) {
         let _ = self.events.send(event);
         (self.repaint)();
     }
 }
 
-/// Guarda a sessão recém-aberta se a geração ainda é a dela; superada por um `disconnect` ou
-/// outro `connect`, descarta em silêncio (o evento daquela geração já foi emitido).
-fn settle<C>(
+/// Sob o lock: se a geração ainda é a da tentativa, aplica a mudança ao `Slot` e envia o evento
+/// que ela devolve, antes de soltar o lock. Assim nenhum evento de uma tentativa chega depois
+/// do `Disconnected` (ou do `Connecting` seguinte) que a superou: `disconnect` e `connect`
+/// incrementam a geração com o mesmo lock. O `Sender` é ilimitado e não bloqueia. Tentativa
+/// superada, ou lock envenenado, é descartada em silêncio: o evento daquela geração já saiu.
+fn commit_if_current<C>(
     slots: &Slots<C>,
-    id: &ConnectionId,
+    events: &Sender<Event>,
+    id: &str,
     generation: u64,
-    session: Session<C>,
-) -> Option<Event> {
+    apply: impl FnOnce(&mut Slot<C>) -> Event,
+) -> bool {
     let Ok(mut map) = slots.lock() else {
-        return Some(Event::Failed {
-            connection: id.clone(),
-            error: DriverError::Closed,
-        });
+        return false;
     };
-    let slot = map.get_mut(id)?;
-    if slot.generation != generation {
-        return None;
-    }
-    let event = Event::Connected {
-        connection: id.clone(),
-        server_version: session.server_version.clone(),
-        databases: session.databases.clone(),
+    let Some(slot) = map.get_mut(id).filter(|s| s.generation == generation) else {
+        return false;
     };
-    slot.session = Some(session);
-    Some(event)
-}
-
-/// Se a geração ainda é a da tentativa (lock envenenado conta como superada).
-fn is_current<C>(slots: &Slots<C>, id: &str, generation: u64) -> bool {
-    slots
-        .lock()
-        .ok()
-        .and_then(|map| map.get(id).map(|slot| slot.generation == generation))
-        .unwrap_or(false)
+    let event = apply(slot);
+    let _ = events.send(event);
+    true
 }
 
 async fn open_session<D: Driver>(
     driver: &D,
     id: ConnectionId,
-    config: &hy_dbplus_driver::ConnectionConfig,
+    config: &ConnectionConfig,
     password: &Secret,
 ) -> Result<Session<D::Conn>, DriverError> {
     let conn = driver.connect(config, password).await?;
@@ -261,11 +531,21 @@ mod tests {
 
     use super::*;
     use crate::store::Tag;
-    use hy_dbplus_driver::ConnectionConfig;
+    use hy_dbplus_driver::TextRows;
 
-    /// Driver falso: demora 20 ms; falha quando a senha é "errada".
-    struct FakeDriver;
-    struct FakeConn;
+    /// Driver falso: demora 20 ms; falha quando a senha é "errada"; conta as queries de catálogo
+    /// e responde conforme a tabela de `pg_catalog` citada no SQL.
+    #[derive(Default)]
+    struct FakeDriver {
+        queries: Arc<AtomicUsize>,
+    }
+    struct FakeConn {
+        queries: Arc<AtomicUsize>,
+    }
+
+    fn row(cells: &[Option<&str>]) -> Vec<Option<String>> {
+        cells.iter().map(|c| c.map(str::to_owned)).collect()
+    }
 
     impl DriverConnection for FakeConn {
         async fn ping(&self) -> Result<(), DriverError> {
@@ -284,8 +564,39 @@ mod tests {
                 },
             ])
         }
-        async fn query_text(&self, _sql: &str) -> Result<hy_dbplus_driver::TextRows, DriverError> {
-            Ok(hy_dbplus_driver::TextRows::default())
+        async fn query_text(&self, sql: &str) -> Result<TextRows, DriverError> {
+            self.queries.fetch_add(1, Ordering::SeqCst);
+            // Da mais específica para a mais geral: tabelas e funções também citam pg_namespace.
+            let rows = if sql.contains("pg_attribute") {
+                vec![row(&[
+                    Some("id"),
+                    Some("integer"),
+                    Some("f"),
+                    None,
+                    Some("1"),
+                    Some("t"),
+                ])]
+            } else if sql.contains("pg_proc") {
+                vec![row(&[
+                    Some("dobro"),
+                    Some("x integer"),
+                    Some("integer"),
+                    Some("f"),
+                ])]
+            } else if sql.contains("pg_class") {
+                vec![
+                    row(&[Some("pedido"), Some("r"), None]),
+                    row(&[Some("v_pedido"), Some("v"), Some("resumo")]),
+                ]
+            } else if sql.contains("pg_namespace") {
+                vec![row(&[Some("app")]), row(&[Some("public")])]
+            } else {
+                return Err(DriverError::Db(format!("sql inesperado: {sql}")));
+            };
+            Ok(TextRows {
+                columns: Vec::new(),
+                rows,
+            })
         }
     }
 
@@ -303,23 +614,41 @@ mod tests {
                     reason: "senha inválida".into(),
                 });
             }
-            Ok(FakeConn)
+            if config.database == "inexistente" {
+                return Err(DriverError::Db(
+                    "database \"inexistente\" does not exist".into(),
+                ));
+            }
+            Ok(FakeConn {
+                queries: Arc::clone(&self.queries),
+            })
         }
     }
 
-    fn setup() -> (
-        tokio::runtime::Runtime,
-        Sessions<FakeDriver>,
-        Receiver<Event>,
-        Arc<AtomicUsize>,
-    ) {
+    struct Harness {
+        _rt: tokio::runtime::Runtime,
+        sessions: Sessions<FakeDriver>,
+        rx: Receiver<Event>,
+        repaints: Arc<AtomicUsize>,
+        queries: Arc<AtomicUsize>,
+    }
+
+    fn setup() -> Harness {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let repaints = Arc::new(AtomicUsize::new(0));
         let counter = Arc::clone(&repaints);
-        let (sessions, rx) = Sessions::new(FakeDriver, rt.handle().clone(), move || {
+        let driver = FakeDriver::default();
+        let queries = Arc::clone(&driver.queries);
+        let (sessions, rx) = Sessions::new(driver, rt.handle().clone(), move || {
             counter.fetch_add(1, Ordering::SeqCst);
         });
-        (rt, sessions, rx, repaints)
+        Harness {
+            _rt: rt,
+            sessions,
+            rx,
+            repaints,
+            queries,
+        }
     }
 
     fn conn() -> Connection {
@@ -330,40 +659,48 @@ mod tests {
         rx.recv_timeout(Duration::from_secs(2)).unwrap()
     }
 
+    /// Conecta e consome `Connecting` e `Connected`.
+    fn connected(h: &Harness, c: &Connection) {
+        h.sessions.connect(c, Secret::new("ok"));
+        let _ = next(&h.rx);
+        let _ = next(&h.rx);
+        assert!(h.sessions.is_open(&c.id));
+    }
+
     #[test]
     fn conectar_emite_connecting_e_connected_sem_bloquear() {
-        let (_rt, sessions, rx, repaints) = setup();
+        let h = setup();
         let c = conn();
         let before = std::time::Instant::now();
-        sessions.connect(&c, Secret::new("ok"));
+        h.sessions.connect(&c, Secret::new("ok"));
         assert!(
             before.elapsed() < Duration::from_millis(15),
             "connect bloqueou"
         );
         assert_eq!(
-            next(&rx),
+            next(&h.rx),
             Event::Connecting {
                 connection: c.id.clone()
             }
         );
-        let connected = next(&rx);
+        let connected = next(&h.rx);
         assert!(
             matches!(&connected, Event::Connected { connection, server_version, databases }
                 if connection == &c.id && server_version == "15.15" && databases.len() == 2),
             "{connected:?}"
         );
-        assert!(sessions.is_open(&c.id));
-        assert_eq!(sessions.session(&c.id).unwrap().databases[1].name, "loja");
-        assert!(repaints.load(Ordering::SeqCst) >= 2);
+        assert!(h.sessions.is_open(&c.id));
+        assert_eq!(h.sessions.session(&c.id).unwrap().databases[1].name, "loja");
+        assert!(h.repaints.load(Ordering::SeqCst) >= 2);
     }
 
     #[test]
     fn senha_errada_emite_failed_sem_a_senha_e_nao_abre_sessao() {
-        let (_rt, sessions, rx, _) = setup();
+        let h = setup();
         let c = conn();
-        sessions.connect(&c, Secret::new("errada"));
-        let _ = next(&rx);
-        let failed = next(&rx);
+        h.sessions.connect(&c, Secret::new("errada"));
+        let _ = next(&h.rx);
+        let failed = next(&h.rx);
         assert!(
             matches!(
                 &failed,
@@ -375,86 +712,203 @@ mod tests {
             "{failed:?}"
         );
         assert!(!format!("{failed:?}").contains("errada"));
-        assert!(!sessions.is_open(&c.id));
+        assert!(!h.sessions.is_open(&c.id));
     }
 
     #[test]
     fn desconectar_fecha_e_avisa_so_se_estava_aberta() {
-        let (_rt, sessions, rx, _) = setup();
+        let h = setup();
         let c = conn();
-        sessions.disconnect(&c.id);
-        assert!(rx.try_recv().is_err());
-        sessions.connect(&c, Secret::new("ok"));
-        let _ = next(&rx);
-        let _ = next(&rx);
-        sessions.disconnect(&c.id);
+        h.sessions.disconnect(&c.id);
+        assert!(h.rx.try_recv().is_err());
+        connected(&h, &c);
+        h.sessions.disconnect(&c.id);
         assert_eq!(
-            next(&rx),
+            next(&h.rx),
             Event::Disconnected {
                 connection: c.id.clone()
             }
         );
-        assert!(!sessions.is_open(&c.id));
+        assert!(!h.sessions.is_open(&c.id));
     }
 
     #[test]
     fn desconectar_durante_o_conectando_nao_deixa_a_sessao_abrir_depois() {
-        // Antes: a task terminava, inseria a sessão e emitia Connected depois do disconnect.
-        let (_rt, sessions, rx, _) = setup();
+        let h = setup();
         let c = conn();
-        sessions.connect(&c, Secret::new("ok"));
+        h.sessions.connect(&c, Secret::new("ok"));
         assert_eq!(
-            next(&rx),
+            next(&h.rx),
             Event::Connecting {
                 connection: c.id.clone()
             }
         );
-        sessions.disconnect(&c.id);
+        h.sessions.disconnect(&c.id);
         std::thread::sleep(Duration::from_millis(80));
-        assert!(rx.try_recv().is_err(), "nenhum evento depois do disconnect");
-        assert!(!sessions.is_open(&c.id));
+        assert!(
+            h.rx.try_recv().is_err(),
+            "nenhum evento depois do disconnect"
+        );
+        assert!(!h.sessions.is_open(&c.id));
     }
 
     #[test]
     fn falha_de_tentativa_superada_nao_chega_a_ui() {
-        // Antes: connect (gen 1) com senha errada, disconnect (gen 2), e o Failed da gen 1 chegava.
-        let (_rt, sessions, rx, _) = setup();
+        let h = setup();
         let c = conn();
-        sessions.connect(&c, Secret::new("errada"));
+        h.sessions.connect(&c, Secret::new("errada"));
         assert_eq!(
-            next(&rx),
+            next(&h.rx),
             Event::Connecting {
                 connection: c.id.clone()
             }
         );
-        sessions.disconnect(&c.id);
+        h.sessions.disconnect(&c.id);
         std::thread::sleep(Duration::from_millis(80));
-        assert!(rx.try_recv().is_err(), "Failed fora de ordem");
+        assert!(h.rx.try_recv().is_err(), "Failed fora de ordem");
     }
 
     #[test]
     fn reconectar_com_senha_errada_derruba_a_sessao_antiga() {
-        // Antes: Failed era emitido com a sessão antiga ainda aberta por baixo.
-        let (_rt, sessions, rx, _) = setup();
+        let h = setup();
         let c = conn();
-        sessions.connect(&c, Secret::new("ok"));
-        let _ = next(&rx);
-        let _ = next(&rx);
-        assert!(sessions.is_open(&c.id));
-        sessions.connect(&c, Secret::new("errada"));
+        connected(&h, &c);
+        h.sessions.connect(&c, Secret::new("errada"));
         assert_eq!(
-            next(&rx),
+            next(&h.rx),
             Event::Disconnected {
                 connection: c.id.clone()
             }
         );
         assert_eq!(
-            next(&rx),
+            next(&h.rx),
             Event::Connecting {
                 connection: c.id.clone()
             }
         );
-        assert!(matches!(next(&rx), Event::Failed { .. }));
-        assert!(!sessions.is_open(&c.id));
+        assert!(matches!(next(&h.rx), Event::Failed { .. }));
+        assert!(!h.sessions.is_open(&c.id));
+    }
+
+    #[test]
+    fn selecionar_banco_abre_a_conexao_le_os_schemas_e_escolhe_public() {
+        let h = setup();
+        let c = conn();
+        connected(&h, &c);
+        h.sessions.select_database(&c.id, "loja");
+        let event = next(&h.rx);
+        assert_eq!(
+            event,
+            Event::DatabaseSelected {
+                connection: c.id.clone(),
+                database: "loja".into(),
+                schemas: vec![
+                    Schema { name: "app".into() },
+                    Schema {
+                        name: "public".into()
+                    }
+                ],
+                current_schema: Some("public".into()),
+            }
+        );
+        assert_eq!(h.queries.load(Ordering::SeqCst), 1);
+        // Segunda seleção do mesmo banco: do cache, sem query nem nova conexão.
+        h.sessions.select_database(&c.id, "loja");
+        assert!(matches!(next(&h.rx), Event::DatabaseSelected { .. }));
+        assert_eq!(h.queries.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn banco_invalido_emite_catalog_failed_e_a_sessao_continua() {
+        let h = setup();
+        let c = conn();
+        connected(&h, &c);
+        h.sessions.select_database(&c.id, "inexistente");
+        let event = next(&h.rx);
+        assert!(
+            matches!(&event, Event::CatalogFailed { database, error: DriverError::Db(_), .. } if database == "inexistente"),
+            "{event:?}"
+        );
+        assert!(h.sessions.is_open(&c.id));
+        // Sem sessão aberta, selecionar banco é ignorado.
+        h.sessions.disconnect(&c.id);
+        let _ = next(&h.rx);
+        h.sessions.select_database(&c.id, "loja");
+        assert!(h.rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn schema_e_colunas_vem_do_cache_ate_o_refresh() {
+        let h = setup();
+        let c = conn();
+        connected(&h, &c);
+        h.sessions.select_database(&c.id, "loja");
+        let _ = next(&h.rx);
+        h.sessions.load_schema(&c.id, "loja", "public");
+        let event = next(&h.rx);
+        let Event::SchemaLoaded {
+            tables,
+            functions,
+            schema,
+            ..
+        } = &event
+        else {
+            panic!("{event:?}")
+        };
+        assert_eq!(schema, "public");
+        assert_eq!(
+            tables
+                .iter()
+                .map(|t| (t.name.as_str(), t.kind.is_view()))
+                .collect::<Vec<_>>(),
+            [("pedido", false), ("v_pedido", true)]
+        );
+        assert_eq!(functions[0].signature(), "dobro(x integer)");
+        assert_eq!(
+            h.queries.load(Ordering::SeqCst),
+            3,
+            "schemas + tables + functions"
+        );
+        h.sessions.load_schema(&c.id, "loja", "public");
+        assert!(matches!(next(&h.rx), Event::SchemaLoaded { .. }));
+        assert_eq!(h.queries.load(Ordering::SeqCst), 3, "cache");
+
+        h.sessions.load_columns(&c.id, "loja", "public", "pedido");
+        let event = next(&h.rx);
+        let Event::ColumnsLoaded { columns, table, .. } = &event else {
+            panic!("{event:?}")
+        };
+        assert_eq!(table, "pedido");
+        assert!(columns[0].is_primary_key && columns[0].data_type == "integer");
+        assert_eq!(h.queries.load(Ordering::SeqCst), 4);
+        h.sessions.load_columns(&c.id, "loja", "public", "pedido");
+        let _ = next(&h.rx);
+        assert_eq!(h.queries.load(Ordering::SeqCst), 4, "cache");
+
+        h.sessions.refresh(&c.id, "loja");
+        h.sessions.load_schema(&c.id, "loja", "public");
+        let _ = next(&h.rx);
+        assert_eq!(h.queries.load(Ordering::SeqCst), 6, "refresh invalida");
+    }
+
+    #[test]
+    fn a_senha_guardada_nunca_aparece_nos_eventos() {
+        let h = setup();
+        let c = conn();
+        h.sessions.connect(&c, Secret::new("segredo-unico"));
+        let _ = next(&h.rx);
+        let _ = next(&h.rx);
+        h.sessions.select_database(&c.id, "loja");
+        let selected = next(&h.rx);
+        h.sessions.load_schema(&c.id, "loja", "public");
+        let loaded = next(&h.rx);
+        for e in [selected, loaded] {
+            assert!(!format!("{e:?}").contains("segredo-unico"));
+        }
+        h.sessions.disconnect(&c.id);
+        let _ = next(&h.rx);
+        // Depois do disconnect a senha sai da memória: selecionar banco não abre nada.
+        h.sessions.select_database(&c.id, "loja");
+        assert!(h.rx.try_recv().is_err());
     }
 }

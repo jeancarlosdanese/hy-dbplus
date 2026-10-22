@@ -1,4 +1,4 @@
-<!-- FEAT_EM_ANDAMENTO — docs, driver query_text e catalog em 21/10/2026; próximo: engine -->
+<!-- FEAT_EM_ANDAMENTO — docs, driver, catalog e engine em 21/10/2026; próximo: ui-egui -->
 <!-- PRIO_ALTA -->
 # @file: docs/features/FEAT-004-catalogo-arvore-e-seletor/context.index.md
 
@@ -39,8 +39,7 @@ paleta ⌘K de bancos, a árvore Functions/Tables expansível até as colunas e 
 crates/driver/src/lib.rs          Connection::query_text, TextRows
 crates/catalog/src/model.rs       Schema, Table, TableKind, Column, Function
 crates/catalog/src/postgres.rs    carregadores sobre pg_catalog (schemas, tables, functions, columns)
-crates/engine/src/session.rs      select_database, load_schema, load_columns, refresh; eventos novos
-crates/engine/src/catalog_cache.rs cache por (conexão, banco, schema)
+crates/engine/src/session.rs      select_database, load_schema, load_columns, refresh; cache por banco dentro do Slot; eventos novos
 crates/ui-egui/src/palette.rs     ⌘K: lista de bancos com busca
 crates/ui-egui/src/tree.rs        árvore Functions/Tables, colunas, seletor de schema, busca
 ```

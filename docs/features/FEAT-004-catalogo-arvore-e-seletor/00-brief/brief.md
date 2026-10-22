@@ -23,8 +23,8 @@ com seletor de banco (⌘K) e de schema.
    na crate: o cache é do engine.
 3. **`engine`**: a sessão guarda a senha em memória (só para abrir a conexão de outro banco) e tem uma conexão
    por banco selecionado; `select_database(id, db)` abre a conexão, lê os schemas e emite
-   `DatabaseSelected { schemas, current_schema }`; `load_schema(id, schema)` emite `SchemaLoaded { tables,
-   functions }`; `load_columns(id, table)` emite `ColumnsLoaded`. Cache por (conexão, banco, schema) com
+   `DatabaseSelected { schemas, current_schema }`; `load_schema(id, banco, schema)` emite `SchemaLoaded { tables,
+   functions }`; `load_columns(id, banco, schema, table)` emite `ColumnsLoaded`. Cache por (conexão, banco, schema) com
    invalidação manual (`refresh`).
 4. **`ui-egui`**: paleta ⌘K (busca e lista de bancos; Enter seleciona; Esc fecha); barra superior ganha
    `: banco`; painel esquerdo com a árvore em grupos **Functions** e **Tables** (views com ícone próprio),
