@@ -792,9 +792,11 @@ mod tests {
         harness.step();
         harness.get_by_label("2 linhas");
         // Fechado pelo botão, o painel não reabre num clique de linha: só a primeira seleção abre.
+        // O clique é numa célula de valor (nome "a" da linha 102), não no número: o texto da célula não
+        // pode engolir o clique da linha (o Jean só conseguia selecionar pelo número, 22/10/2026).
         harness.get_by_label("Painel ▸").click_accesskit();
         harness.step();
-        harness.get_by_label("102").click_accesskit();
+        harness.get_by_label("a").click();
         harness.step();
         harness.step();
         assert_eq!(selected(harness.state()), [1]);

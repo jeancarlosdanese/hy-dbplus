@@ -70,3 +70,11 @@ _Atualizado em 22/10/2026._
   vira string, `12.50` e inteiros longos preservados, `1e999` passa como número (válido na gramática JSON;
   consumidor sem `arbitrary_precision` rejeita); cache de colunas sob `commit_if_current`; índices de
   seleção sempre por `get`.
+
+### 22/10/2026 — Conferência do Jean: seleção só pelo número da linha
+
+- [x] O clique numa célula de valor não selecionava a linha: o `Label` é selecionável por padrão (seleção de
+  texto) e consome o clique, que não chega a `row.response()`; só o número, que é botão, selecionava. As
+  células passam a `Label::selectable(false)` (copiar valor é pelo painel). Teste do grid clica na célula
+  "a" da linha 102 com clique de ponteiro (`click()`, não `click_accesskit()`: a ação de acessibilidade vai
+  ao nó do texto e não à célula); falha sem o conserto.

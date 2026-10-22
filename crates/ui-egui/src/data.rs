@@ -236,15 +236,23 @@ where
                     });
                     if let Some(cells) = rows.rows.get(index) {
                         for cell in cells {
+                            // Sem seleção de texto na célula: o Label selecionável consome o clique e ele
+                            // não chega à linha (só o número selecionava). Copiar é pelo painel.
                             row.col(|ui| match cell {
                                 Some(value) => {
-                                    ui.label(egui::RichText::new(value).monospace());
+                                    ui.add(
+                                        egui::Label::new(egui::RichText::new(value).monospace())
+                                            .selectable(false),
+                                    );
                                 }
                                 None => {
-                                    ui.label(
-                                        egui::RichText::new("NULL")
-                                            .italics()
-                                            .color(tokens.text_muted),
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new("NULL")
+                                                .italics()
+                                                .color(tokens.text_muted),
+                                        )
+                                        .selectable(false),
                                     );
                                 }
                             });
