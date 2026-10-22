@@ -134,7 +134,7 @@ hy-dbplus/
 
 | Crate | Responsabilidade | Dependências principais |
 |---|---|---|
-| `driver` | Trait `Driver` (conectar) e `Connection` (ping, versão, listar bancos; executar query com stream de linhas e cancelamento no M3). Implementação `postgres` no MVP. | `tokio`, `tokio-postgres`, `rustls` |
+| `driver` | Trait `Driver` (conectar) e `Connection` (ping, versão, listar bancos; query em texto e lote numa transação; stream de linhas e cancelamento no M5). Implementação `postgres` no MVP. | `tokio`, `tokio-postgres`, `rustls` |
 | `catalog` | Modelo neutro (`Schema`, `Table`, `Column`, `Index`, `ForeignKey`, `Function`) e carregadores por driver a partir de `pg_catalog`/`information_schema`. O cache do catálogo (por conexão e banco, com invalidação manual) mora no `engine`. | `driver` |
 | `sql` | Divisão do buffer em statements com posição; statement sob o cursor; formatação; motor de autocomplete (contexto do cursor × catálogo). | `sqlparser`, `sqlformat`, `catalog` |
 | `engine` | API usada por todos os frontends: `Session`, `Workspace` (abas), `ConnectionStore` (arquivo TOML + Keychain), histórico de queries, eventos assíncronos para a UI. | `driver`, `catalog`, `sql`, `keyring`, `serde`, `toml` |

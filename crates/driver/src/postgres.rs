@@ -11,6 +11,7 @@ use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, Server
 use rustls::crypto::CryptoProvider;
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{ClientConfig, DigitallySignedStruct, SignatureScheme};
+use tokio::sync::RwLock;
 use tokio_postgres::error::SqlState;
 use tokio_postgres::tls::{MakeTlsConnect, TlsConnect};
 use tokio_postgres::{Client, NoTls};
@@ -19,7 +20,8 @@ use tokio_postgres_rustls::MakeRustlsConnect;
 use tokio_postgres::SimpleQueryMessage;
 
 use crate::{
-    Connection, ConnectionConfig, DatabaseInfo, Driver, DriverError, Secret, TextRows, TlsMode,
+    BatchStatement, Connection, ConnectionConfig, DatabaseInfo, Driver, DriverError, Secret,
+    TextRows, TlsMode,
 };
 
 /// Tempo máximo padrão para abrir a conexão: DNS, TCP, TLS e autenticação, tudo junto (o
@@ -41,10 +43,13 @@ impl Default for PostgresDriver {
 }
 
 /// Uma conexão aberta. A tarefa de rede do `tokio-postgres` roda em `tokio::spawn` e termina
-/// quando o `Client` é descartado. O erro dela se perde (a próxima query devolve `Closed`); o M3,
+/// quando o `Client` é descartado. O erro dela se perde (a próxima query devolve `Closed`); o M5,
 /// com stream de query, precisa guardá-lo para a UI dizer por que a conexão caiu.
 pub struct PostgresConnection {
-    client: Client,
+    /// Leituras compartilham o `Client` (o tokio-postgres enfileira as queries na mesma conexão);
+    /// um lote pega a escrita e roda a transação sozinho, senão a query de outra tarefa entraria
+    /// no `BEGIN … COMMIT` dele.
+    client: RwLock<Client>,
 }
 
 impl std::fmt::Debug for PostgresConnection {
@@ -296,13 +301,17 @@ impl Driver for PostgresDriver {
                 .await?
             }
         };
-        Ok(PostgresConnection { client })
+        Ok(PostgresConnection {
+            client: RwLock::new(client),
+        })
     }
 }
 
 impl Connection for PostgresConnection {
     async fn ping(&self) -> Result<(), DriverError> {
         self.client
+            .read()
+            .await
             .simple_query("SELECT 1")
             .await
             .map(|_| ())
@@ -312,6 +321,8 @@ impl Connection for PostgresConnection {
     async fn server_version(&self) -> Result<String, DriverError> {
         let row = self
             .client
+            .read()
+            .await
             .query_one("SHOW server_version", &[])
             .await
             .map_err(|e| db_error(&e))?;
@@ -321,6 +332,8 @@ impl Connection for PostgresConnection {
     async fn query_text(&self, sql: &str) -> Result<TextRows, DriverError> {
         let messages = self
             .client
+            .read()
+            .await
             .simple_query(sql)
             .await
             .map_err(|e| db_error(&e))?;
@@ -328,8 +341,7 @@ impl Connection for PostgresConnection {
     }
 
     async fn list_databases(&self) -> Result<Vec<DatabaseInfo>, DriverError> {
-        let rows = self
-            .client
+        let rows = self.client.read().await
             .query("SELECT datname FROM pg_database WHERE NOT datistemplate AND datallowconn ORDER BY datname", &[])
             .await
             .map_err(|e| db_error(&e))?;
@@ -341,6 +353,59 @@ impl Connection for PostgresConnection {
             })
             .collect()
     }
+
+    async fn execute_batch(&self, statements: &[BatchStatement]) -> Result<Vec<u64>, DriverError> {
+        let mut client = self.client.write().await;
+        let tx = client.transaction().await.map_err(|e| db_error(&e))?;
+        let mut counts = Vec::with_capacity(statements.len());
+        for (i, statement) in statements.iter().enumerate() {
+            let position = i + 1;
+            let messages = match tx.simple_query(&statement.sql).await {
+                Ok(messages) => messages,
+                Err(e) => {
+                    // O erro do statement é o que interessa; o do ROLLBACK (conexão caída) não
+                    // muda nada: a transação morre com ela.
+                    let _ = tx.rollback().await;
+                    return Err(match db_error(&e) {
+                        // Conexão caída não é "o statement falhou": sobe como está.
+                        DriverError::Closed => DriverError::Closed,
+                        DriverError::Db(reason) => DriverError::Statement { position, reason },
+                        other => DriverError::Statement {
+                            position,
+                            reason: other.to_string(),
+                        },
+                    });
+                }
+            };
+            let got = affected_rows(&messages);
+            if let Some(expected) = statement.expected_rows
+                && got != expected
+            {
+                let _ = tx.rollback().await;
+                return Err(DriverError::RowCount {
+                    position,
+                    expected,
+                    got,
+                });
+            }
+            counts.push(got);
+        }
+        tx.commit().await.map_err(|e| db_error(&e))?;
+        Ok(counts)
+    }
+}
+
+/// As linhas afetadas pelo último `CommandComplete` (um statement por texto; com vários, vale o
+/// último). Sem `CommandComplete` (não acontece com o protocolo simples), zero.
+fn affected_rows(messages: &[SimpleQueryMessage]) -> u64 {
+    messages
+        .iter()
+        .rev()
+        .find_map(|m| match m {
+            SimpleQueryMessage::CommandComplete(n) => Some(*n),
+            _ => None,
+        })
+        .unwrap_or(0)
 }
 
 /// O primeiro conjunto de linhas das mensagens do protocolo simples: do primeiro
@@ -563,6 +628,148 @@ mod tests {
                 dbs.iter().all(|d| !d.name.starts_with("template")),
                 "{dbs:?}"
             );
+        }
+
+        /// O lote é tudo ou nada: erro no 2º statement ou contagem diferente da esperada desfaz
+        /// o 1º; depois do erro a conexão segue servindo, e o lote bom grava e devolve as contagens.
+        #[tokio::test]
+        async fn lote_desfaz_tudo_no_erro_ou_na_contagem_errada_e_grava_quando_bate() {
+            let Some((cfg, secret)) = config_from_env() else {
+                return;
+            };
+            let conn = PostgresDriver::default()
+                .connect(&cfg, &secret)
+                .await
+                .unwrap();
+            let schema = format!(
+                "hy_batch_{}_{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0)
+            );
+            conn.query_text(&format!(
+                "CREATE SCHEMA {schema}; \
+                 CREATE TABLE {schema}.t (id integer PRIMARY KEY, qtd integer NOT NULL); \
+                 INSERT INTO {schema}.t VALUES (1, 1), (2, 2), (3, 3)"
+            ))
+            .await
+            .unwrap();
+            async fn state(conn: &PostgresConnection, schema: &str) -> Vec<String> {
+                let rows = conn
+                    .query_text(&format!("SELECT id, qtd FROM {schema}.t ORDER BY id"))
+                    .await
+                    .unwrap();
+                rows.rows
+                    .iter()
+                    .map(|r| {
+                        r.iter()
+                            .map(|c| c.clone().unwrap_or_default())
+                            .collect::<Vec<_>>()
+                            .join("=")
+                    })
+                    .collect()
+            }
+            let st = |sql: String, expected: Option<u64>| BatchStatement {
+                sql,
+                expected_rows: expected,
+            };
+            let update_1 = || {
+                st(
+                    format!("UPDATE {schema}.t SET qtd = 10 WHERE id = 1"),
+                    Some(1),
+                )
+            };
+            let untouched = vec!["1=1".to_owned(), "2=2".to_owned(), "3=3".to_owned()];
+
+            // Texto numa coluna integer: erro do servidor no 2º statement; o 1º é desfeito.
+            let err = conn
+                .execute_batch(&[
+                    update_1(),
+                    st(
+                        format!("UPDATE {schema}.t SET qtd = 'x' WHERE id = 2"),
+                        Some(1),
+                    ),
+                ])
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(&err, DriverError::Statement { position: 2, reason } if reason.contains("integer")),
+                "{err}"
+            );
+            assert_eq!(state(&conn, &schema).await, untouched);
+
+            // Contagem errada (esperava apagar 3, só há 2 com essas chaves): também desfaz.
+            let err = conn
+                .execute_batch(&[
+                    update_1(),
+                    st(
+                        format!("DELETE FROM {schema}.t WHERE id IN (2, 3)"),
+                        Some(3),
+                    ),
+                ])
+                .await
+                .unwrap_err();
+            assert_eq!(
+                err,
+                DriverError::RowCount {
+                    position: 2,
+                    expected: 3,
+                    got: 2
+                }
+            );
+            assert_eq!(state(&conn, &schema).await, untouched);
+
+            // A transação é só do lote: uma leitura na mesma conexão, no meio dele, espera o fim
+            // (aqui o ROLLBACK do 3º statement) e vê o valor antigo. Sem o RwLock ela entraria no
+            // BEGIN … e leria o 10 ainda não confirmado.
+            let conn = std::sync::Arc::new(conn);
+            let in_flight = {
+                let conn = std::sync::Arc::clone(&conn);
+                let batch = vec![
+                    update_1(),
+                    st("SELECT pg_sleep(0.3)".to_owned(), None),
+                    st(
+                        format!("UPDATE {schema}.t SET qtd = 'x' WHERE id = 2"),
+                        Some(1),
+                    ),
+                ];
+                tokio::spawn(async move { conn.execute_batch(&batch).await })
+            };
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            let seen = conn
+                .query_text(&format!("SELECT qtd FROM {schema}.t WHERE id = 1"))
+                .await
+                .unwrap();
+            assert_eq!(
+                seen.cell(0, 0),
+                Some("1"),
+                "a leitura entrou na transação do lote"
+            );
+            assert!(matches!(
+                in_flight.await.unwrap(),
+                Err(DriverError::Statement { position: 3, .. })
+            ));
+            assert_eq!(state(&conn, &schema).await, untouched);
+
+            // Lote bom: grava e devolve as contagens.
+            let counts = conn
+                .execute_batch(&[
+                    update_1(),
+                    st(
+                        format!("DELETE FROM {schema}.t WHERE id IN (2, 3)"),
+                        Some(2),
+                    ),
+                ])
+                .await
+                .unwrap();
+            assert_eq!(counts, [1, 2]);
+            assert_eq!(state(&conn, &schema).await, ["1=10"]);
+
+            conn.query_text(&format!("DROP SCHEMA {schema} CASCADE"))
+                .await
+                .unwrap();
         }
 
         #[tokio::test]

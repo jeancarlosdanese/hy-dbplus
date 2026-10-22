@@ -750,7 +750,7 @@ mod tests {
 
     use super::*;
     use crate::store::Tag;
-    use hy_dbplus_driver::TextRows;
+    use hy_dbplus_driver::{BatchStatement, TextRows};
 
     /// Driver falso: demora 20 ms; falha quando a senha é "errada"; conta as queries de catálogo
     /// e responde conforme a tabela de `pg_catalog` citada no SQL.
@@ -784,6 +784,12 @@ mod tests {
                     name: "loja".into(),
                 },
             ])
+        }
+        async fn execute_batch(
+            &self,
+            _statements: &[BatchStatement],
+        ) -> Result<Vec<u64>, DriverError> {
+            Err(DriverError::Db("lote fora deste teste".into()))
         }
         async fn query_text(&self, sql: &str) -> Result<TextRows, DriverError> {
             self.queries.fetch_add(1, Ordering::SeqCst);

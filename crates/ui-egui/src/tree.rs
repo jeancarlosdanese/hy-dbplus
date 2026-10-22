@@ -223,8 +223,8 @@ mod tests {
     use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable;
     use hy_dbplus_driver::{
-        Connection as DriverConnection, ConnectionConfig, DatabaseInfo, Driver, DriverError,
-        Secret, TextRows,
+        BatchStatement, Connection as DriverConnection, ConnectionConfig, DatabaseInfo, Driver,
+        DriverError, Secret, TextRows,
     };
     use hy_dbplus_engine::{Connection, Direction, Tag};
 
@@ -263,6 +263,12 @@ mod tests {
                     name: "template0".into(),
                 },
             ])
+        }
+        async fn execute_batch(
+            &self,
+            _statements: &[BatchStatement],
+        ) -> Result<Vec<u64>, DriverError> {
+            Err(DriverError::Db("lote fora deste teste".into()))
         }
         async fn query_text(&self, sql: &str) -> Result<TextRows, DriverError> {
             self.queries.fetch_add(1, Ordering::SeqCst);

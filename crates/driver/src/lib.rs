@@ -1,6 +1,6 @@
 //! Conexões e execução de SQL: a trait [`Driver`] (conectar) e [`Connection`] (ping, versão do
-//! servidor, listar bancos; query com stream e cancelamento no M3), com a implementação
-//! PostgreSQL em [`postgres`].
+//! servidor, listar bancos, query em texto, lote numa transação; stream e cancelamento no M5),
+//! com a implementação PostgreSQL em [`postgres`].
 //!
 //! Camada 0: não conhece nenhuma outra crate do workspace. Assíncrona sobre `tokio`; quem chama
 //! `connect` precisa estar dentro de um runtime (a implementação PostgreSQL faz `tokio::spawn`
@@ -38,6 +38,14 @@ impl TextRows {
     }
 }
 
+/// Um statement de um lote ([`Connection::execute_batch`]) e quantas linhas ele deve afetar;
+/// `None` não confere.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BatchStatement {
+    pub sql: String,
+    pub expected_rows: Option<u64>,
+}
+
 /// Uma conexão aberta com o servidor.
 pub trait Connection: Send + Sync {
     /// Confirma que a conexão responde.
@@ -52,6 +60,19 @@ pub trait Connection: Send + Sync {
     /// resultado em texto. Com vários statements no texto, todos rodam no servidor; o relato é o
     /// do primeiro que devolve um conjunto de linhas (mesmo vazio).
     fn query_text(&self, sql: &str) -> impl Future<Output = Result<TextRows, DriverError>> + Send;
+    /// Os statements numa transação só deles (`BEGIN` … `COMMIT`), pelo protocolo simples, na
+    /// ordem; nenhuma outra query desta conexão corre no meio. Devolve as linhas afetadas de cada
+    /// um. Erro de um statement ou contagem diferente da esperada faz `ROLLBACK` e devolve
+    /// [`DriverError::Statement`] ou [`DriverError::RowCount`] com a posição (a partir de 1):
+    /// nada fica gravado. Erro no `BEGIN` ou no `COMMIT`, e conexão caída no meio, sobem como
+    /// [`DriverError::Db`] ou [`DriverError::Closed`]; com a conexão caída no `COMMIT` o
+    /// resultado é desconhecido (pode ter gravado). Cada `sql` deve ser um statement só, sem
+    /// `COMMIT`/`ROLLBACK`: a contagem é a do último `CommandComplete` do texto (num `SELECT`,
+    /// as linhas devolvidas).
+    fn execute_batch(
+        &self,
+        statements: &[BatchStatement],
+    ) -> impl Future<Output = Result<Vec<u64>, DriverError>> + Send;
 }
 
 /// Abre conexões para um tipo de banco. Só PostgreSQL no MVP.

@@ -25,13 +25,14 @@ limpa as pendências. Tabela sem chave primária continua só leitura, com aviso
    - `DELETE FROM "s"."t" WHERE ("pk"[, "pk2"]) IN ((E'…'[, E'…']), …)`, um só para todas as linhas.
    - Identificadores por `quote_ident`, valores por `literal` (E'…'), `NULL` literal. O valor vai como texto
      e o servidor converte para o tipo da coluna; texto que não cabe no tipo é erro do servidor, mostrado.
-2. **`driver`**: `Connection::execute_batch(&[String]) -> Result<Vec<u64>, DriverError>`: `BEGIN`, cada
-   statement pelo protocolo simples, `COMMIT`; qualquer erro faz `ROLLBACK` e devolve o erro do statement
-   que falhou (com o índice dele). Devolve as linhas afetadas de cada statement.
+2. **`driver`**: `Connection::execute_batch(&[BatchStatement { sql, expected_rows: Option<u64> }]) ->
+   Result<Vec<u64>, DriverError>`: `BEGIN`, cada statement pelo protocolo simples, `COMMIT`, numa transação
+   só do lote (nenhuma outra query da conexão corre no meio). Erro de um statement ou contagem de linhas
+   diferente da esperada faz `ROLLBACK` e devolve `DriverError::Statement`/`RowCount` com a posição (a
+   partir de 1). Devolve as linhas afetadas de cada statement.
 3. **`engine`**: `Sessions::apply_changes(id, database, schema, table, ChangeSet)`; monta o SQL pelo
-   catálogo, roda `execute_batch`, confere que cada `UPDATE` afetou 1 linha e o `DELETE` afetou N; contagem
-   diferente é erro (linha mudou ou sumiu por outra sessão) e o engine pede `ROLLBACK` antes do `COMMIT`:
-   o driver só confirma se o engine aprovar as contagens (`execute_batch` recebe as contagens esperadas).
+   catálogo (`BatchStatement` com a contagem esperada: 1 por `UPDATE`, N no `DELETE`) e roda
+   `execute_batch`; contagem diferente (linha mudou ou sumiu por outra sessão) é o driver que desfaz.
    Eventos: `ChangesApplied { schema, table, updated, deleted }` e `ChangesFailed { schema, table, message }`.
    `preview_sql(ChangeSet) -> Vec<String>` puro, para a caixa de Commit (o mesmo texto que roda).
 4. **`ui-egui`**:

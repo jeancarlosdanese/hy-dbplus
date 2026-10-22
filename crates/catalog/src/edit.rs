@@ -5,9 +5,12 @@
 //!
 //! Identificador entre aspas duplas (`quote_ident`), valor como literal `E'…'` (`literal`) e
 //! `NULL` literal: nada cru chega ao SQL. O texto gerado aqui é exatamente o que o driver manda
-//! ao servidor e o que a caixa de Commit mostra.
+//! ao servidor (`Connection::execute_batch`, no tipo dele, [`BatchStatement`]) e o que a caixa
+//! de Commit mostra.
 
 use std::fmt;
+
+use hy_dbplus_driver::BatchStatement;
 
 use crate::data::{qualified, quote_ident};
 use crate::postgres::literal;
@@ -35,13 +38,6 @@ impl ChangeSet {
     }
 }
 
-/// Um statement do lote e quantas linhas ele deve afetar.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Statement {
-    pub sql: String,
-    pub expected_rows: u64,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EditError {
     /// Tabela sem chave primária: não há como apontar a linha com segurança.
@@ -66,13 +62,14 @@ impl fmt::Display for EditError {
 
 impl std::error::Error for EditError {}
 
-/// Os statements do lote, na ordem: um `UPDATE` por linha (as que têm alguma coluna em `set`) e,
-/// por fim, um `DELETE` para todas as chaves de `deletes`, se houver.
+/// Os statements do lote, na ordem: um `UPDATE` por linha (as que têm alguma coluna em `set`),
+/// esperando 1 linha cada, e, por fim, um `DELETE` para todas as chaves de `deletes`, esperando
+/// N, se houver.
 pub fn changes_sql(
     schema: &str,
     table: &str,
     changes: &ChangeSet,
-) -> Result<Vec<Statement>, EditError> {
+) -> Result<Vec<BatchStatement>, EditError> {
     if changes.key_columns.is_empty() {
         return Err(EditError::NoPrimaryKey);
     }
@@ -89,13 +86,13 @@ pub fn changes_sql(
                 format!("{} = {}", quote_ident(column), value_sql(value.as_deref()))
             })
             .collect();
-        statements.push(Statement {
+        statements.push(BatchStatement {
             sql: format!(
                 "UPDATE {target} SET {} WHERE {}",
                 assignments.join(", "),
                 key_where(&changes.key_columns, &update.key)?
             ),
-            expected_rows: 1,
+            expected_rows: Some(1),
         });
     }
     if !changes.deletes.is_empty() {
@@ -105,13 +102,13 @@ pub fn changes_sql(
             .map(|key| key_tuple(&changes.key_columns, key))
             .collect::<Result<_, _>>()?;
         let columns: Vec<String> = changes.key_columns.iter().map(|c| quote_ident(c)).collect();
-        statements.push(Statement {
+        statements.push(BatchStatement {
             sql: format!(
                 "DELETE FROM {target} WHERE ({}) IN ({})",
                 columns.join(", "),
                 keys.join(", ")
             ),
-            expected_rows: changes.deletes.len() as u64,
+            expected_rows: Some(changes.deletes.len() as u64),
         });
     }
     Ok(statements)
@@ -183,7 +180,7 @@ mod tests {
             statements[0].sql,
             "UPDATE \"public\".\"Clientes\" SET \"nome\" = E'O''Hara \\\\ Cia', \"saldo\" = NULL WHERE \"id\" = E'7'"
         );
-        assert_eq!(statements[0].expected_rows, 1);
+        assert_eq!(statements[0].expected_rows, Some(1));
     }
 
     #[test]
@@ -199,7 +196,7 @@ mod tests {
             statements[0].sql,
             "DELETE FROM \"vendas\".\"itens\" WHERE (\"pedido\", \"item \"\"n\"\"\") IN ((E'1', E'a'), (E'2', E'b'))"
         );
-        assert_eq!(statements[0].expected_rows, 2);
+        assert_eq!(statements[0].expected_rows, Some(2));
     }
 
     #[test]

@@ -13,7 +13,7 @@ pub mod model;
 pub mod postgres;
 
 pub use data::{Direction, Order, TableStats, count, count_sql, page, page_sql, stats};
-pub use edit::{ChangeSet, EditError, RowUpdate, Statement, changes_sql};
+pub use edit::{ChangeSet, EditError, RowUpdate, changes_sql};
 pub use model::{Column, Function, Schema, Table, TableKind};
 pub use postgres::{columns, functions, schemas, tables};
 

@@ -22,4 +22,16 @@ pub enum DriverError {
     Closed,
     #[error("erro do banco: {0}")]
     Db(String),
+    /// Um statement do lote falhou; a transação foi desfeita. `position` a partir de 1.
+    #[error("statement {position} do lote falhou e nada foi gravado: {reason}")]
+    Statement { position: usize, reason: String },
+    /// Um statement do lote afetou outro número de linhas; a transação foi desfeita.
+    #[error(
+        "statement {position} do lote afetou {got} linha(s), esperava {expected}; nada foi gravado"
+    )]
+    RowCount {
+        position: usize,
+        expected: u64,
+        got: u64,
+    },
 }
