@@ -17,6 +17,12 @@ rust-version = "1.99"
 repository = "https://github.com/jeancarlosdanese/hy-dbplus"
 
 [workspace.dependencies]
+# Editor SQL (FEAT-010): tokenizador para split e highlight (Apache-2.0) e formatador (MIT). Sem
+# `recursive-protection` (é do parser, que o tokenizador não usa; puxaria stacker/psm com C).
+sqlparser = { version = "0.63", default-features = false, features = ["std"] }
+sqlformat = "0.5"
+# Stream do protocolo simples no driver (FEAT-010): só o trait Stream, já transitivo pelo tokio-postgres.
+futures-util = { version = "0.3", default-features = false }
 # Crates internas: só por aqui, com `workspace = true` em cada Cargo.toml. Sem `version`:
 # nada é publicado, e a versão do workspace sobe sem tocar estas linhas.
 hy-dbplus-driver = { path = "crates/driver" }

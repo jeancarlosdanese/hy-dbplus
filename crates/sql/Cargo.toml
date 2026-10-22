@@ -13,3 +13,5 @@ workspace = true
 
 [dependencies]
 hy-dbplus-catalog = { workspace = true }
+sqlparser = { workspace = true }
+sqlformat = { workspace = true }
