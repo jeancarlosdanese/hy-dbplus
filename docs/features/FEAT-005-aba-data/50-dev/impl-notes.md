@@ -6,11 +6,11 @@
 
 _Atualizado em 22/10/2026._
 
-- **Feito:** documentação (`b6e4f88`); no scratchpad (cópia completa do workspace): `catalog::data`, `engine`
-  (`load_stats`, `load_page`, `Page`, eventos) e `ui-egui` (aba Data, árvore com nome e seta separados).
-- **Em curso:** `ui-egui` na árvore do repositório (este commit); `catalog` (`874431f`) e `engine` (`5a0d5e3`)
-  commitados.
-- **Falta:** push e CI; verificação do Jean (abrir tabela, ordenar, paginar, selecionar linha).
+- **Feito:** os quatro commits do M3 (`b6e4f88`, `874431f`, `5a0d5e3`, `455ab45`); fix do painel direito e dos
+  tamanhos de tabela particionada (este commit), a partir da conferência do Jean em 22/10.
+- **Em curso:** nada.
+- **Falta:** push e CI. Próximos, aprovados pelo Jean: FEAT-006 (painel de registro: Form, JSON, seleção
+  múltipla) e FEAT-007 (Update e Delete; decisão 6 do BRIEF registrada neste commit); depois o M4.
 - **Depende de:** FEAT-004 concluída (M2).
 - **Para retomar:** esta pasta, o `CLAUDE.md` da raiz e o BRIEF §3.4, §5 e decisão 3.
 
@@ -107,3 +107,20 @@ _Atualizado em 22/10/2026._
   cheia habilita `›`. Tooltips sem jargão de marco. Fica anotado: `DataFailed` não distingue página de stats
   (o engine pode ganhar um discriminador depois) e a UI não tem teste do caminho de erro da aba nem do terceiro
   estado do cabeçalho (sem ordem).
+
+### 22/10/2026 — Conferência do Jean e `fix(ui)`
+
+- [x] Jean conferiu o M3 com uma tabela real de alguns milhares de linhas, paginando até o fim, e apontou: o painel direito
+  ora deixava mudar a largura, ora não; ocupa muito para pouca informação; falta o conteúdo do registro em
+  Form e JSON, seleção múltipla, Delete e Update. Aprovou a ordem: este fix; FEAT-006 (painel de registro,
+  só leitura); FEAT-007 (Update e Delete em lote com confirmação e transação, só tabelas com PK, `+ Row`
+  continua fora); depois o M4.
+- [x] Causa da largura: o conteúdo do painel não quebrava linha (comentário ou valor longo numa `Grid` impõe
+  largura mínima, e o egui não deixa o painel encolher abaixo dela). Agora `wrap_mode = Wrap`, tamanhos em
+  linha, comentário e campos da linha com o nome acima do valor (sem `Grid`), painel com `min_size` 180,
+  `max_size` 560 e
+  botão "Painel" na barra superior para esconder e mostrar (`App.side_panel_open`).
+- [x] Tabela particionada mostrava "0 bytes": `pg_total_relation_size` da mãe não inclui as partições. O SQL dos
+  stats soma `pg_partition_tree` quando `relkind = 'p'` (`LEFT JOIN LATERAL` com `COALESCE`). Teste com
+  servidor cria uma tabela particionada por range com uma partição e duas linhas; provado contra o SQL antigo
+  (dava "0 bytes").

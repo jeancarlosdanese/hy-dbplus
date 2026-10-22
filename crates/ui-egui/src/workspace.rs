@@ -1,6 +1,7 @@
-//! Telas 3.2 e 3.3: conexão aberta. Barra superior colorida pelo ambiente com `AMBIENTE |
-//! PostgreSQL <versão> : conexão` (e `: banco` quando há um selecionado), painel esquerdo com a
-//! árvore ou o convite ao ⌘K, centro e painel direito vazios até o M3.
+//! Telas 3.2, 3.3 e 3.4: conexão aberta. Barra superior colorida pelo ambiente com `AMBIENTE |
+//! PostgreSQL <versão> : conexão : banco`, painel esquerdo com a árvore ou o convite ao ⌘K, centro com a
+//! aba Data da tabela aberta (ou o convite) e painel direito com os tamanhos ou os campos da linha, que o
+//! botão "Painel" esconde e mostra.
 
 use hy_dbplus_engine::{ConnectionId, Driver};
 
@@ -54,6 +55,19 @@ where
                     if ui.button("Banco ⌘K").clicked() {
                         palette::toggle(app);
                     }
+                    let panel_label = if app.side_panel_open {
+                        "Painel ▸"
+                    } else {
+                        "◂ Painel"
+                    };
+
+                    if ui
+                        .button(panel_label)
+                        .on_hover_text("Mostrar ou esconder o painel direito")
+                        .clicked()
+                    {
+                        app.side_panel_open = !app.side_panel_open;
+                    }
                 });
             });
         });
@@ -91,18 +105,23 @@ where
             }
         });
     let data_tab = app.workspaces.get(id).and_then(|ws| ws.data.clone());
-    egui::Panel::right("workspace-right")
-        .default_size(240.0)
-        .show(ui, |ui| match &data_tab {
-            Some(tab) => data::side_panel(ui, tab),
-            None => {
-                ui.centered_and_justified(|ui| {
-                    ui.label(
-                        egui::RichText::new("Nenhuma linha selecionada").color(tokens.text_muted),
-                    );
-                });
-            }
-        });
+    if app.side_panel_open {
+        egui::Panel::right("workspace-right")
+            .default_size(260.0)
+            .min_size(180.0)
+            .max_size(560.0)
+            .show(ui, |ui| match &data_tab {
+                Some(tab) => data::side_panel(ui, tab),
+                None => {
+                    ui.centered_and_justified(|ui| {
+                        ui.label(
+                            egui::RichText::new("Nenhuma linha selecionada")
+                                .color(tokens.text_muted),
+                        );
+                    });
+                }
+            });
+    }
     if data_tab.is_some() {
         data::show(app, ui, id);
     } else {

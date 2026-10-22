@@ -668,6 +668,18 @@ mod tests {
         harness.get_by_label("1-3 of 250 rows");
         harness.get_by_label("24 kB");
         harness.get_by_label("pedidos");
+        // O botão da barra esconde e mostra o painel direito.
+        harness.get_by_label("Painel ▸").click_accesskit();
+        harness.step();
+        harness.step(); // o rótulo do botão muda no frame seguinte ao do clique
+        assert!(
+            harness.query_by_label("24 kB").is_none(),
+            "painel ainda visível"
+        );
+        harness.get_by_label("◂ Painel").click_accesskit();
+        harness.step();
+        harness.step();
+        harness.get_by_label("24 kB");
         let names = |app: &App<FakeDriver>| -> Vec<String> {
             app.workspaces[&id]
                 .data

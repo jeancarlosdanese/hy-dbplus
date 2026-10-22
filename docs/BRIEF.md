@@ -100,7 +100,7 @@ qualquer statement.
 | 12 | CLI headless: `connections list`, `query`, `tables`; servidor MCP opt-in | — |
 
 ### Fora do MVP (próximas versões)
-- Edição de dados em linha, `+ Row`, commit/rollback de alterações.
+- `+ Row` (inserção) e commit/rollback manual. Update e Delete entraram pela decisão 6.
 - Edição de estrutura: `+ Column`, renomear, Primary, Triggers.
 - MySQL, SQLite, Redis, MongoDB.
 - Backup e restore.
@@ -193,6 +193,7 @@ como a FEAT-001.
 | 3 | Paginação do grid | **`LIMIT/OFFSET`** no MVP, como o TablePlus. Keyset fica como evolução futura; a interface do `driver` não muda. | 2026-10-21 |
 | 4 | Web (WASM) | **Ignorar.** O navegador não abre conexão TCP com o banco; uma versão web exigiria um servidor intermediário, contra o princípio de ferramenta simples e local. | 2026-10-21 |
 | 5 | Plataformas | **macOS** é o alvo principal. **Linux** e **Windows** são builds secundários na CI, mesmo código via `egui`. | 2026-10-21 |
+| 6 | Edição de dados | **Update e Delete entram no MVP** (FEAT-007): só tabelas com chave primária; edições pendentes no grid, confirmadas em lote numa transação com o SQL à vista; Delete sobre a seleção, com confirmação. `+ Row` continua fora. | 2026-10-22 |
 
 ## 10. Próximos passos
 

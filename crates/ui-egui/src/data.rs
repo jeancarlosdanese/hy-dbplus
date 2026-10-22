@@ -252,9 +252,11 @@ where
     }
 }
 
-/// O painel direito: tamanhos e comentário, ou os campos da linha selecionada.
+/// O painel direito: tamanhos e comentário, ou os campos da linha selecionada. Tudo quebra linha
+/// na largura do painel: valor ou comentário longo não trava a largura mínima.
 pub fn side_panel(ui: &mut egui::Ui, tab: &DataTab) {
     let tokens = theme::current(ui.ctx());
+    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
     if let (Some(index), Some(rows)) = (tab.selected_row, tab.rows.as_ref())
         && let Some(cells) = rows.rows.get(index)
     {
@@ -263,23 +265,18 @@ pub fn side_panel(ui: &mut egui::Ui, tab: &DataTab) {
         );
         ui.separator();
         egui::ScrollArea::vertical().show(ui, |ui| {
-            egui::Grid::new("row-fields")
-                .num_columns(2)
-                .spacing([10.0, 4.0])
-                .show(ui, |ui| {
-                    for (name, cell) in rows.columns.iter().zip(cells) {
-                        ui.label(egui::RichText::new(name).small().color(tokens.text_muted));
-                        match cell {
-                            Some(value) => ui.label(egui::RichText::new(value).monospace()),
-                            None => ui.label(
-                                egui::RichText::new("NULL")
-                                    .italics()
-                                    .color(tokens.text_muted),
-                            ),
-                        };
-                        ui.end_row();
-                    }
-                });
+            for (name, cell) in rows.columns.iter().zip(cells) {
+                ui.label(egui::RichText::new(name).small().color(tokens.text_muted));
+                match cell {
+                    Some(value) => ui.label(egui::RichText::new(value).monospace()),
+                    None => ui.label(
+                        egui::RichText::new("NULL")
+                            .italics()
+                            .color(tokens.text_muted),
+                    ),
+                };
+                ui.add_space(6.0);
+            }
         });
         return;
     }
@@ -287,22 +284,24 @@ pub fn side_panel(ui: &mut egui::Ui, tab: &DataTab) {
     ui.separator();
     match &tab.stats {
         Some(stats) => {
-            egui::Grid::new("table-stats")
-                .num_columns(2)
-                .spacing([10.0, 4.0])
-                .show(ui, |ui| {
-                    for (name, value) in [
-                        ("total_size", stats.total_size.as_str()),
-                        ("data_size", stats.data_size.as_str()),
-                        ("index_size", stats.index_size.as_str()),
-                        ("rows", &stats.row_count.to_string()),
-                        ("comment", stats.comment.as_deref().unwrap_or("—")),
-                    ] {
-                        ui.label(egui::RichText::new(name).small().color(tokens.text_muted));
-                        ui.label(value);
-                        ui.end_row();
-                    }
+            for (name, value) in [
+                ("total_size", stats.total_size.as_str()),
+                ("data_size", stats.data_size.as_str()),
+                ("index_size", stats.index_size.as_str()),
+                ("rows", &stats.row_count.to_string()),
+            ] {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(name).small().color(tokens.text_muted));
+                    ui.label(value);
                 });
+            }
+            ui.add_space(6.0);
+            ui.label(
+                egui::RichText::new("comment")
+                    .small()
+                    .color(tokens.text_muted),
+            );
+            ui.label(stats.comment.as_deref().unwrap_or("—"));
         }
         None => {
             ui.label(

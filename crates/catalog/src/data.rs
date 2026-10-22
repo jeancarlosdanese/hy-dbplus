@@ -95,19 +95,26 @@ pub async fn count(conn: &impl Connection, schema: &str, table: &str) -> Result<
     })
 }
 
-/// Tamanhos, contagem e comentário. Duas queries: `pg_class` para tamanhos e comentário,
-/// `count(*)` para a contagem (tabela inexistente falha no `count`).
+/// Tamanhos, contagem e comentário. Duas queries: `pg_class` para tamanhos e comentário (tabela
+/// particionada soma as partições por `pg_partition_tree`, senão a mãe daria 0 bytes), `count(*)`
+/// para a contagem (tabela inexistente falha no `count`).
 pub async fn stats(
     conn: &impl Connection,
     schema: &str,
     table: &str,
 ) -> Result<TableStats, DriverError> {
     let sql = format!(
-        "SELECT pg_catalog.pg_size_pretty(pg_catalog.pg_total_relation_size(c.oid)), \
-                pg_catalog.pg_size_pretty(pg_catalog.pg_table_size(c.oid)), \
-                pg_catalog.pg_size_pretty(pg_catalog.pg_indexes_size(c.oid)), \
+        "SELECT pg_catalog.pg_size_pretty(COALESCE(p.total, pg_catalog.pg_total_relation_size(c.oid))), \
+                pg_catalog.pg_size_pretty(COALESCE(p.data, pg_catalog.pg_table_size(c.oid))), \
+                pg_catalog.pg_size_pretty(COALESCE(p.index, pg_catalog.pg_indexes_size(c.oid))), \
                 pg_catalog.obj_description(c.oid, 'pg_class') \
          FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+         LEFT JOIN LATERAL ( \
+             SELECT sum(pg_catalog.pg_total_relation_size(t.relid)) AS total, \
+                    sum(pg_catalog.pg_table_size(t.relid)) AS data, \
+                    sum(pg_catalog.pg_indexes_size(t.relid)) AS index \
+             FROM pg_catalog.pg_partition_tree(c.oid) t WHERE c.relkind = 'p' \
+         ) p ON true \
          WHERE n.nspname = {} AND c.relname = {}",
         literal(schema),
         literal(table)
@@ -173,11 +180,15 @@ mod tests {
                 "CREATE SCHEMA {schema}; \
                  CREATE TABLE {schema}.item (id serial PRIMARY KEY, nome text, preco numeric(10,2)); \
                  COMMENT ON TABLE {schema}.item IS 'itens de teste'; \
-                 INSERT INTO {schema}.item (nome, preco) VALUES ('b', 2), ('a', 1), ('c', NULL);"
+                 INSERT INTO {schema}.item (nome, preco) VALUES ('b', 2), ('a', 1), ('c', NULL); \
+                 CREATE TABLE {schema}.evento (dia date NOT NULL, obs text) PARTITION BY RANGE (dia); \
+                 CREATE TABLE {schema}.evento_2026 PARTITION OF {schema}.evento \
+                     FOR VALUES FROM ('2026-01-01') TO ('2027-01-01'); \
+                 INSERT INTO {schema}.evento VALUES ('2026-03-01', 'x'), ('2026-04-01', 'y');"
             );
             conn.query_text(&setup).await.unwrap();
             let result = async {
-                let table_stats = stats(&conn, &schema, "item").await?;
+                let item = stats(&conn, &schema, "item").await?;
                 let order = [Order {
                     column: "nome".into(),
                     direction: Direction::Desc,
@@ -186,20 +197,21 @@ mod tests {
                 let second = page(&conn, &schema, "item", &order, 2, 2).await?;
                 let total = count(&conn, &schema, "item").await?;
                 let missing = stats(&conn, &schema, "nao_existe").await;
-                Ok::<_, DriverError>((table_stats, first, second, total, missing))
+                let partitioned = stats(&conn, &schema, "evento").await?;
+                Ok::<_, DriverError>((item, first, second, total, missing, partitioned))
             }
             .await;
             conn.query_text(&format!("DROP SCHEMA {schema} CASCADE"))
                 .await
                 .unwrap();
-            let (stats, first, second, total, missing) = result.unwrap();
-            assert_eq!(stats.row_count, 3);
-            assert_eq!(stats.comment.as_deref(), Some("itens de teste"));
+            let (item, first, second, total, missing, partitioned) = result.unwrap();
+            assert_eq!(item.row_count, 3);
+            assert_eq!(item.comment.as_deref(), Some("itens de teste"));
             assert!(
-                stats.total_size.ends_with("bytes") || stats.total_size.ends_with("kB"),
-                "{stats:?}"
+                item.total_size.ends_with("bytes") || item.total_size.ends_with("kB"),
+                "{item:?}"
             );
-            assert!(!stats.data_size.is_empty() && !stats.index_size.is_empty());
+            assert!(!item.data_size.is_empty() && !item.index_size.is_empty());
             assert_eq!(first.columns, ["id", "nome", "preco"]);
             assert_eq!(
                 first.rows.iter().map(|r| r[1].clone()).collect::<Vec<_>>(),
@@ -211,6 +223,9 @@ mod tests {
             assert_eq!(total, 3);
             // Só a categoria: a mensagem depende do lc_messages do servidor.
             assert!(matches!(missing, Err(DriverError::Db(_))), "{missing:?}");
+            // Antes: a tabela mãe particionada dava "0 bytes"; agora soma as partições.
+            assert_eq!(partitioned.row_count, 2);
+            assert_ne!(partitioned.total_size, "0 bytes", "{partitioned:?}");
         }
     }
 }

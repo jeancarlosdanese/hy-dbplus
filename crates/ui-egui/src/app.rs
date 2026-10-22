@@ -109,6 +109,8 @@ pub struct App<D: Driver> {
     pub(crate) status: HashMap<ConnectionId, Status>,
     pub(crate) workspaces: HashMap<ConnectionId, Workspace>,
     pub(crate) palette: Option<Palette>,
+    /// Painel direito visível (botão na barra superior).
+    pub(crate) side_panel_open: bool,
     pub(crate) connections: Connections,
     pub(crate) form: Option<ConnectionForm>,
     /// Último erro de arquivo ou chaveiro, mostrado no rodapé até o próximo sucesso.
@@ -134,6 +136,7 @@ where
             status: HashMap::new(),
             workspaces: HashMap::new(),
             palette: None,
+            side_panel_open: true,
             connections: Connections::default(),
             form: None,
             notice: None,
