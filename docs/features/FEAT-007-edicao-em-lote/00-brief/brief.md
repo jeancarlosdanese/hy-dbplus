@@ -45,7 +45,7 @@ limpa as pendências. Tabela sem chave primária continua só leitura, com aviso
      editado vale para todas as linhas selecionadas (é o "lote" do Update).
    - Delete: ⌫ (ou botão **Delete** no rodapé) marca as linhas selecionadas (riscadas em vermelho);
      ⌫ de novo desmarca.
-   - Rodapé: chip `N alterações` com **Commit** (⌘S) e **Descartar**. Com pendência, ordenar, paginar,
+   - Rodapé: chip `N alterações` com **Commit** (⌘S) e **Descartar** (⌘Z). Com pendência, ordenar, paginar,
      recarregar e trocar de tabela ficam desabilitados com a dica "commit ou descarte as alterações".
    - Caixa de Commit: título `3 updates, 2 deletes`, o SQL completo (monoespaçado, rolável, botão Copiar),
      **Executar** e **Cancelar**. Durante a execução, botões desabilitados. Erro aparece na caixa, com o

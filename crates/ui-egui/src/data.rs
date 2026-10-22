@@ -1,7 +1,7 @@
 //! A aba Data (tela 3.4): grid virtualizado da página atual, rodapé com abas, contador, paginação e,
 //! desde a FEAT-007, a edição: duplo clique na célula abre o campo (Enter confirma, Esc cancela),
 //! célula pendente ganha fundo de destaque, ⌫ marca as linhas selecionadas para apagar (riscadas), o
-//! chip "N alterações" leva a Commit (⌘S) e Descartar. Com pendência, ordenar, paginar e recarregar
+//! chip "N alterações" leva a Commit (⌘S) e Descartar (⌘Z). Com pendência, ordenar, paginar e recarregar
 //! ficam travados. Só tabela com chave primária edita; sem ela, aviso na linha de tamanhos.
 
 use egui_extras::{Column as TableColumn, TableBuilder};
@@ -44,19 +44,23 @@ where
     let mut open_commit = false;
     let mut discard = false;
 
-    // Atalhos, antes dos widgets: ⌘S abre o Commit; ⌫ sem campo em foco marca a seleção.
+    // Atalhos, antes dos widgets: ⌘S abre o Commit; ⌘Z descarta (sem campo em foco: dentro de um
+    // campo, ⌘Z é o desfazer do próprio campo); ⌫ sem campo em foco marca a seleção.
+    let nothing_focused = ui.ctx().memory(|m| m.focused().is_none());
+    let shortcut = |key: egui::Key| egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, key);
     if locked
         && tab.commit.is_none()
-        && ui.input_mut(|i| {
-            i.consume_shortcut(&egui::KeyboardShortcut::new(
-                egui::Modifiers::COMMAND,
-                egui::Key::S,
-            ))
-        })
+        && ui.input_mut(|i| i.consume_shortcut(&shortcut(egui::Key::S)))
     {
         open_commit = true;
     }
-    let nothing_focused = ui.ctx().memory(|m| m.focused().is_none());
+    if locked
+        && tab.commit.is_none()
+        && nothing_focused
+        && ui.input_mut(|i| i.consume_shortcut(&shortcut(egui::Key::Z)))
+    {
+        discard = true;
+    }
     if editable
         && nothing_focused
         && tab.editing.is_none()
@@ -114,7 +118,7 @@ where
                 }
                 if ui
                     .add_enabled(idle, egui::Button::new("Descartar"))
-                    .on_hover_text("Esquece as alterações; nada vai ao banco")
+                    .on_hover_text("Esquece as alterações; nada vai ao banco (⌘Z)")
                     .clicked()
                 {
                     discard = true;

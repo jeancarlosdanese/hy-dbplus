@@ -33,7 +33,7 @@
 - [x] Com pendência, ordenar, paginar, recarregar e trocar de tabela ficam desabilitados com a dica.
 - [x] Commit (botão ou ⌘S) abre a caixa com o SQL e a contagem; Executar manda o lote; sucesso fecha, limpa
       e recarrega; erro fica na caixa com o statement que falhou e as pendências continuam.
-- [x] Descartar limpa tudo sem tocar no banco.
+- [x] Descartar (botão ou ⌘Z) limpa tudo sem tocar no banco.
 - [x] Teste `egui_kittest` cobre edição na célula, ⌫, Commit com o SQL, Executar com recarga e Descartar.
 
 ## Portão e CI

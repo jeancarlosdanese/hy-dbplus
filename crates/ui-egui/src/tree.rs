@@ -905,17 +905,21 @@ mod tests {
                 .get(&id)
                 .is_some_and(|ws| ws.objects.contains_key("public"))
         });
-        let open = |harness: &mut Harness<'_, App<FakeDriver>>, label: &str| {
+        // Abre a tabela pelo rótulo da árvore e espera a aba NOVA (não a anterior, que já estava
+        // carregada) com página, stats e colunas (a chave primária vem delas).
+        let open = |harness: &mut Harness<'_, App<FakeDriver>>, label: &str, table: &str| {
             harness.get_by_label(label).click();
-            wait_for(harness, "PageLoaded", |app| {
+            wait_for(harness, "tabela aberta e carregada", |app| {
                 app.workspaces.get(&id).is_some_and(|ws| {
-                    ws.data
-                        .as_ref()
-                        .is_some_and(|d| d.rows.is_some() && d.stats.is_some() && !d.loading)
+                    ws.data.as_ref().is_some_and(|d| {
+                        d.table == table && d.rows.is_some() && d.stats.is_some() && !d.loading
+                    }) && ws
+                        .columns
+                        .contains_key(&("public".to_owned(), table.to_owned()))
                 })
             });
         };
-        open(&mut harness, "▦ pedido");
+        open(&mut harness, "▦ pedido", "pedido");
         let tab = |app: &App<FakeDriver>| app.workspaces[&id].data.clone().unwrap();
 
         // Duplo clique na célula "a" (nome da linha 1) abre o campo; digitar e Enter deixa pendente.
@@ -1020,12 +1024,27 @@ mod tests {
         assert!(t.commit.is_none() && t.has_changes());
         harness.get_by_label("1 alteração");
 
-        // Descartar limpa sem ir ao banco.
+        // Descartar limpa sem ir ao banco; ⌘Z faz o mesmo.
         harness.get_by_label("Descartar").click_accesskit();
         harness.step();
         harness.step();
         assert!(!tab(harness.state()).has_changes());
         assert!(harness.query_by_label("1 alteração").is_none());
+        assert_eq!(batches.lock().unwrap().len(), 2);
+        double_click(&mut harness, "a");
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::Text("x".into()));
+        harness.step();
+        harness.key_press(egui::Key::Enter);
+        harness.step();
+        harness.step();
+        harness.get_by_label("1 alteração");
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.step();
+        harness.step();
+        assert!(!tab(harness.state()).has_changes(), "⌘Z não descartou");
         assert_eq!(batches.lock().unwrap().len(), 2);
 
         // Form: o campo "nome" da linha selecionada é editável; Reverter desfaz.
@@ -1054,8 +1073,7 @@ mod tests {
         assert!(!tab(harness.state()).has_changes());
 
         // Tabela sem chave primária: aviso, e o duplo clique não abre nada.
-        open(&mut harness, "◫ v_pedido");
-        harness.step(); // as colunas (sem chave) chegam um frame depois da página
+        open(&mut harness, "◫ v_pedido", "v_pedido");
         harness.get_by_label(crate::data::READ_ONLY_HINT);
         double_click(&mut harness, "a");
         assert!(tab(harness.state()).editing.is_none());

@@ -166,3 +166,12 @@ _Atualizado em 22/10/2026._
   (linhas apagadas riscadas em vermelho); aceite do workflow volta a aberto até o push.
 - Não feito (anotado): `TextEdit::multiline` no Form aceita quebra de linha (intencional: valores
   multilinha); timeout para a caixa presa em "Executando…" se o engine não responder (hoje teórico).
+
+### 22/10/2026 — Conferência do Jean: ⌘Z descarta
+
+- [x] Par de atalhos como no TablePlus: ⌘S confirma (abre o Commit, já era assim) e ⌘Z descarta as
+  pendências, como o botão Descartar (sem campo em foco; dentro do campo ⌘Z é o desfazer dele). Teste do
+  fluxo estendido.
+- [x] Teste intermitente sob a carga do portão completo: o helper `open` do teste aceitava a aba anterior (já
+  carregada) como condição satisfeita antes de o clique abrir a nova. Agora espera a tabela nova com página,
+  stats e colunas.
