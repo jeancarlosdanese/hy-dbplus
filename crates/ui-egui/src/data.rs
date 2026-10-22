@@ -10,7 +10,8 @@ use hy_dbplus_engine::{Direction, Driver, Order, Page};
 use crate::app::{App, DbKey, TabView};
 use crate::theme;
 
-const ROW_HEIGHT: f32 = 22.0;
+use crate::grid::ROW_HEIGHT;
+
 pub const PAGE_SIZES: [u32; 3] = [100, 500, 1000];
 /// Dica dos controles travados por edição pendente.
 pub const LOCK_HINT: &str = "Commit ou descarte as alterações antes";
@@ -46,24 +47,29 @@ where
     let mut view_change: Option<TabView> = None;
     let mut open_ddl = false;
 
-    // Atalhos, antes dos widgets: ⌘S abre o Commit; ⌘Z descarta (sem campo em foco: dentro de um
-    // campo, ⌘Z é o desfazer do próprio campo); ⌫ sem campo em foco marca a seleção.
+    // Atalhos, antes dos widgets e só na sub-aba Data (fora dela não são consumidos nem agem): ⌘S
+    // abre o Commit; ⌘Z descarta (sem campo em foco: dentro de um campo, ⌘Z é o desfazer do próprio
+    // campo); ⌫ sem campo em foco marca a seleção.
+    let in_data = tab.view == TabView::Data;
     let nothing_focused = ui.ctx().memory(|m| m.focused().is_none());
     let shortcut = |key: egui::Key| egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, key);
-    if locked
+    if in_data
+        && locked
         && tab.commit.is_none()
         && ui.input_mut(|i| i.consume_shortcut(&shortcut(egui::Key::S)))
     {
         open_commit = true;
     }
-    if locked
+    if in_data
+        && locked
         && tab.commit.is_none()
         && nothing_focused
         && ui.input_mut(|i| i.consume_shortcut(&shortcut(egui::Key::Z)))
     {
         discard = true;
     }
-    if editable
+    if in_data
+        && editable
         && nothing_focused
         && tab.editing.is_none()
         && tab.commit.is_none()

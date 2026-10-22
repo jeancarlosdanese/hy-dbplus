@@ -16,7 +16,7 @@
 ## `engine`
 
 - [x] `load_structure` emite `StructureLoaded` e responde do cache na segunda vez; `refresh` esvazia o cache;
-      erro vira `DataFailed`.
+      erro vira `StructureFailed`.
 
 ## `ui-egui`
 
@@ -25,12 +25,14 @@
 - [x] Structure: colunas com 🔑 na chave, tipo, nulo, default (identidade/gerada), comentário; restrições com
       FK `→ schema.tabela(colunas)`; botão DDL abre a caixa com o texto e Copiar; view mostra a definição.
 - [x] Index: índices com algoritmo, único, colunas, condição, include, parâmetros, comentário.
+- [x] Falha ao carregar a estrutura mostra o erro com "Tentar de novo" nas sub-abas (sem "Carregando…"
+      eterno); o painel direito em Structure/Index diz "Nenhuma linha selecionada"; ⌘S/⌘Z/⌫ só em Data.
 - [x] Teste `egui_kittest` cobre Structure (coluna, FK, DDL com Copiar) e Index (include).
 
 ## Portão e CI
 
 - [x] `scripts/quality-gate.sh --full` verde (22/10/2026, com `HY_DBPLUS_TEST_PG`).
-- [x] Workflow verde (push do Jean).
+- [ ] Workflow verde (push do Jean).
 
 ## Do Jean
 

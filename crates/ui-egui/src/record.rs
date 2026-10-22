@@ -6,7 +6,7 @@
 
 use hy_dbplus_engine::{Column, Driver, record};
 
-use crate::app::{App, DbKey, PanelMode};
+use crate::app::{App, DbKey, PanelMode, TabView};
 use crate::theme;
 
 /// Valor maior que isto aparece truncado no Form (só leitura) até "mostrar tudo".
@@ -24,6 +24,13 @@ where
         return;
     };
     let Some(tab) = ws.data() else { return };
+    // Em Structure e Index o grid não está na tela: nada de Form editável sobre uma linha invisível.
+    if tab.view != TabView::Data {
+        ui.centered_and_justified(|ui| {
+            ui.label(egui::RichText::new("Nenhuma linha selecionada").color(tokens.text_muted));
+        });
+        return;
+    }
     let Some(rows) = tab.rows.as_ref() else {
         ui.label(egui::RichText::new("Carregando…").color(tokens.text_muted));
         return;

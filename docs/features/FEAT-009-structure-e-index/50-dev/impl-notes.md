@@ -12,8 +12,8 @@ _Atualizado em 22/10/2026._
   (teste com driver falso).
 - **Feito também:** `ui-egui`: sub-abas Data / Structure / Index no rodapé, `structure.rs` (colunas,
   restrições, definição de view, caixa do DDL), `index.rs`; teste kittest.
-- **Em curso:** revisão e commit da UI.
-- **Falta:** verificação do Jean.
+- **Em curso:** commit dos achados do revisor da UI.
+- **Falta:** push, CI e verificação do Jean.
 - **Depende de:** FEAT-008 (aba de tabela).
 - **Para retomar:** esta pasta, BRIEF §3.5 e §3.6, e o `CLAUDE.md`.
 
@@ -114,3 +114,20 @@ _Atualizado em 22/10/2026._
   com definição). Teste `structure_index_e_ddl_de_uma_tabela`: Structure com quatro queries, 🔑, tipo, FK
   apontando; DDL com `CREATE TABLE` e o índice, Copiar e Fechar; Index do cache com include, condição e
   parâmetros; Data de volta com o grid.
+
+### 22/10/2026 — Revisão da UI (`process:reviewer`): dois médios, aplicados
+
+- [x] **Médio:** falha ao carregar a estrutura deixava Structure/Index em "Carregando…" para sempre (o
+  `DataFailed` não dizia de quem era a falha e o "Tentar de novo" de Data recarregava a página, não a
+  estrutura). Engine ganhou `StructureFailed`; a aba guarda `structure_error` à parte e as sub-abas mostram
+  o erro com "Tentar de novo" (`set_view` repede); "Carregando…" só com pedido em voo. Teste com o driver
+  falso falhando e voltando.
+- [x] **Médio:** o painel direito em Structure/Index mostrava o Form editável sobre uma linha invisível; agora
+  diz "Nenhuma linha selecionada", como o brief. Teste.
+- [x] ⌘S, ⌘Z e ⌫ só agem (e só são consumidos) na sub-aba Data. `grid.rs` com altura de linha, cabeçalho e
+  célula compartilhados por Structure e Index. Aceite do workflow volta a aberto. Testes a mais: ↻ zerando
+  a estrutura e Structure de uma view com a definição.
+- [x] ↻ com a aba em Structure/Index pede a estrutura de novo na hora (o teste do ↻ pegou: zerar sem repedir
+  deixava a sub-aba em branco até trocar de sub-aba).
+- [x] Revisão do conserto: doc do `StructureLoaded`; ↻ não duplica o pedido de uma aba que já tinha pedido em
+  voo; teste de ⌘S fora da sub-aba Data (não abre o Commit) e de volta em Data (abre).

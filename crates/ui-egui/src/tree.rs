@@ -56,11 +56,25 @@ where
                         ws.objects.remove(schema);
                         ws.columns.clear();
                         ws.expanded.clear(); // tabela aberta pede as colunas de novo
+                        // A estrutura cacheada sai; a aba que está em Structure/Index pede de novo
+                        // na hora, senão ficaria em branco até trocar de sub-aba.
+                        let mut again = Vec::new();
                         for tab in &mut ws.tabs {
-                            tab.structure = None; // Structure/Index pedem de novo
-                            tab.structure_requested = false;
+                            tab.structure = None;
+                            tab.structure_error = None;
+                            // Pedido já em voo não se repete: a resposta dele chega depois do refresh.
+                            let in_flight = tab.structure_requested;
+                            tab.structure_requested = tab.view != crate::app::TabView::Data;
+                            if tab.structure_requested && !in_flight {
+                                again.push((tab.schema.clone(), tab.table.clone()));
+                            }
                         }
                         ws.loading = true;
+                        for (schema, table) in again {
+                            app.deps
+                                .sessions
+                                .load_structure(&id, &database, &schema, &table);
+                        }
                     }
                     app.deps.sessions.load_schema(&id, &database, schema);
                 }
@@ -242,10 +256,13 @@ mod tests {
     struct FakeDriver {
         queries: Arc<AtomicUsize>,
         batches: Arc<Mutex<Vec<Vec<BatchStatement>>>>,
+        /// Ligado, a query de cabeçalho da estrutura falha (FEAT-009, "Tentar de novo").
+        fail_structure: Arc<std::sync::atomic::AtomicBool>,
     }
     struct FakeConn {
         queries: Arc<AtomicUsize>,
         batches: Arc<Mutex<Vec<Vec<BatchStatement>>>>,
+        fail_structure: Arc<std::sync::atomic::AtomicBool>,
     }
 
     fn row(cells: &[Option<&str>]) -> Vec<Option<String>> {
@@ -316,6 +333,9 @@ mod tests {
                 });
             } else if sql.contains("pg_get_viewdef") {
                 // Cabeçalho da estrutura (FEAT-009): tabela com comentário; a view com definição.
+                if self.fail_structure.load(Ordering::SeqCst) {
+                    return Err(DriverError::Db("permission denied".into()));
+                }
                 if sql.contains("E'v_pedido'") {
                     vec![row(&[
                         Some("v"),
@@ -462,6 +482,7 @@ mod tests {
             Ok(FakeConn {
                 queries: Arc::clone(&self.queries),
                 batches: Arc::clone(&self.batches),
+                fail_structure: Arc::clone(&self.fail_structure),
             })
         }
     }
@@ -1055,6 +1076,17 @@ mod tests {
         harness.step();
         harness.step();
         harness.get_by_label("1 alteração");
+        // Fora da sub-aba Data, ⌘S não abre o Commit (nem é consumido); de volta em Data, abre.
+        harness.get_by_label("Structure").click_accesskit();
+        harness.step();
+        harness.step();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::S);
+        harness.step();
+        harness.step();
+        assert!(harness.query_by_label("1 updates, 0 deletes").is_none());
+        harness.get_by_label("Data").click_accesskit();
+        harness.step();
+        harness.step();
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::S);
         harness.step();
         harness.step();
@@ -1774,6 +1806,7 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let driver = FakeDriver::default();
         let queries = Arc::clone(&driver.queries);
+        let fail_structure = Arc::clone(&driver.fail_structure);
         let mut app = App::with_deps(deps(driver, &rt));
         let c = Connection::new("pg-localhost", Tag::Local, ConnectionConfig::default());
         app.deps.store.upsert(c.clone());
@@ -1837,6 +1870,56 @@ mod tests {
         harness.step();
         harness.step();
         harness.get_by_label("1-3 of 250 rows");
+
+        // Painel direito em Structure não mostra o Form: linha selecionada, mas grid escondido.
+        harness.get_all_by_label("1").next().unwrap().click();
+        harness.step();
+        harness.step();
+        harness.get_by_label("Linha 1");
+        harness.get_by_label("Structure").click_accesskit();
+        harness.step();
+        harness.step();
+        harness.get_by_label("Nenhuma linha selecionada");
+        assert!(harness.query_by_label("Linha 1").is_none());
+
+        // ↻ zera a estrutura; falha ao reler mostra o erro com "Tentar de novo" (sem "Carregando…"),
+        // e o botão pede de novo quando o servidor volta.
+        fail_structure.store(true, Ordering::SeqCst);
+        harness.get_by_label("↻").click();
+        wait_for(&mut harness, "StructureFailed", |app| {
+            app.workspace_of(&id)
+                .is_some_and(|ws| ws.data().is_some_and(|d| d.structure_error.is_some()))
+        });
+        harness.get_by_label_contains("permission denied");
+        assert!(harness.query_by_label("Carregando estrutura…").is_none());
+        fail_structure.store(false, Ordering::SeqCst);
+        harness.get_by_label("Tentar de novo").click();
+        wait_for(&mut harness, "StructureLoaded de novo", |app| {
+            app.workspace_of(&id)
+                .is_some_and(|ws| ws.data().is_some_and(|d| d.structure.is_some()))
+        });
+        harness.get_by_label("🔑 id");
+        assert!(
+            harness
+                .query_by_label_contains("permission denied")
+                .is_none()
+        );
+
+        // View: Structure mostra a definição.
+        harness.get_by_label("◫ v_pedido").click();
+        wait_for(&mut harness, "aba da view", |app| {
+            app.workspace_of(&id).is_some_and(|ws| {
+                ws.data()
+                    .is_some_and(|d| d.table == "v_pedido" && !d.loading)
+            })
+        });
+        harness.get_by_label("Structure").click_accesskit();
+        wait_for(&mut harness, "estrutura da view", |app| {
+            app.workspace_of(&id)
+                .is_some_and(|ws| ws.data().is_some_and(|d| d.structure.is_some()))
+        });
+        harness.get_by_label("Definição");
+        harness.get_by_label_contains("SELECT id, nome FROM public.pedido");
     }
 
     /// `select_row` sem harness: ⇧ estende da âncora (para frente e para trás, ou da própria linha sem

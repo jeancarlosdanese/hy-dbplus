@@ -5,10 +5,9 @@
 use egui_extras::{Column as TableColumn, TableBuilder};
 use hy_dbplus_engine::{ConstraintKind, Driver, TableStructure, table_ddl};
 
-use crate::app::{App, DbKey};
+use crate::app::{App, DbKey, TabView};
+use crate::grid::{ROW_HEIGHT, cell, header};
 use crate::theme;
-
-const ROW_HEIGHT: f32 = 22.0;
 
 /// O centro da aba quando a sub-aba é Structure.
 pub fn show<D>(app: &mut App<D>, ui: &mut egui::Ui, key: &DbKey)
@@ -20,13 +19,21 @@ where
     let Some(tab) = app.workspaces.get(key).and_then(|ws| ws.data()) else {
         return;
     };
-    let (structure, error) = (tab.structure.clone(), tab.error.clone());
+    let (structure, error, requested) = (
+        tab.structure.clone(),
+        tab.structure_error.clone(),
+        tab.structure_requested,
+    );
+    let mut retry = false;
     egui::CentralPanel::default_margins().show(ui, |ui| {
-        if let Some(error) = error {
-            ui.colored_label(theme::error_color(), error);
-        }
         let Some(structure) = structure else {
-            ui.label(egui::RichText::new("Carregando estrutura…").color(tokens.text_muted));
+            structure_status(
+                ui,
+                error.as_deref(),
+                requested,
+                "Carregando estrutura…",
+                &mut retry,
+            );
             return;
         };
         egui::ScrollArea::both().show(ui, |ui| {
@@ -40,19 +47,30 @@ where
             }
         });
     });
+    if retry {
+        app.set_view(key, TabView::Structure);
+    }
 }
 
-fn header(ui: &mut egui::Ui, text: &str, tokens: &theme::Tokens) {
-    ui.label(
-        egui::RichText::new(text)
-            .small()
-            .strong()
-            .color(tokens.text_muted),
-    );
-}
-
-fn cell(ui: &mut egui::Ui, text: &str) {
-    ui.add(egui::Label::new(egui::RichText::new(text).monospace()).selectable(false));
+/// Sem estrutura ainda: o erro com "Tentar de novo", ou "Carregando…" só se há pedido em voo.
+pub fn structure_status(
+    ui: &mut egui::Ui,
+    error: Option<&str>,
+    requested: bool,
+    loading: &str,
+    retry: &mut bool,
+) {
+    let tokens = theme::current(ui.ctx());
+    if let Some(error) = error {
+        ui.horizontal(|ui| {
+            ui.colored_label(theme::error_color(), error);
+            if ui.small_button("Tentar de novo").clicked() {
+                *retry = true;
+            }
+        });
+    } else if requested {
+        ui.label(egui::RichText::new(loading).color(tokens.text_muted));
+    }
 }
 
 fn columns_grid(ui: &mut egui::Ui, structure: &TableStructure, tokens: &theme::Tokens) {

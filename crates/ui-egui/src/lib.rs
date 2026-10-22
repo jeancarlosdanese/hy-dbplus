@@ -7,6 +7,7 @@ mod app;
 mod commit;
 mod connections;
 mod data;
+mod grid;
 mod index;
 mod palette;
 mod rail;

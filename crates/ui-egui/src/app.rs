@@ -219,6 +219,8 @@ pub struct DataTab {
     pub view: TabView,
     pub structure: Option<Arc<TableStructure>>,
     pub structure_requested: bool,
+    /// Erro da última carga da estrutura (separado de `error`, que é da página e dos stats).
+    pub structure_error: Option<String>,
     pub ddl_open: bool,
 }
 
@@ -243,6 +245,7 @@ impl DataTab {
             view: TabView::default(),
             structure: None,
             structure_requested: false,
+            structure_error: None,
             ddl_open: false,
         }
     }
@@ -595,6 +598,21 @@ where
                     if let Some(tab) = self.data_tab_mut(&id, &database, &schema, &table) {
                         tab.structure = Some(Arc::new(structure));
                         tab.structure_requested = false;
+                        tab.structure_error = None;
+                    }
+                }
+                Event::StructureFailed {
+                    database,
+                    schema,
+                    table,
+                    error,
+                    ..
+                } => {
+                    // Só as sub-abas Structure/Index: a página e os stats não mudam, e o "Tentar de
+                    // novo" delas pede a estrutura de novo.
+                    if let Some(tab) = self.data_tab_mut(&id, &database, &schema, &table) {
+                        tab.structure_requested = false;
+                        tab.structure_error = Some(error.to_string());
                     }
                 }
                 Event::DatabaseClosed { database, .. } => {
@@ -877,7 +895,8 @@ where
             .any(|(k, ws)| k.0 == id && ws.tabs.iter().any(DataTab::commit_running))
     }
 
-    /// Troca a sub-aba da aba ativa; Structure e Index pedem a estrutura ao engine uma vez.
+    /// Troca a sub-aba da aba ativa; Structure e Index pedem a estrutura ao engine uma vez (ou de
+    /// novo depois de uma falha, pelo "Tentar de novo").
     pub(crate) fn set_view(&mut self, key: &DbKey, view: TabView) {
         let Some(tab) = self.data_tab(key) else {
             return;
@@ -887,6 +906,7 @@ where
             return;
         }
         tab.structure_requested = true;
+        tab.structure_error = None;
         let (schema, table) = (tab.schema.clone(), tab.table.clone());
         self.deps
             .sessions

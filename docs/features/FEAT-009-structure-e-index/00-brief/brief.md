@@ -38,7 +38,7 @@ editar nome, tipo ou chave fica para depois.
    fora do bloco de índices; os de restrição `UNIQUE` também, porque a restrição já os cria).
 3. **`engine`**: `Sessions::load_structure(id, database, schema, table)` com cache por tabela em
    `Database.structures`; evento `StructureLoaded { connection, database, schema, table, structure }`;
-   falha em `DataFailed`. O ↻ da árvore (`refresh`) esvazia o cache. `ddl` é reexportado para a UI e a CLI.
+   falha em `StructureFailed` (separado de `DataFailed`: as sub-abas têm "Tentar de novo" próprio). O ↻ da árvore (`refresh`) esvazia o cache. `ddl` é reexportado para a UI e a CLI.
 4. **`ui-egui`**: `DataTab` ganha `view: TabView { Data, Structure, Index }` e `structure: Option<Arc<TableStructure>>`;
    os botões Structure e Index do rodapé passam a selecionar a sub-aba (Data continua o padrão). Ao entrar em
    Structure ou Index pela primeira vez, pede `load_structure`.

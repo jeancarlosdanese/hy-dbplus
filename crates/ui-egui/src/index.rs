@@ -4,10 +4,10 @@
 use egui_extras::{Column as TableColumn, TableBuilder};
 use hy_dbplus_engine::Driver;
 
-use crate::app::{App, DbKey};
+use crate::app::{App, DbKey, TabView};
+use crate::grid::{ROW_HEIGHT, cell, header};
+use crate::structure::structure_status;
 use crate::theme;
-
-const ROW_HEIGHT: f32 = 22.0;
 
 pub fn show<D>(app: &mut App<D>, ui: &mut egui::Ui, key: &DbKey)
 where
@@ -18,22 +18,27 @@ where
     let Some(tab) = app.workspaces.get(key).and_then(|ws| ws.data()) else {
         return;
     };
-    let (structure, error) = (tab.structure.clone(), tab.error.clone());
+    let (structure, error, requested) = (
+        tab.structure.clone(),
+        tab.structure_error.clone(),
+        tab.structure_requested,
+    );
+    let mut retry = false;
     egui::CentralPanel::default_margins().show(ui, |ui| {
-        if let Some(error) = error {
-            ui.colored_label(theme::error_color(), error);
-        }
         let Some(structure) = structure else {
-            ui.label(egui::RichText::new("Carregando índices…").color(tokens.text_muted));
+            structure_status(
+                ui,
+                error.as_deref(),
+                requested,
+                "Carregando índices…",
+                &mut retry,
+            );
             return;
         };
         if structure.indexes.is_empty() {
             ui.label(egui::RichText::new("Nenhum índice.").color(tokens.text_muted));
             return;
         }
-        let cell = |ui: &mut egui::Ui, text: &str| {
-            ui.add(egui::Label::new(egui::RichText::new(text).monospace()).selectable(false));
-        };
         TableBuilder::new(ui)
             .striped(true)
             .resizable(true)
@@ -57,14 +62,7 @@ where
                     "parâmetros",
                     "comentário",
                 ] {
-                    row.col(|ui| {
-                        ui.label(
-                            egui::RichText::new(name)
-                                .small()
-                                .strong()
-                                .color(tokens.text_muted),
-                        );
-                    });
+                    row.col(|ui| header(ui, name, &tokens));
                 }
             })
             .body(|body| {
@@ -83,4 +81,7 @@ where
                 });
             });
     });
+    if retry {
+        app.set_view(key, TabView::Index);
+    }
 }

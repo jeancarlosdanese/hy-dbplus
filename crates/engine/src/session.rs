@@ -95,13 +95,22 @@ pub enum Event {
         error: DriverError,
     },
     /// A estrutura de uma tabela (colunas, restrições, índices, view) para Structure, Index e DDL
-    /// (FEAT-009); falha vai em `DataFailed`.
+    /// (FEAT-009); falha vai em `StructureFailed`.
     StructureLoaded {
         connection: ConnectionId,
         database: String,
         schema: String,
         table: String,
         structure: TableStructure,
+    },
+    /// A estrutura não carregou (tabela sumiu, permissão): separado de `DataFailed` porque a aba
+    /// Data e as sub-abas Structure/Index têm "Tentar de novo" próprios.
+    StructureFailed {
+        connection: ConnectionId,
+        database: String,
+        schema: String,
+        table: String,
+        error: DriverError,
     },
     /// Um banco da conexão foi fechado por `close_database` (a sessão e os outros bancos seguem).
     DatabaseClosed {
@@ -165,6 +174,7 @@ impl Event {
             | Event::PageLoaded { connection, .. }
             | Event::DataFailed { connection, .. }
             | Event::StructureLoaded { connection, .. }
+            | Event::StructureFailed { connection, .. }
             | Event::DatabaseClosed { connection, .. }
             | Event::ChangesApplied { connection, .. }
             | Event::ChangesFailed { connection, .. } => connection,
@@ -593,8 +603,8 @@ where
     }
 
     /// Colunas, restrições, índices e definição de view de uma tabela: do cache na hora, ou as
-    /// queries do catálogo e `StructureLoaded`; falha em `DataFailed`. O ↻ (`refresh`) esvazia o
-    /// cache. Mesma pré-condição de `load_schema`.
+    /// queries do catálogo e `StructureLoaded`; falha em `StructureFailed`. O ↻ (`refresh`)
+    /// esvazia o cache. Mesma pré-condição de `load_schema`.
     pub fn load_structure(&self, id: &str, database: &str, schema: &str, table: &str) {
         let (generation, conn) = {
             let Ok(map) = self.slots.lock() else { return };
@@ -645,15 +655,15 @@ where
                         structure,
                     }
                 }),
-                Err(error) => {
-                    commit_if_current(&slots, &events, &id, generation, |_| Event::DataFailed {
+                Err(error) => commit_if_current(&slots, &events, &id, generation, |_| {
+                    Event::StructureFailed {
                         connection: id.clone(),
                         database: database.clone(),
                         schema: schema.clone(),
                         table: table.clone(),
                         error,
-                    })
-                }
+                    }
+                }),
             };
             if sent {
                 repaint();
@@ -1828,6 +1838,6 @@ mod tests {
         );
         h.sessions
             .load_structure(&c.id, "loja", "public", "quebrada");
-        assert!(matches!(next(&h.rx), Event::DataFailed { .. }));
+        assert!(matches!(next(&h.rx), Event::StructureFailed { .. }));
     }
 }
