@@ -4,12 +4,13 @@
 
 ## `driver` e `catalog`
 
-- [ ] `query_text("select 1 as a, null as b")` devolve colunas `a`, `b` e a linha `["1", None]` (teste com
+- [x] `query_text("select 1 as a, null as b")` devolve colunas `a`, `b` e a linha `["1", None]` (teste com
       servidor); erro de SQL vira `DriverError::Db` com a mensagem do servidor, sem a senha.
-- [ ] `catalog::schemas` lista os schemas sem `pg_*` nem `information_schema`; `tables` separa tabela, view e
+- [x] `catalog::schemas` lista os schemas sem `pg_*` nem `information_schema` (sem `LIKE`: independe de
+      `standard_conforming_strings`); `tables` separa tabela, view e
       view materializada; `columns` traz tipo legível (`format_type`), nulabilidade, default, posição e PK;
       `functions` traz nome e assinatura (teste com servidor, num schema criado e apagado pelo teste).
-- [ ] Nenhum carregador depende de `egui`, `tokio` ou do engine (`cargo xtask layers`).
+- [x] Nenhum carregador depende de `egui`, `tokio` ou do engine (`cargo xtask layers`; `tokio` só como dev-dep).
 
 ## `engine`
 

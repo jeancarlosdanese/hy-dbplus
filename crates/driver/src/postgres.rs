@@ -16,7 +16,11 @@ use tokio_postgres::tls::{MakeTlsConnect, TlsConnect};
 use tokio_postgres::{Client, NoTls};
 use tokio_postgres_rustls::MakeRustlsConnect;
 
-use crate::{Connection, ConnectionConfig, DatabaseInfo, Driver, DriverError, Secret, TlsMode};
+use tokio_postgres::SimpleQueryMessage;
+
+use crate::{
+    Connection, ConnectionConfig, DatabaseInfo, Driver, DriverError, Secret, TextRows, TlsMode,
+};
 
 /// Tempo máximo padrão para abrir a conexão: DNS, TCP, TLS e autenticação, tudo junto (o
 /// `connect_timeout` do tokio-postgres cobre só o TCP, por isso o `tokio::time::timeout` em volta).
@@ -314,6 +318,15 @@ impl Connection for PostgresConnection {
         row.try_get::<_, String>(0).map_err(|e| db_error(&e))
     }
 
+    async fn query_text(&self, sql: &str) -> Result<TextRows, DriverError> {
+        let messages = self
+            .client
+            .simple_query(sql)
+            .await
+            .map_err(|e| db_error(&e))?;
+        text_rows(messages)
+    }
+
     async fn list_databases(&self) -> Result<Vec<DatabaseInfo>, DriverError> {
         let rows = self
             .client
@@ -328,6 +341,37 @@ impl Connection for PostgresConnection {
             })
             .collect()
     }
+}
+
+/// O primeiro conjunto de linhas das mensagens do protocolo simples: do primeiro
+/// `RowDescription` até o `CommandComplete` dele, mesmo sem nenhuma `Row` no meio (um `SELECT`
+/// que não devolve linha ainda é o primeiro conjunto). Statements sem resultado antes dele
+/// (`SET`, `CREATE`) são pulados; os depois já rodaram no servidor, só não são relatados.
+fn text_rows(messages: Vec<SimpleQueryMessage>) -> Result<TextRows, DriverError> {
+    let mut out = TextRows::default();
+    let mut seen_description = false;
+    for message in messages {
+        match message {
+            SimpleQueryMessage::RowDescription(columns) if !seen_description => {
+                seen_description = true;
+                out.columns = columns.iter().map(|c| c.name().to_owned()).collect();
+            }
+            SimpleQueryMessage::Row(row) => {
+                if !seen_description {
+                    seen_description = true;
+                    out.columns = row.columns().iter().map(|c| c.name().to_owned()).collect();
+                }
+                let mut cells = Vec::with_capacity(out.columns.len());
+                for i in 0..out.columns.len() {
+                    cells.push(row.try_get(i).map_err(|e| db_error(&e))?.map(str::to_owned));
+                }
+                out.rows.push(cells);
+            }
+            SimpleQueryMessage::CommandComplete(_) if seen_description => break,
+            _ => {}
+        }
+    }
+    Ok(out)
 }
 
 /// Erro de uma query já conectada: sem host nem usuário para citar.
@@ -474,6 +518,7 @@ mod tests {
     mod with_server {
         use super::*;
 
+        // O teste do catálogo repete este parse: a URL de teste é uma só; mudar lá e aqui.
         fn config_from_env() -> Option<(ConnectionConfig, Secret)> {
             let url = std::env::var_os("HY_DBPLUS_TEST_PG")?;
             let pg: tokio_postgres::Config = url
@@ -518,6 +563,57 @@ mod tests {
                 dbs.iter().all(|d| !d.name.starts_with("template")),
                 "{dbs:?}"
             );
+        }
+
+        #[tokio::test]
+        async fn query_text_devolve_colunas_e_celulas_como_texto() {
+            let Some((cfg, secret)) = config_from_env() else {
+                return;
+            };
+            let conn = PostgresDriver::default()
+                .connect(&cfg, &secret)
+                .await
+                .unwrap();
+            let rows = conn
+                .query_text("select 1 as a, null as b, 'x' as c; select 2")
+                .await
+                .unwrap();
+            assert_eq!(rows.columns, ["a", "b", "c"]);
+            assert_eq!(
+                rows.rows,
+                vec![vec![Some("1".into()), None, Some("x".into())]]
+            );
+            assert_eq!(rows.cell(0, 0), Some("1"));
+            assert_eq!(rows.cell(0, 1), None);
+            assert_eq!(rows.cell(1, 0), None);
+            let err = conn
+                .query_text("select * from tabela_que_nao_existe")
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(err, DriverError::Db(ref m) if m.contains("tabela_que_nao_existe")),
+                "{err:?}"
+            );
+            // Statement sem linhas: colunas e linhas vazias, sem erro.
+            let none = conn
+                .query_text("set application_name = 'hy-dbplus-test'")
+                .await
+                .unwrap();
+            assert!(none.columns.is_empty() && none.rows.is_empty());
+            // Antes: SELECT sem linhas era pulado e o segundo statement aparecia no lugar dele.
+            let empty = conn
+                .query_text("select 1 as a where false; select 2 as b")
+                .await
+                .unwrap();
+            assert_eq!(empty.columns, ["a"]);
+            assert!(empty.rows.is_empty(), "{empty:?}");
+            // SET antes do SELECT é pulado; o SELECT é o primeiro conjunto.
+            let after_set = conn
+                .query_text("set application_name = 'x'; select 3 as c")
+                .await
+                .unwrap();
+            assert_eq!(after_set.columns, ["c"]);
+            assert_eq!(after_set.cell(0, 0), Some("3"));
         }
 
         #[tokio::test]

@@ -13,3 +13,8 @@ workspace = true
 
 [dependencies]
 hy-dbplus-driver = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros"] }
+# Só o parse da URL de HY_DBPLUS_TEST_PG nos testes com servidor.
+tokio-postgres = { workspace = true }

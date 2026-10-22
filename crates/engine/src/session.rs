@@ -284,6 +284,9 @@ mod tests {
                 },
             ])
         }
+        async fn query_text(&self, _sql: &str) -> Result<hy_dbplus_driver::TextRows, DriverError> {
+            Ok(hy_dbplus_driver::TextRows::default())
+        }
     }
 
     impl Driver for FakeDriver {

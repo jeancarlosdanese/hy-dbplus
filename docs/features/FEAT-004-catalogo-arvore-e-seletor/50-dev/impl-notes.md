@@ -6,11 +6,10 @@
 
 _Atualizado em 21/10/2026._
 
-- **Feito:** documentação.
-- **Em curso:** no scratchpad (entra no repositório depois do último commit da FEAT-003): `driver::query_text`,
-  `catalog` com os quatro carregadores e teste contra o servidor local, `engine` com `select_database`,
-  `load_schema`, `load_columns`, `refresh` e os eventos novos (18 testes com driver falso).
-- **Falta:** trazer tudo do scratchpad em três commits (driver + catalog; engine; ui); verificação do Jean.
+- **Feito:** documentação (`a418d93`); `driver::query_text` e `catalog` no repositório (49 testes no workspace
+  com o servidor local; portão `--full` verde).
+- **Em curso:** nada.
+- **Falta:** trazer do scratchpad o `engine` e a `ui-egui` (dois commits); verificação do Jean.
 - **Depende de:** FEAT-003 concluída (M1).
 - **Para retomar:** esta pasta, o `CLAUDE.md` da raiz e o BRIEF §3.2, §3.3 e §5.
 
@@ -42,7 +41,7 @@ _Atualizado em 21/10/2026._
   `Db`, statement sem linhas).
 - [x] `catalog`: `model.rs` (`Schema`, `Table`/`TableKind` com view, materializada e estrangeira, `Column` com
   `format_type`, nulabilidade, default, posição e PK, `Function` com `signature()`), `postgres.rs` com um
-  `literal()` que dobra aspas e quatro queries sobre `pg_catalog`. Teste com servidor cria o schema
+  `literal()` (corrigido na rodada do revisor, abaixo) e quatro queries sobre `pg_catalog`. Teste com servidor cria o schema
   `hy_dbplus_test_<pid>_<nanos>` com tabela (PK, varchar(80), numeric(10,2) default 0), view e função,
   confere tudo e apaga com `CASCADE`.
 - [x] `engine`: `Slot` guarda `config`, `secret` (zerada no `disconnect`) e `databases: HashMap<nome,
@@ -64,3 +63,17 @@ _Atualizado em 21/10/2026._
   por ponteiro do kittest não ativa item dentro do popup do ComboBox; `click_accesskit()` (ação do AccessKit)
   ativa. Dois nós com o mesmo texto fazem `get_by_label_contains` falhar: usar o rótulo exato.
 - [x] `egui_kittest` 0.36 como dev-dependency da `ui-egui` com `default-features = false`.
+
+### 21/10/2026 — `driver` e `catalog` no repositório
+
+- [x] Revisor (dois médios, cinco baixos, aplicados antes do commit): o escape só por aspas dobradas falhava
+  com `standard_conforming_strings = off` (um nome de schema com `\'` fecharia o literal e o resto rodaria
+  como segundo statement, com as credenciais do usuário); `literal()` agora é `E'...'` com `\` e `'`
+  dobrados, válido nos dois modos, e a lista de schemas usa `left(nspname, 3) <> 'pg_'` em vez de `LIKE`
+  com escape. `text_rows` devolvia o segundo statement quando o primeiro `SELECT` tinha zero linhas; agora
+  para no primeiro `CommandComplete` depois do primeiro `RowDescription` (teste: `select 1 where false;
+  select 2` devolve a coluna `a` e nenhuma linha; `set ...; select 3` devolve o select). O teste do
+  catálogo lê tudo, apaga o schema e só então confere, para uma asserção falha não deixar schema órfão; o
+  setup ganhou view materializada e procedure. `thiserror` saiu do `catalog` (não usava). BRIEF §5 diz que o
+  cache do catálogo mora no engine. O parse da URL de teste está duplicado no driver e no catálogo, anotado
+  nos dois.

@@ -23,6 +23,21 @@ pub struct DatabaseInfo {
     pub name: String,
 }
 
+/// Resultado de uma query como texto: o que o protocolo simples do PostgreSQL devolve, sem
+/// conversão por tipo. Serve ao catálogo (`pg_catalog` já é texto) e, até o M3 pedir mais, ao grid.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TextRows {
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<Option<String>>>,
+}
+
+impl TextRows {
+    /// A célula `(linha, coluna)`, `None` se é NULL ou está fora do resultado.
+    pub fn cell(&self, row: usize, col: usize) -> Option<&str> {
+        self.rows.get(row)?.get(col)?.as_deref()
+    }
+}
+
 /// Uma conexão aberta com o servidor.
 pub trait Connection: Send + Sync {
     /// Confirma que a conexão responde.
@@ -33,6 +48,10 @@ pub trait Connection: Send + Sync {
     /// Bancos do servidor que aceitam conexão (sem templates), em ordem alfabética.
     fn list_databases(&self)
     -> impl Future<Output = Result<Vec<DatabaseInfo>, DriverError>> + Send;
+    /// Um statement pelo protocolo simples (sem prepared statement nem parâmetros), com o
+    /// resultado em texto. Com vários statements no texto, todos rodam no servidor; o relato é o
+    /// do primeiro que devolve um conjunto de linhas (mesmo vazio).
+    fn query_text(&self, sql: &str) -> impl Future<Output = Result<TextRows, DriverError>> + Send;
 }
 
 /// Abre conexões para um tipo de banco. Só PostgreSQL no MVP.

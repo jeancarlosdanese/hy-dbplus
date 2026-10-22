@@ -1,4 +1,4 @@
-<!-- FEAT_EM_ANDAMENTO — docs criados em 21/10/2026; próximo: driver query_text e catalog -->
+<!-- FEAT_EM_ANDAMENTO — docs, driver query_text e catalog em 21/10/2026; próximo: engine -->
 <!-- PRIO_ALTA -->
 # @file: docs/features/FEAT-004-catalogo-arvore-e-seletor/context.index.md
 
