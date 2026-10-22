@@ -1772,14 +1772,16 @@ mod tests {
         h.sessions
             .load_page(&c.id, "loja", "public", "pedido", Page::default());
         h.sessions.close_database(&c.id, "loja");
-        assert!(matches!(next(&h.rx), Event::DatabaseClosed { .. }));
-        // A página em voo chega (colunas + página), fora de ordem com o fechamento.
+        // Três eventos em qualquer ordem: o fechamento é síncrono, mas a página em voo (colunas +
+        // página) pode chegar antes dele sob carga (teste intermitente no portão, 22/10/2026).
         let mut seen = Vec::new();
-        for _ in 0..2 {
+        for _ in 0..3 {
             seen.push(next(&h.rx));
         }
         assert!(
-            seen.iter().any(|e| matches!(e, Event::PageLoaded { .. })),
+            seen.iter()
+                .any(|e| matches!(e, Event::DatabaseClosed { .. }))
+                && seen.iter().any(|e| matches!(e, Event::PageLoaded { .. })),
             "{seen:?}"
         );
         let before = h.queries.load(Ordering::SeqCst);
