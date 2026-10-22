@@ -1,4 +1,4 @@
-<!-- FEAT_EM_ANDAMENTO — docs e driver em 21/10/2026; próximo: engine (store, keyring, session) -->
+<!-- FEAT_EM_ANDAMENTO — docs, driver e engine em 21/10/2026; próximo: ui-egui e app -->
 <!-- PRIO_ALTA -->
 # @file: docs/features/FEAT-003-driver-postgres-e-conexoes/context.index.md
 
@@ -43,7 +43,7 @@ crates/driver/src/lib.rs          traits Driver (connect) e Connection (ping, se
 crates/driver/src/postgres.rs     implementação tokio-postgres + rustls
 crates/engine/src/store.rs        ConnectionStore (TOML) e Connection (id, nome, tag, host, porta, usuário, banco)
 crates/engine/src/secrets.rs      trait SecretStore; keyring e memória
-crates/engine/src/session.rs      Session, Event, canal para a UI
+crates/engine/src/session.rs      Sessions (genérico no driver), Session, Event, canal para a UI; PgSessions no lib.rs
 crates/ui-egui/src/connections.rs lista, busca, formulário, conectar
 crates/ui-egui/src/workspace.rs   barra superior do ambiente e lista de bancos (tela 3.2)
 apps/hy-dbplus/src/main.rs        runtime tokio entregue ao engine

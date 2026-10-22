@@ -15,11 +15,11 @@
 
 ## `engine`
 
-- [ ] `ConnectionStore::load` lê `connections.toml` (ausente = lista vazia); `save` escreve atômico (arquivo
-      temporário + rename) e sem senha (teste procura `senha` e o valor no arquivo).
-- [ ] Senha gravada e lida pelo `SecretStore` por id da conexão; remover a conexão remove a senha (teste com a
-      implementação em memória).
-- [ ] `Session::connect` emite `Connecting` e depois `Connected { server_version, databases }` ou `Failed`,
+- [x] `ConnectionStore::load` lê `connections.toml` (ausente = lista vazia); `save` escreve atômico (arquivo
+      temporário + rename) e sem senha (teste procura `password`/`senha` no arquivo; 0600 no Unix).
+- [x] Senha gravada e lida pelo `SecretStore` por id da conexão; remover a conexão remove a senha (teste com a
+      implementação em memória; a remoção junto com a conexão é feita pela UI, no passo seguinte).
+- [x] `Sessions::connect` emite `Connecting` e depois `Connected { server_version, databases }` ou `Failed`,
       sem bloquear o chamador (teste com `Driver` falso e runtime `tokio` de teste).
 
 ## `ui-egui` e app

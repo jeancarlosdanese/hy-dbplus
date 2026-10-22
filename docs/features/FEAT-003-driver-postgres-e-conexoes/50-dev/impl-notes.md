@@ -6,10 +6,10 @@
 
 _Atualizado em 21/10/2026._
 
-- **Feito:** documentação; `driver` PostgreSQL (config, erro, trait, implementação, 11 testes, 2 deles contra o
-  servidor local); portão `--full` verde com 369 pacotes no lock.
+- **Feito:** documentação; `driver` PostgreSQL (`81419bf`); `engine` com `ConnectionStore`, `SecretStore`
+  (Keychain e memória) e `Sessions` com eventos (14 testes); portão `--full` verde com 428 pacotes no lock.
 - **Em curso:** nada.
-- **Falta:** `engine`; `ui-egui` e app; verificação do Jean.
+- **Falta:** `ui-egui` e app; verificação do Jean.
 - **Depende de:** FEAT-002 concluída (M0); PostgreSQL local `pg-localhost` para os testes com variável.
 - **Para retomar:** esta pasta, o `CLAUDE.md` da raiz e o BRIEF §3.1, §3.2, §5 e §6.
 
@@ -82,4 +82,35 @@ _Atualizado em 21/10/2026._
   (`server_version` é para exibir; `list_databases` são os bancos que aceitam conexão); BRIEF §5 descreve
   `Driver` e `Connection`. Identificadores de teste em inglês (`with_server`, `blank_host`, `no_user`).
   Pendência para o M3: a tarefa de rede engole o erro da conexão (`let _ = connection.await`); guardar o
-  último erro para a UI dizer por que caiu.
+  último erro para a UI dizer por que caiu. Commit `81419bf`.
+
+### 21/10/2026 — `engine`
+
+- [x] `store.rs`: `Connection` (id UUID v4, nome, `Tag` local/dev/staging/prod, `ConnectionConfig` achatado no
+  TOML), `ConnectionStore` com `default_path` (`$XDG_CONFIG_HOME` ou `~/.config`, sem crate `dirs`), `load`
+  (ausente = vazio), `upsert` mantendo a posição, `remove`, `save` atômico (temporário + `rename`, arquivo 0600
+  no Unix). Testes: ida e volta, sem senha no arquivo e com o que a lista mostra, permissões, parse inválido com
+  o caminho no erro.
+- [x] `secrets.rs`: trait `SecretStore` (`set`, `get` → `Option`, `remove` idempotente); `KeyringSecrets`
+  (serviço `hy-dbplus`, conta = id; `NoEntry` vira `None`/`Ok`) e `MemorySecrets` (teste; o app do passo 4 a
+  usa com `HY_DBPLUS_SECRETS=memory`). O Keychain real não entra em teste.
+- [x] `session.rs`: `Event` (`Connecting`, `Connected { server_version, databases }`, `Failed { error }`,
+  `Disconnected`), `Session<C>` (`Arc` da conexão do driver; `Clone`/`Debug` à mão porque a conexão não é
+  nenhum dos dois), `Sessions<D>` genérico no driver com `Handle` do tokio, `std::sync::mpsc` para a UI e
+  callback `repaint`. `connect` emite `Connecting` na hora e nunca bloqueia (teste mede < 15 ms com um driver
+  falso que dorme 20 ms); `Failed` não carrega a senha; `disconnect` só avisa se estava aberta.
+- [x] `PgSessions = Sessions<PostgresDriver>` e re-exports do driver, para a UI e os apps não dependerem do
+  `driver` direto.
+- [x] Dependências: `keyring` 4 (features padrão `v1`) e `uuid` 1 com `v4`. Lock de 369 para 428 pacotes;
+  cargo-deny verde.
+- [x] Revisor (um médio, seis baixos, aplicados antes do commit): o estado das sessões divergia dos eventos
+  (desconectar durante "conectando" deixava a sessão abrir depois; reconectar com senha errada mantinha a
+  antiga viva). Agora cada conexão tem uma geração: `connect` e `disconnect` a incrementam, a tentativa em
+  voo só vira sessão se a geração for a dela, e reconectar derruba a antiga com `Disconnected` antes. Dois
+  testes novos provados contra a implementação antiga (falhavam). `save` apaga `.tmp` de falha anterior e o
+  da falha atual, usa `create_new` e diretório 0700; `load` recusa id duplicado; `path_from(xdg, home)` testado
+  com XDG definido, vazio e ausente; `MemorySecrets` com lock envenenado diz "armazenamento em memória", não
+  "chaveiro"; lock envenenado na task emite `Failed` em vez de `Connected`. Observação do revisor para o
+  passo 4: o `Runtime` do app precisa viver mais que `Sessions`, e o `KeyringSecrets` (zbus no Linux) é
+  síncrono, chamado da thread da UI, nunca de dentro de um worker do tokio.
+  Resíduo da 2ª rodada fechado: o `Failed` de uma tentativa superada também confere a geração (teste).

@@ -43,6 +43,10 @@ rustls-native-certs = "0.8"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 toml = "1"
+# keyring 4: senha no Keychain (macOS), Credential Manager (Windows), Secret Service (Linux).
+# uuid v4: id da conexão, conta no chaveiro (getrandom já no grafo via ring).
+keyring = "4"
+uuid = { version = "1", features = ["v4"] }
 
 # Never panic (CLAUDE.md): toda resposta do banco, arquivo e tecla é entrada não
 # confiável. Em teste o clippy.toml libera unwrap, expect, panic e indexação.
