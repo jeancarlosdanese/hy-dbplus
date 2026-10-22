@@ -16,7 +16,7 @@ where
     let Some(dialog) = app
         .workspaces
         .get(key)
-        .and_then(|ws| ws.data.as_ref())
+        .and_then(|ws| ws.data())
         .and_then(|tab| tab.commit.clone())
     else {
         return;

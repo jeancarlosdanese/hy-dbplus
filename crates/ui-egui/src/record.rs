@@ -23,7 +23,7 @@ where
     let Some(ws) = app.workspaces.get(key) else {
         return;
     };
-    let Some(tab) = ws.data.as_ref() else { return };
+    let Some(tab) = ws.data() else { return };
     let Some(rows) = tab.rows.as_ref() else {
         ui.label(egui::RichText::new("Carregando…").color(tokens.text_muted));
         return;
@@ -225,7 +225,7 @@ where
     }
     app.panel_mode = mode;
     if let Some(field) = toggled_field
-        && let Some(tab) = app.workspaces.get_mut(key).and_then(|ws| ws.data.as_mut())
+        && let Some(tab) = app.workspaces.get_mut(key).and_then(|ws| ws.data_mut())
         && !tab.expanded_fields.remove(&field)
     {
         tab.expanded_fields.insert(field);

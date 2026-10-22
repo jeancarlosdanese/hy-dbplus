@@ -175,3 +175,9 @@ _Atualizado em 22/10/2026._
 - [x] Teste intermitente sob a carga do portão completo: o helper `open` do teste aceitava a aba anterior (já
   carregada) como condição satisfeita antes de o clique abrir a nova. Agora espera a tabela nova com página,
   stats e colunas.
+
+### 22/10/2026 — Superado pela FEAT-008
+
+- A trava de "trocar de tabela" e a da paleta ⌘K saíram: com abas por tabela e vários bancos, a pendência
+  vive na aba e abrir outra tabela ou outro banco não a toca. O ↻ da árvore segue travado enquanto alguma
+  aba do banco tem pendência.

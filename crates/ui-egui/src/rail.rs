@@ -4,7 +4,7 @@
 
 use hy_dbplus_engine::Driver;
 
-use crate::app::{App, DbKey};
+use crate::app::{App, CloseTarget, DbKey};
 use crate::theme;
 
 pub const WIDTH: f32 = 84.0;
@@ -34,6 +34,7 @@ where
                         .map(|c| c.name.clone())
                         .unwrap_or_default();
                     let active = app.active.as_ref() == Some(&key);
+                    let running = app.commit_running(&key);
                     let color = tag.map(theme::tag_color).unwrap_or(tokens.border);
                     let fill = if active {
                         tokens.accent_soft
@@ -74,8 +75,9 @@ where
                                 .selectable(false),
                             );
                             if ui
-                                .small_button("×")
+                                .add_enabled(!running, egui::Button::new("×").small())
                                 .on_hover_text("Fechar este banco")
+                                .on_disabled_hover_text("Aguarde o Commit terminar")
                                 .clicked()
                             {
                                 close = Some(key.clone());
@@ -96,30 +98,44 @@ where
         app.activate(&key);
     }
     if let Some(key) = close {
-        if app.has_pending_changes(&key) {
-            app.confirm_close = Some(key);
-        } else {
-            app.close_database(&key);
-        }
+        app.request_close_database(&key);
     }
 }
 
-/// Confirmação para fechar um banco com edição pendente.
+/// Confirmação para fechar banco, aba ou conexão com edição pendente.
 pub fn confirm<D>(app: &mut App<D>, ctx: &egui::Context)
 where
     D: Driver + 'static,
     D::Conn: 'static,
 {
-    let Some(key) = app.confirm_close.clone() else {
+    let Some(target) = app.confirm_close.clone() else {
         return;
     };
+    let (title, what) = match &target {
+        CloseTarget::Database(key) => ("Fechar o banco?", format!("O banco {}", key.1)),
+        CloseTarget::Tab(key, index) => (
+            "Fechar a aba?",
+            app.workspaces
+                .get(key)
+                .and_then(|ws| ws.tabs.get(*index))
+                .map(|t| format!("A tabela {}.{}", t.schema, t.table))
+                .unwrap_or_else(|| "A aba".to_owned()),
+        ),
+        CloseTarget::Connection(id) => (
+            "Desconectar?",
+            app.deps
+                .store
+                .get(id)
+                .map(|c| format!("A conexão {}", c.name))
+                .unwrap_or_else(|| "A conexão".to_owned()),
+        ),
+    };
     let mut decision: Option<bool> = None;
-    let response = egui::Modal::new(egui::Id::new("confirm-close-db")).show(ctx, |ui| {
+    let response = egui::Modal::new(egui::Id::new("confirm-close")).show(ctx, |ui| {
         ui.set_width(380.0);
-        ui.heading("Fechar o banco?");
+        ui.heading(title);
         ui.label(format!(
-            "{} tem alterações pendentes. Fechar descarta tudo sem gravar.",
-            key.1
+            "{what} tem alterações pendentes. Fechar descarta tudo sem gravar."
         ));
         ui.separator();
         ui.horizontal(|ui| {
@@ -137,10 +153,7 @@ where
         decision = Some(false);
     }
     match decision {
-        Some(true) => {
-            app.confirm_close = None;
-            app.close_database(&key);
-        }
+        Some(true) => app.confirm_close_now(),
         Some(false) => app.confirm_close = None,
         None => {}
     }

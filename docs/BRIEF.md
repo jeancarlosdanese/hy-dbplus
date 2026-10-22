@@ -65,6 +65,9 @@ num banco de desenvolvimento local. Servem como especificação visual e funcion
 - Edição (FEAT-007, só tabela com chave primária): duplo clique na célula ou campo do Form deixa a mudança
   pendente; ⌫ marca a seleção para apagar; **Commit** (⌘S) mostra o SQL exato e roda tudo numa transação;
   **Descartar** (⌘Z) limpa. Com pendência, ordenar, paginar e recarregar ficam travados.
+- Vários bancos e abas (FEAT-008): faixa à esquerda com os bancos abertos (conexão + banco, cor do
+  ambiente; ⌘K abre mais um; × fecha); cada tabela aberta é uma aba do banco, com página, seleção e
+  pendência próprias (× e ⌘W fecham; fechar aba, banco ou conexão com pendência pede confirmação).
 
 ### 3.5 Aba Structure
 - Campos editáveis **Name** e **Primary**.

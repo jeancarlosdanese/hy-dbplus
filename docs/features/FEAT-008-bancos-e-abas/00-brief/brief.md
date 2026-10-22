@@ -39,9 +39,11 @@ abrir outra aba.
    pendência pede confirmação (Descartar / Cancelar). Clicar numa tabela da árvore abre uma aba nova ou foca
    a já aberta (uma aba por tabela). A árvore destaca a tabela da aba ativa. Sem aba aberta, o convite
    "Escolha uma tabela na árvore." como hoje.
-5. **Edição por aba** (FEAT-007): pendência, caixa de Commit e travas valem só para a aba; trocar de aba,
-   abrir outra tabela ou trocar de banco na faixa não mexe nela. Fechar o banco ou desconectar com pendência
-   pede confirmação. Sai a trava de "trocar de tabela" na árvore e a da paleta ⌘K.
+5. **Edição por aba** (FEAT-007): pendência, caixa de Commit e as travas de ordenar e paginar valem só para
+   a aba; trocar de aba, abrir outra tabela ou trocar de banco na faixa não mexe nela. O ↻ do banco trava
+   enquanto alguma aba tem pendência (esvaziaria as colunas e a chave primária dela). Fechar aba, banco ou
+   conexão com pendência pede confirmação; com o Commit rodando, nada fecha até o resultado chegar. Sai a
+   trava de "trocar de tabela" na árvore e a da paleta ⌘K.
 6. **Engine**: `Sessions::close_database(id, database)` fecha a conexão daquele banco e solta os caches;
    `Disconnected` continua fechando tudo. Evento `DatabaseClosed { connection, database }`.
 7. **Testes**: kittest abre dois bancos pelo ⌘K (faixa com dois itens, árvore do segundo), volta ao

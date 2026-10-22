@@ -1,4 +1,4 @@
-<!-- FEAT_EM_ANDAMENTO — docs criados em 22/10/2026; próximo: engine::close_database -->
+<!-- FEAT_EM_ANDAMENTO — implementada em 22/10/2026; falta push, CI e conferência do Jean -->
 <!-- PRIO_ALTA -->
 # @file: docs/features/FEAT-008-bancos-e-abas/context.index.md
 
@@ -32,7 +32,7 @@ fecha aba ou banco, com confirmação se houver pendência. Engine só ganha `cl
 4. docs/features/FEAT-007-edicao-em-lote/ → a edição que passa a viver por aba
 ```
 
-## Onde está o quê (quando existir)
+## Onde está o quê
 
 ```
 crates/engine/src/session.rs      close_database, DatabaseClosed

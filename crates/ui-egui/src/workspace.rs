@@ -6,7 +6,7 @@
 use hy_dbplus_engine::Driver;
 
 use crate::app::{App, Status, View};
-use crate::{commit, data, palette, rail, record, theme, tree};
+use crate::{commit, data, palette, rail, record, tabs, theme, tree};
 
 pub fn show<D>(app: &mut App<D>, ui: &mut egui::Ui)
 where
@@ -53,8 +53,15 @@ where
                         .color(egui::Color32::WHITE),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Desconectar").clicked() {
-                        app.deps.sessions.disconnect(&id);
+                    if ui
+                        .add_enabled(
+                            !app.connection_commit_running(&id),
+                            egui::Button::new("Desconectar"),
+                        )
+                        .on_disabled_hover_text("Aguarde o Commit terminar")
+                        .clicked()
+                    {
+                        app.request_disconnect(&id);
                     }
                     if ui.button("Banco ⌘K").clicked() {
                         palette::toggle(app);
@@ -128,10 +135,13 @@ where
                 }
             }
         });
+    if let Some(key) = &active {
+        tabs::show(app, ui, key);
+    }
     let data_tab = active
         .as_ref()
         .and_then(|key| app.workspaces.get(key))
-        .and_then(|ws| ws.data.clone());
+        .and_then(|ws| ws.data().cloned());
     if app.side_panel_open {
         egui::Panel::right("workspace-right")
             .default_size(300.0)

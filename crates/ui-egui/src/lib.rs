@@ -10,6 +10,7 @@ mod data;
 mod palette;
 mod rail;
 mod record;
+mod tabs;
 pub mod theme;
 mod tree;
 mod workspace;

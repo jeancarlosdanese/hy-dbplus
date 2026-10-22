@@ -23,7 +23,7 @@ where
     D::Conn: 'static,
 {
     let tokens = theme::current(ui.ctx());
-    let Some(tab) = app.workspaces.get(key).and_then(|ws| ws.data.clone()) else {
+    let Some(tab) = app.workspaces.get(key).and_then(|ws| ws.data().cloned()) else {
         return;
     };
     let editable = app.editable(key);
@@ -413,7 +413,7 @@ where
     });
 
     if let Some(text) = edit_text
-        && let Some(tab) = app.workspaces.get_mut(key).and_then(|ws| ws.data.as_mut())
+        && let Some(tab) = app.workspaces.get_mut(key).and_then(|ws| ws.data_mut())
         && let Some(edit) = tab.editing.as_mut()
     {
         edit.text = text;

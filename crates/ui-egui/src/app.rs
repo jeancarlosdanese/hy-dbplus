@@ -66,6 +66,14 @@ pub struct ConnState {
     pub error: Option<String>,
 }
 
+/// O que o usuário pediu para fechar com edição pendente: a confirmação decide.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CloseTarget {
+    Database(DbKey),
+    Tab(DbKey, usize),
+    Connection(ConnectionId),
+}
+
 /// Um banco aberto (conexão + banco) e o catálogo que a UI já recebeu (tela 3.3).
 #[derive(Debug, Default)]
 pub struct Workspace {
@@ -79,11 +87,53 @@ pub struct Workspace {
     pub loading: bool,
     pub error: Option<String>,
     pub search: String,
-    /// A tabela aberta na aba Data, se houver.
-    pub data: Option<DataTab>,
+    /// As abas de tabela abertas neste banco (FEAT-008) e a ativa.
+    pub tabs: Vec<DataTab>,
+    pub active_tab: Option<usize>,
 }
 
 impl Workspace {
+    /// A aba ativa.
+    pub fn data(&self) -> Option<&DataTab> {
+        self.tabs.get(self.active_tab?)
+    }
+
+    pub fn data_mut(&mut self) -> Option<&mut DataTab> {
+        self.tabs.get_mut(self.active_tab?)
+    }
+
+    pub fn tab_index(&self, schema: &str, table: &str) -> Option<usize> {
+        self.tabs
+            .iter()
+            .position(|t| t.schema == schema && t.table == table)
+    }
+
+    /// A aba daquela tabela, ativa ou não (os eventos de dados chegam por tabela).
+    pub fn tab_mut(&mut self, schema: &str, table: &str) -> Option<&mut DataTab> {
+        let i = self.tab_index(schema, table)?;
+        self.tabs.get_mut(i)
+    }
+
+    /// Alguma aba com edição pendente (↻ e desconectar precisam saber).
+    pub fn has_pending_changes(&self) -> bool {
+        self.tabs.iter().any(DataTab::has_changes)
+    }
+
+    /// Fecha uma aba. Era a ativa: a da direita assume (a da esquerda se era a última); estava à
+    /// esquerda da ativa: a ativa só muda de índice.
+    pub fn close_tab(&mut self, index: usize) {
+        if index >= self.tabs.len() {
+            return;
+        }
+        self.tabs.remove(index);
+        self.active_tab = match self.active_tab {
+            _ if self.tabs.is_empty() => None,
+            Some(a) if a > index => Some(a - 1),
+            Some(a) if a == index => Some(index.min(self.tabs.len() - 1)),
+            other => other,
+        };
+    }
+
     /// As colunas do catálogo (nome, tipo) na ordem das colunas de uma página de dados, casadas pelo
     /// nome; `None` onde o cache não tem a coluna. Cabeçalho do grid, Form e JSON usam esta busca.
     pub fn catalog_columns(
@@ -179,10 +229,14 @@ impl DataTab {
         }
     }
 
-    /// Há edição ou exclusão pendente: ordenar, paginar, recarregar e trocar de tabela ficam
-    /// travados até o Commit ou o Descartar.
+    /// Há edição ou exclusão pendente: ordenar, paginar e recarregar esta aba ficam travados até o
+    /// Commit ou o Descartar (e o ↻ do banco, que esvaziaria as colunas dela).
     pub fn has_changes(&self) -> bool {
         !self.pending.is_empty() || !self.deleted.is_empty()
+    }
+
+    pub fn commit_running(&self) -> bool {
+        self.commit.as_ref().is_some_and(|d| d.running)
     }
 
     /// (linhas alteradas que não estão marcadas para apagar, linhas a apagar).
@@ -338,8 +392,8 @@ pub struct App<D: Driver> {
     /// A conexão do workspace na tela (a do banco ativo, ou a recém-conectada sem banco).
     pub(crate) focus: Option<ConnectionId>,
     pub(crate) conn_state: HashMap<ConnectionId, ConnState>,
-    /// Banco com edição pendente que o × da faixa quer fechar: a confirmação está na tela.
-    pub(crate) confirm_close: Option<DbKey>,
+    /// O que está esperando confirmação para fechar com edição pendente.
+    pub(crate) confirm_close: Option<CloseTarget>,
     pub(crate) palette: Option<Palette>,
     /// Painel direito visível (botão na barra superior; abre sozinho na primeira seleção).
     pub(crate) side_panel_open: bool,
@@ -534,7 +588,7 @@ where
                             tab.page.clone()
                         });
                     if let Some(page) = page {
-                        self.load_data_page(&(id.clone(), database.clone()), page);
+                        self.load_tab_page(&(id.clone(), database.clone()), &schema, &table, page);
                         self.deps
                             .sessions
                             .load_stats(&id, &database, &schema, &table);
@@ -592,14 +646,17 @@ where
     ) -> Option<&mut DataTab> {
         self.workspaces
             .get_mut(&(id.to_owned(), database.to_owned()))
-            .and_then(|ws| ws.data.as_mut())
-            .filter(|tab| tab.schema == schema && tab.table == table)
+            .and_then(|ws| ws.tab_mut(schema, table))
     }
 
     /// Tira um banco da faixa e do mapa; se era o ativo, o último da faixa assume.
     pub(crate) fn forget_database(&mut self, key: &DbKey) {
         self.workspaces.remove(key);
         self.rail.retain(|k| k != key);
+        if matches!(&self.confirm_close, Some(CloseTarget::Database(k) | CloseTarget::Tab(k, _)) if k == key)
+        {
+            self.confirm_close = None;
+        }
         if self.active.as_ref() == Some(key) {
             self.active = self.rail.last().cloned();
             if let Some(active) = &self.active {
@@ -615,6 +672,9 @@ where
             self.forget_database(&key);
         }
         self.conn_state.remove(id);
+        if matches!(&self.confirm_close, Some(CloseTarget::Connection(c)) if c == id) {
+            self.confirm_close = None;
+        }
         if self.focus.as_ref() == Some(id) {
             self.focus = self.active.as_ref().map(|k| k.0.clone());
             if self.focus.is_none() {
@@ -664,20 +724,20 @@ where
         self.deps.sessions.close_database(&key.0, &key.1);
     }
 
-    /// Abre (ou troca) a tabela da aba Data e pede a primeira página e os tamanhos.
+    /// Abre a tabela numa aba nova (ou só foca a aba dela, se já está aberta) e pede a primeira
+    /// página e os tamanhos.
     pub(crate) fn open_table(&mut self, key: &DbKey, schema: &str, table: &str) {
-        if !self.workspaces.contains_key(key) {
+        let Some(ws) = self.workspaces.get_mut(key) else {
             return;
-        }
-        // Com edição pendente a aba fica travada (a árvore desabilita as outras tabelas, com a dica).
-        if self.has_pending_changes(key) {
+        };
+        if let Some(i) = ws.tab_index(schema, table) {
+            ws.active_tab = Some(i);
             return;
         }
         let tab = DataTab::new(schema, table);
         let page = tab.page.clone();
-        if let Some(ws) = self.workspaces.get_mut(key) {
-            ws.data = Some(tab);
-        }
+        ws.tabs.push(tab);
+        ws.active_tab = Some(ws.tabs.len() - 1);
         let (id, database) = key;
         self.deps
             .sessions
@@ -687,11 +747,27 @@ where
 
     /// Recarrega a aba Data com a página pedida (ordem, limite, offset).
     pub(crate) fn load_data_page(&mut self, key: &DbKey, page: Page) {
+        let Some((schema, table)) = self
+            .workspaces
+            .get(key)
+            .and_then(|ws| ws.data())
+            .map(|t| (t.schema.clone(), t.table.clone()))
+        else {
+            return;
+        };
+        self.load_tab_page(key, &schema, &table, page);
+    }
+
+    /// Pede uma página para a aba daquela tabela, ativa ou não (o `ChangesApplied` recarrega a aba
+    /// do evento, que pode já não ser a ativa).
+    fn load_tab_page(&mut self, key: &DbKey, schema: &str, table: &str, page: Page) {
         let Some(ws) = self.workspaces.get_mut(key) else {
             return;
         };
         let (id, database) = key;
-        let Some(tab) = ws.data.as_mut() else { return };
+        let Some(tab) = ws.tab_mut(schema, table) else {
+            return;
+        };
         if tab.has_changes() {
             return;
         }
@@ -700,10 +776,9 @@ where
         tab.error = None;
         tab.selected_rows.clear();
         tab.anchor = None;
-        let (schema, table) = (tab.schema.clone(), tab.table.clone());
         self.deps
             .sessions
-            .load_page(id, database, &schema, &table, page);
+            .load_page(id, database, schema, table, page);
     }
 
     /// Repete a página pedida (ou a atual) e, se os tamanhos ainda não vieram, os stats.
@@ -711,7 +786,7 @@ where
         let Some(ws) = self.workspaces.get(key) else {
             return;
         };
-        let Some(tab) = ws.data.as_ref() else { return };
+        let Some(tab) = ws.data() else { return };
         let (schema, table, stats_missing) =
             (tab.schema.clone(), tab.table.clone(), tab.stats.is_none());
         let page = tab.requested.clone().unwrap_or_else(|| tab.page.clone());
@@ -727,7 +802,7 @@ where
     /// da última clicada. Só a primeira seleção (de nenhuma linha para alguma) abre o painel: depois, o
     /// botão "Painel" manda, e o clique numa linha não o reabre.
     pub(crate) fn select_row(&mut self, key: &DbKey, index: usize, modifiers: egui::Modifiers) {
-        let Some(tab) = self.workspaces.get_mut(key).and_then(|ws| ws.data.as_mut()) else {
+        let Some(tab) = self.workspaces.get_mut(key).and_then(|ws| ws.data_mut()) else {
             return;
         };
         let was_empty = tab.selected_rows.is_empty();
@@ -758,11 +833,87 @@ where
         }
     }
 
+    /// Commit em execução em alguma aba do banco: nada fecha até o resultado chegar (fechar
+    /// esconderia um lote que ainda grava, ou o erro dele).
+    pub(crate) fn commit_running(&self, key: &DbKey) -> bool {
+        self.workspaces
+            .get(key)
+            .is_some_and(|ws| ws.tabs.iter().any(DataTab::commit_running))
+    }
+
+    pub(crate) fn connection_commit_running(&self, id: &str) -> bool {
+        self.workspaces
+            .iter()
+            .any(|(k, ws)| k.0 == id && ws.tabs.iter().any(DataTab::commit_running))
+    }
+
+    /// Alguma aba do banco com edição pendente.
     pub(crate) fn has_pending_changes(&self, key: &DbKey) -> bool {
         self.workspaces
             .get(key)
-            .and_then(|ws| ws.data.as_ref())
-            .is_some_and(DataTab::has_changes)
+            .is_some_and(Workspace::has_pending_changes)
+    }
+
+    /// Alguma aba de qualquer banco da conexão com edição pendente.
+    pub(crate) fn connection_has_pending_changes(&self, id: &str) -> bool {
+        self.workspaces
+            .iter()
+            .any(|(k, ws)| k.0 == id && ws.has_pending_changes())
+    }
+
+    /// × numa aba ou ⌘W: fecha na hora, ou pede confirmação se há pendência.
+    pub(crate) fn request_close_tab(&mut self, key: &DbKey, index: usize) {
+        let Some(tab) = self.workspaces.get(key).and_then(|ws| ws.tabs.get(index)) else {
+            return;
+        };
+        if tab.commit_running() {
+            return;
+        }
+        // Célula aberta com texto digitado também é trabalho a perder.
+        let pending = tab.has_changes() || tab.editing.is_some();
+        if pending {
+            self.confirm_close = Some(CloseTarget::Tab(key.clone(), index));
+        } else if let Some(ws) = self.workspaces.get_mut(key) {
+            ws.close_tab(index);
+        }
+    }
+
+    /// × na faixa: fecha na hora, ou pede confirmação se alguma aba tem pendência.
+    pub(crate) fn request_close_database(&mut self, key: &DbKey) {
+        if self.commit_running(key) {
+            return;
+        }
+        if self.has_pending_changes(key) {
+            self.confirm_close = Some(CloseTarget::Database(key.clone()));
+        } else {
+            self.close_database(key);
+        }
+    }
+
+    /// "Desconectar": fecha na hora, ou pede confirmação se alguma aba da conexão tem pendência.
+    pub(crate) fn request_disconnect(&mut self, id: &ConnectionId) {
+        if self.connection_commit_running(id) {
+            return;
+        }
+        if self.connection_has_pending_changes(id) {
+            self.confirm_close = Some(CloseTarget::Connection(id.clone()));
+        } else {
+            self.deps.sessions.disconnect(id);
+        }
+    }
+
+    /// "Descartar e fechar" na confirmação.
+    pub(crate) fn confirm_close_now(&mut self) {
+        match self.confirm_close.take() {
+            Some(CloseTarget::Database(key)) => self.close_database(&key),
+            Some(CloseTarget::Tab(key, index)) => {
+                if let Some(ws) = self.workspaces.get_mut(&key) {
+                    ws.close_tab(index);
+                }
+            }
+            Some(CloseTarget::Connection(id)) => self.deps.sessions.disconnect(&id),
+            None => {}
+        }
     }
 
     /// As colunas da chave primária da tabela aberta, na ordem da tabela; vazio sem cache ou sem
@@ -771,7 +922,7 @@ where
         let Some(ws) = self.workspaces.get(key) else {
             return Vec::new();
         };
-        let Some(tab) = ws.data.as_ref() else {
+        let Some(tab) = ws.data() else {
             return Vec::new();
         };
         let Some(columns) = ws.columns.get(&(tab.schema.clone(), tab.table.clone())) else {
@@ -788,13 +939,13 @@ where
         let settled = self
             .workspaces
             .get(key)
-            .and_then(|ws| ws.data.as_ref())
+            .and_then(|ws| ws.data())
             .is_some_and(|tab| tab.rows.is_some() && !tab.loading && tab.requested.is_none());
         settled && !self.key_columns(key).is_empty()
     }
 
     fn data_tab(&mut self, key: &DbKey) -> Option<&mut DataTab> {
-        self.workspaces.get_mut(key).and_then(|ws| ws.data.as_mut())
+        self.workspaces.get_mut(key).and_then(|ws| ws.data_mut())
     }
 
     /// Duplo clique numa célula: abre a edição com o valor atual (pendente ou da página).
@@ -931,7 +1082,7 @@ where
         let Some(ws) = self.workspaces.get_mut(key) else {
             return;
         };
-        let Some(tab) = ws.data.as_mut() else { return };
+        let Some(tab) = ws.data_mut() else { return };
         let Some(running) = tab.commit.as_ref().map(|d| d.running) else {
             return;
         };

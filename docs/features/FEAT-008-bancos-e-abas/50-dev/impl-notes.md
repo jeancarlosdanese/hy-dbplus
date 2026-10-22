@@ -10,8 +10,10 @@ _Atualizado em 22/10/2026._
   outros seguem do cache, o fechado reabre pelo servidor, desconhecido não avisa).
 - **Feito também:** UI passo 1: workspace por (conexão, banco), faixa de bancos, ⌘K acumulando, foco por
   conexão, roteamento dos eventos, × com confirmação (teste de dois bancos).
-- **Em curso:** revisão e commit da UI passo 1.
-- **Falta:** UI passo 2 (abas por tabela); verificação do Jean.
+- **Feito também:** UI passo 2: abas por tabela (`tabs`/`active_tab`), barra de abas, ×/⌘W, confirmação
+  única para aba, banco e conexão, árvore abrindo ou focando a aba (teste de duas abas).
+- **Em curso:** revisão e commit da UI passo 2.
+- **Falta:** verificação do Jean.
 - **Depende de:** FEAT-007 (edição por aba).
 - **Para retomar:** esta pasta, a captura do TablePlus citada no brief e o `CLAUDE.md`.
 
@@ -104,3 +106,33 @@ _Atualizado em 22/10/2026._
 - Anotado: "Abrir" na lista para conexão sem banco na faixa deixa `active = None`; `key_of` escolhe o
   primeiro da faixa quando o ativo é de outra conexão (guardar o último ativo por conexão seria mais
   previsível). Fica para quando incomodar.
+
+### 22/10/2026 — UI passo 2: abas por tabela
+
+- [x] `Workspace`: `tabs: Vec<DataTab>` e `active_tab`; `data()`/`data_mut()` são a aba ativa (o resto da UI
+  não mudou), `tab_mut(schema, table)` leva os eventos de dados à aba certa, ativa ou não;
+  `has_pending_changes` olha todas as abas; `close_tab` passa a ativa para a vizinha da esquerda.
+- [x] `open_table`: aba nova, ou só foca a da tabela (uma aba por tabela); a trava de trocar de tabela da
+  FEAT-007 saiu da árvore (o ↻ segue travado enquanto alguma aba tem pendência, porque esvaziaria as colunas
+  e a chave primária dela).
+- [x] `tabs.rs`: barra acima do grid com `tabela` (ou `schema.tabela` fora do schema atual), ponto de
+  pendência na aba, × em cada uma, ⌘W na ativa.
+- [x] `CloseTarget` (banco, aba ou conexão) com uma confirmação só (`rail::confirm`): `request_close_tab`,
+  `request_close_database`, `request_disconnect`; "Desconectar" com pendência passou a confirmar.
+- [x] Teste `duas_abas_no_mesmo_banco_focam_fecham_e_confirmam`: segunda tabela vira segunda aba, clicar na
+  aba e na árvore foca, ⌘W fecha a sem pendência na hora e pede confirmação na com pendência, × com
+  "Descartar e fechar", desconectar com pendência confirma.
+
+### 22/10/2026 — Revisão da UI passo 2 (`process:reviewer`): dois médios, aplicados
+
+- [x] **Médio:** fechar aba, banco ou conexão com o Commit em execução gravava no banco enquanto a caixa dizia
+  "descarta tudo sem gravar" (o Modal só bloqueia o ponteiro; ⌘W passava). Com Commit rodando, ×, ⌘W, × do
+  banco e Desconectar ficam desabilitados ("Aguarde o Commit terminar") e os `request_*` saem cedo. Teste.
+- [x] **Médio:** o aceite "evento de dados chega à aba certa" estava marcado sem prova. Teste sem harness pelo
+  `drain_events`: a segunda aba carrega em segundo plano, e o `ChangesApplied` recarrega a aba do lote, não a
+  ativa (`load_tab_page(key, schema, table, page)`; `load_data_page` vira o atalho da ativa). O teste falha
+  com a recarga antiga. `close_tab` ganhou teste puro.
+- [x] ⌘W só sem campo em foco; célula aberta com texto digitado conta como pendência ao fechar a aba.
+- [x] Confirmação órfã: `forget_database`/`forget_connection` limpam `confirm_close` quando o alvo some.
+- [x] Docs: `close_tab` ativa a da direita (a da esquerda se era a última); `has_changes` sem "trocar de
+  tabela"; aceite e brief dizem que ordenar e paginar travam só na aba e o ↻ trava o banco.
