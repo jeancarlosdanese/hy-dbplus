@@ -114,6 +114,37 @@ pub enum Event {
         table: String,
         error: DriverError,
     },
+    /// O editor SQL (FEAT-010): uma execução começou, com `total` statements.
+    SqlStarted {
+        connection: ConnectionId,
+        database: String,
+        tab: QueryTabId,
+        total: usize,
+    },
+    /// O resultado de um statement do editor: linhas ou contagem (`Ok`) ou o erro do servidor,
+    /// com o tempo que levou. Run All para no primeiro erro.
+    SqlResult {
+        connection: ConnectionId,
+        database: String,
+        tab: QueryTabId,
+        index: usize,
+        sql: String,
+        result: Result<Outcome, DriverError>,
+        elapsed: Duration,
+    },
+    /// A execução acabou (todos rodaram, parou num erro ou foi cancelada).
+    SqlFinished {
+        connection: ConnectionId,
+        database: String,
+        tab: QueryTabId,
+        cancelled: bool,
+    },
+    /// Outra execução ainda roda neste banco: a nova foi recusada (uma por banco de cada vez).
+    SqlBusy {
+        connection: ConnectionId,
+        database: String,
+        tab: QueryTabId,
+    },
     /// Um banco da conexão foi fechado por `close_database` (a sessão e os outros bancos seguem).
     DatabaseClosed {
         connection: ConnectionId,
@@ -177,12 +208,31 @@ impl Event {
             | Event::DataFailed { connection, .. }
             | Event::StructureLoaded { connection, .. }
             | Event::StructureFailed { connection, .. }
+            | Event::SqlStarted { connection, .. }
+            | Event::SqlResult { connection, .. }
+            | Event::SqlFinished { connection, .. }
+            | Event::SqlBusy { connection, .. }
             | Event::DatabaseClosed { connection, .. }
             | Event::ChangesApplied { connection, .. }
             | Event::ChangesFailed { connection, .. } => connection,
         }
     }
 }
+
+/// A aba de SQL que pediu a execução (a UI numera; o engine só devolve).
+pub type QueryTabId = u32;
+
+/// Uma execução do editor no histórico em memória (o M7 persiste).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistoryEntry {
+    pub sql: String,
+    pub started: SystemTime,
+    pub elapsed: Duration,
+    pub ok: bool,
+}
+
+/// Quantas execuções o histórico em memória guarda por banco.
+pub const HISTORY_LIMIT: usize = 200;
 
 /// Uma sessão aberta: a conexão do driver e o que já se sabe do servidor.
 pub struct Session<C> {
@@ -223,6 +273,9 @@ struct Database<C> {
     columns: HashMap<(String, String), Vec<Column>>,
     stats: HashMap<(String, String), TableStats>,
     structures: HashMap<(String, String), TableStructure>,
+    /// Execução do editor em curso: a bandeira de cancelamento dela (uma por banco de cada vez).
+    running: Option<Arc<AtomicBool>>,
+    history: Vec<HistoryEntry>,
 }
 
 /// O estado de uma conexão: a geração corrente, a sessão aberta, a senha (só em memória, para
@@ -343,6 +396,18 @@ where
                 Some(slot) => {
                     slot.generation += 1;
                     slot.secret = Secret::default();
+                    // Execução do editor em curso em algum banco: bandeira e cancel, como em
+                    // `close_database` (o engine é a fachada do CLI e do MCP também; a UI já trava
+                    // Desconectar com execução em curso).
+                    for db in slot.databases.values() {
+                        if let Some(flag) = &db.running {
+                            flag.store(true, Ordering::SeqCst);
+                            let conn = Arc::clone(&db.conn);
+                            self.runtime.spawn(async move {
+                                let _ = conn.cancel().await;
+                            });
+                        }
+                    }
                     slot.databases.clear();
                     slot.session.take().is_some()
                 }
@@ -369,18 +434,26 @@ where
     /// último `Arc` some (uma tarefa em voo termina e o evento dela ainda sai; a UI, sem o banco,
     /// o ignora). A sessão e os outros bancos continuam. Avisa só se o banco estava aberto.
     pub fn close_database(&self, id: &str, database: &str) {
-        let closed = match self.slots.lock() {
+        let removed = match self.slots.lock() {
             Ok(mut map) => map
                 .get_mut(id)
-                .is_some_and(|slot| slot.databases.remove(database).is_some()),
-            Err(_) => false,
+                .and_then(|slot| slot.databases.remove(database)),
+            Err(_) => None,
         };
-        if closed {
-            self.emit(Event::DatabaseClosed {
-                connection: id.to_owned(),
-                database: database.to_owned(),
+        let Some(db) = removed else { return };
+        // Execução do editor em curso: liga a bandeira e cancela no servidor, senão um Run All
+        // continuaria gravando numa conexão que o chamador acha fechada.
+        if let Some(flag) = &db.running {
+            flag.store(true, Ordering::SeqCst);
+            let conn = Arc::clone(&db.conn);
+            self.runtime.spawn(async move {
+                let _ = conn.cancel().await;
             });
         }
+        self.emit(Event::DatabaseClosed {
+            connection: id.to_owned(),
+            database: database.to_owned(),
+        });
     }
 
     /// Abre o banco (conexão própria) e lê os schemas; `DatabaseSelected` ou `CatalogFailed`.
@@ -439,6 +512,8 @@ where
                                 columns: HashMap::new(),
                                 stats: HashMap::new(),
                                 structures: HashMap::new(),
+                                running: None,
+                                history: Vec::new(),
                             },
                         );
                         Event::DatabaseSelected {
@@ -602,6 +677,154 @@ where
             db.stats.clear();
             db.structures.clear();
         }
+    }
+
+    /// Executa os statements do editor em sequência, numa tarefa, com o limite de linhas por
+    /// leitura: `SqlStarted`, um `SqlResult` por statement (para no primeiro erro, como o psql) e
+    /// `SqlFinished`. Uma execução por banco de cada vez: a segunda recebe `SqlBusy`. Cada
+    /// execução entra no histórico em memória. Mesma pré-condição de `load_schema`.
+    pub fn run_sql(
+        &self,
+        id: &str,
+        database: &str,
+        tab: QueryTabId,
+        statements: Vec<String>,
+        limit: Option<usize>,
+    ) {
+        let flag = Arc::new(AtomicBool::new(false));
+        let (generation, conn) = {
+            let Ok(mut map) = self.slots.lock() else {
+                return;
+            };
+            let Some(slot) = map.get_mut(id) else { return };
+            let generation = slot.generation;
+            let Some(db) = slot.databases.get_mut(database) else {
+                return;
+            };
+            if db.running.is_some() {
+                drop(map);
+                self.emit(Event::SqlBusy {
+                    connection: id.to_owned(),
+                    database: database.to_owned(),
+                    tab,
+                });
+                return;
+            }
+            db.running = Some(Arc::clone(&flag));
+            (generation, Arc::clone(&db.conn))
+        };
+        let (id, database) = (id.to_owned(), database.to_owned());
+        self.emit(Event::SqlStarted {
+            connection: id.clone(),
+            database: database.clone(),
+            tab,
+            total: statements.len(),
+        });
+        let events = self.events.clone();
+        let repaint = Arc::clone(&self.repaint);
+        let slots = Arc::clone(&self.slots);
+        self.runtime.spawn(async move {
+            let mut cancelled = false;
+            for (index, sql) in statements.into_iter().enumerate() {
+                if flag.load(Ordering::SeqCst) {
+                    cancelled = true;
+                    break;
+                }
+                let started = SystemTime::now();
+                let clock = Instant::now();
+                let result = conn.execute(&sql, limit).await;
+                let elapsed = clock.elapsed();
+                let stop = result.is_err();
+                // Só é "cancelado" se fomos nós: um statement_timeout do servidor também devolve
+                // Cancelled e esse é um erro comum, com a mensagem dele.
+                if matches!(result, Err(DriverError::Cancelled(_))) && flag.load(Ordering::SeqCst) {
+                    cancelled = true;
+                }
+                let entry = HistoryEntry {
+                    sql: sql.clone(),
+                    started,
+                    elapsed,
+                    ok: result.is_ok(),
+                };
+                let sent = commit_if_current(&slots, &events, &id, generation, |slot| {
+                    // Só o banco que começou esta execução (fechado e reaberto, é outro).
+                    if let Some(db) = slot
+                        .databases
+                        .get_mut(&database)
+                        .filter(|db| db.running.as_ref().is_some_and(|f| Arc::ptr_eq(f, &flag)))
+                    {
+                        db.history.push(entry);
+                        if db.history.len() > HISTORY_LIMIT {
+                            db.history.remove(0);
+                        }
+                    }
+                    Event::SqlResult {
+                        connection: id.clone(),
+                        database: database.clone(),
+                        tab,
+                        index,
+                        sql,
+                        result,
+                        elapsed,
+                    }
+                });
+                if sent {
+                    repaint();
+                }
+                if stop {
+                    break;
+                }
+            }
+            let sent = commit_if_current(&slots, &events, &id, generation, |slot| {
+                if let Some(db) = slot
+                    .databases
+                    .get_mut(&database)
+                    .filter(|db| db.running.as_ref().is_some_and(|f| Arc::ptr_eq(f, &flag)))
+                {
+                    db.running = None;
+                }
+                Event::SqlFinished {
+                    connection: id.clone(),
+                    database: database.clone(),
+                    tab,
+                    cancelled,
+                }
+            });
+            if sent {
+                repaint();
+            }
+        });
+    }
+
+    /// Cancela a execução em curso do banco: o statement de agora volta com `Cancelled` e os
+    /// seguintes não rodam. Sem execução em curso, nada acontece.
+    pub fn cancel_sql(&self, id: &str, database: &str) {
+        let conn = {
+            let Ok(map) = self.slots.lock() else { return };
+            let Some(db) = map.get(id).and_then(|s| s.databases.get(database)) else {
+                return;
+            };
+            let Some(flag) = &db.running else { return };
+            flag.store(true, Ordering::SeqCst);
+            Arc::clone(&db.conn)
+        };
+        self.runtime.spawn(async move {
+            // Falha do cancel (conexão caída) não muda nada: a execução termina sozinha.
+            let _ = conn.cancel().await;
+        });
+    }
+
+    /// O histórico em memória do banco, do mais antigo ao mais recente.
+    pub fn history(&self, id: &str, database: &str) -> Vec<HistoryEntry> {
+        self.slots
+            .lock()
+            .ok()
+            .and_then(|map| {
+                map.get(id)
+                    .and_then(|s| s.databases.get(database))
+                    .map(|db| db.history.clone())
+            })
+            .unwrap_or_default()
     }
 
     /// Colunas, restrições, índices e definição de view de uma tabela: do cache na hora, ou as
@@ -1012,11 +1235,14 @@ mod tests {
         queries: Arc<AtomicUsize>,
         last_sql: Arc<Mutex<String>>,
         batches: Arc<Mutex<Vec<Vec<BatchStatement>>>>,
+        cancels: Arc<AtomicUsize>,
     }
     struct FakeConn {
         queries: Arc<AtomicUsize>,
         last_sql: Arc<Mutex<String>>,
         batches: Arc<Mutex<Vec<Vec<BatchStatement>>>>,
+        /// Quantos `cancel()` esta conexão recebeu.
+        cancels: Arc<AtomicUsize>,
         /// `cancel()` liga; `execute` de "sleep" olha a cada 10 ms e volta `Cancelled`.
         cancel_flag: Arc<AtomicBool>,
     }
@@ -1112,6 +1338,7 @@ mod tests {
             })
         }
         async fn cancel(&self) -> Result<(), DriverError> {
+            self.cancels.fetch_add(1, Ordering::SeqCst);
             self.cancel_flag.store(true, Ordering::SeqCst);
             Ok(())
         }
@@ -1224,6 +1451,7 @@ mod tests {
                 queries: Arc::clone(&self.queries),
                 last_sql: Arc::clone(&self.last_sql),
                 batches: Arc::clone(&self.batches),
+                cancels: Arc::clone(&self.cancels),
                 cancel_flag: Arc::new(AtomicBool::new(false)),
             })
         }
@@ -1237,6 +1465,7 @@ mod tests {
         queries: Arc<AtomicUsize>,
         last_sql: Arc<Mutex<String>>,
         batches: Arc<Mutex<Vec<Vec<BatchStatement>>>>,
+        cancels: Arc<AtomicUsize>,
     }
 
     fn setup() -> Harness {
@@ -1247,6 +1476,7 @@ mod tests {
         let queries = Arc::clone(&driver.queries);
         let last_sql = Arc::clone(&driver.last_sql);
         let batches = Arc::clone(&driver.batches);
+        let cancels = Arc::clone(&driver.cancels);
         let (sessions, rx) = Sessions::new(driver, rt.handle().clone(), move || {
             counter.fetch_add(1, Ordering::SeqCst);
         });
@@ -1258,6 +1488,7 @@ mod tests {
             queries,
             last_sql,
             batches,
+            cancels,
         }
     }
 
@@ -1895,5 +2126,186 @@ mod tests {
         h.sessions
             .load_structure(&c.id, "loja", "public", "quebrada");
         assert!(matches!(next(&h.rx), Event::StructureFailed { .. }));
+    }
+
+    /// Editor SQL: eventos em ordem com o tempo, parada no primeiro erro, limite truncando,
+    /// recusa de execução paralela no mesmo banco, cancel e histórico.
+    #[test]
+    fn run_sql_emite_resultados_para_no_erro_recusa_paralelo_cancela_e_guarda_historico() {
+        let h = setup();
+        let c = conn();
+        connected(&h, &c);
+        h.sessions.select_database(&c.id, "loja");
+        let _ = next(&h.rx);
+        let statements = vec![
+            "select 5".to_owned(),
+            "update t set x = 1".to_owned(),
+            "select erro".to_owned(),
+            "select 1".to_owned(),
+        ];
+        h.sessions.run_sql(&c.id, "loja", 7, statements, Some(2));
+        assert!(matches!(
+            next(&h.rx),
+            Event::SqlStarted {
+                tab: 7,
+                total: 4,
+                ..
+            }
+        ));
+        let event = next(&h.rx);
+        let Event::SqlResult {
+            index: 0,
+            result: Ok(out),
+            sql,
+            ..
+        } = &event
+        else {
+            panic!("{event:?}")
+        };
+        assert_eq!(sql, "select 5");
+        assert_eq!(out.rows.as_ref().map(|r| r.rows.len()), Some(2));
+        assert!(out.truncated);
+        let event = next(&h.rx);
+        assert!(
+            matches!(&event, Event::SqlResult { index: 1, result: Ok(out), .. } if out.affected == Some(3)),
+            "{event:?}"
+        );
+        let event = next(&h.rx);
+        assert!(
+            matches!(
+                &event,
+                Event::SqlResult {
+                    index: 2,
+                    result: Err(DriverError::Db(_)),
+                    ..
+                }
+            ),
+            "{event:?}"
+        );
+        // Parou no erro: o 4º não roda; termina sem cancelamento.
+        assert!(matches!(
+            next(&h.rx),
+            Event::SqlFinished {
+                cancelled: false,
+                ..
+            }
+        ));
+        let history = h.sessions.history(&c.id, "loja");
+        assert_eq!(history.len(), 3);
+        assert_eq!(
+            history.iter().map(|e| e.ok).collect::<Vec<_>>(),
+            [true, true, false]
+        );
+
+        // Execução longa: a segunda no mesmo banco é recusada; o cancel interrompe a primeira e
+        // não roda o statement seguinte.
+        let before = h.queries.load(Ordering::SeqCst);
+        h.sessions.run_sql(
+            &c.id,
+            "loja",
+            8,
+            vec!["select sleep".to_owned(), "select 1".to_owned()],
+            None,
+        );
+        assert!(matches!(next(&h.rx), Event::SqlStarted { tab: 8, .. }));
+        h.sessions
+            .run_sql(&c.id, "loja", 9, vec!["select 1".to_owned()], None);
+        assert!(matches!(next(&h.rx), Event::SqlBusy { tab: 9, .. }));
+        // Cancel só depois de o statement começar (antes disso ele nem roda: termina direto).
+        let started = Instant::now();
+        while h.queries.load(Ordering::SeqCst) == before {
+            assert!(
+                started.elapsed() < Duration::from_secs(2),
+                "sleep não começou"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        h.sessions.cancel_sql(&c.id, "loja");
+        let event = next(&h.rx);
+        assert!(
+            matches!(
+                &event,
+                Event::SqlResult {
+                    tab: 8,
+                    index: 0,
+                    result: Err(DriverError::Cancelled(_)),
+                    ..
+                }
+            ),
+            "{event:?}"
+        );
+        assert!(matches!(
+            next(&h.rx),
+            Event::SqlFinished {
+                tab: 8,
+                cancelled: true,
+                ..
+            }
+        ));
+        // Livre de novo.
+        h.sessions
+            .run_sql(&c.id, "loja", 9, vec!["select 1".to_owned()], None);
+        assert!(matches!(next(&h.rx), Event::SqlStarted { tab: 9, .. }));
+        assert!(matches!(next(&h.rx), Event::SqlResult { tab: 9, .. }));
+        assert!(matches!(next(&h.rx), Event::SqlFinished { tab: 9, .. }));
+        assert_eq!(h.sessions.history(&c.id, "loja").len(), 5);
+
+        // Cancelado pelo servidor (statement_timeout), sem pedido nosso: erro comum, não "cancelado".
+        h.sessions.run_sql(
+            &c.id,
+            "loja",
+            10,
+            vec!["select timeout".to_owned(), "select 1".to_owned()],
+            None,
+        );
+        assert!(matches!(next(&h.rx), Event::SqlStarted { tab: 10, .. }));
+        let event = next(&h.rx);
+        assert!(
+            matches!(&event, Event::SqlResult { result: Err(DriverError::Cancelled(m)), .. } if m.contains("timeout")),
+            "{event:?}"
+        );
+        assert!(matches!(
+            next(&h.rx),
+            Event::SqlFinished {
+                tab: 10,
+                cancelled: false,
+                ..
+            }
+        ));
+    }
+
+    /// `disconnect` com execução do editor em curso: a bandeira liga e o cancel chega ao servidor
+    /// (revisão de 22/10/2026); os eventos da execução não chegam à sessão que fechou.
+    #[test]
+    fn desconectar_com_execucao_em_curso_cancela_no_servidor() {
+        let h = setup();
+        let c = conn();
+        connected(&h, &c);
+        h.sessions.select_database(&c.id, "loja");
+        let _ = next(&h.rx);
+        let before = h.queries.load(Ordering::SeqCst);
+        h.sessions
+            .run_sql(&c.id, "loja", 1, vec!["select sleep".to_owned()], None);
+        assert!(matches!(next(&h.rx), Event::SqlStarted { tab: 1, .. }));
+        let started = Instant::now();
+        while h.queries.load(Ordering::SeqCst) == before {
+            assert!(
+                started.elapsed() < Duration::from_secs(2),
+                "sleep não começou"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        h.sessions.disconnect(&c.id);
+        assert!(matches!(next(&h.rx), Event::Disconnected { .. }));
+        let started = Instant::now();
+        while h.cancels.load(Ordering::SeqCst) == 0 {
+            assert!(
+                started.elapsed() < Duration::from_secs(2),
+                "o cancel não chegou ao driver"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        // O resultado (Cancelled) e o fim da execução ficam na geração antiga: nada chega.
+        assert!(h.rx.recv_timeout(Duration::from_millis(300)).is_err());
     }
 }

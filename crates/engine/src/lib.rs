@@ -17,10 +17,12 @@ pub use hy_dbplus_catalog::{
 };
 pub use hy_dbplus_driver::postgres::PostgresDriver;
 pub use hy_dbplus_driver::{
-    ConnectionConfig, DatabaseInfo, Driver, DriverError, Secret, TextRows, TlsMode,
+    ConnectionConfig, DatabaseInfo, Driver, DriverError, Outcome, Secret, TextRows, TlsMode,
 };
 pub use secrets::{KeyringSecrets, MemorySecrets, SecretStore};
-pub use session::{Event, Page, Session, Sessions, preview_sql};
+pub use session::{
+    Event, HISTORY_LIMIT, HistoryEntry, Page, QueryTabId, Session, Sessions, preview_sql,
+};
 
 /// As sessões PostgreSQL: o único driver do MVP, pronto para a UI e os apps.
 pub type PgSessions = Sessions<PostgresDriver>;
