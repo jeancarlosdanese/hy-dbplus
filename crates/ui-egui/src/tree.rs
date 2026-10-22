@@ -244,7 +244,7 @@ mod tests {
     use egui_kittest::kittest::Queryable;
     use hy_dbplus_driver::{
         BatchStatement, Connection as DriverConnection, ConnectionConfig, DatabaseInfo, Driver,
-        DriverError, Secret, TextRows,
+        DriverError, Outcome, Secret, TextRows,
     };
     use hy_dbplus_engine::{Connection, Direction, Tag};
 
@@ -263,6 +263,7 @@ mod tests {
         queries: Arc<AtomicUsize>,
         batches: Arc<Mutex<Vec<Vec<BatchStatement>>>>,
         fail_structure: Arc<std::sync::atomic::AtomicBool>,
+        cancel_flag: Arc<std::sync::atomic::AtomicBool>,
     }
 
     fn row(cells: &[Option<&str>]) -> Vec<Option<String>> {
@@ -307,6 +308,50 @@ mod tests {
                 .iter()
                 .map(|s| s.expected_rows.unwrap_or(0))
                 .collect())
+        }
+        /// Editor (FEAT-010): "select N" devolve N linhas (truncadas pelo limite), "update" 3
+        /// afetadas, "erro" é erro do servidor, "sleep" espera até 2 s ou o cancel.
+        async fn execute(&self, sql: &str, limit: Option<usize>) -> Result<Outcome, DriverError> {
+            self.queries.fetch_add(1, Ordering::SeqCst);
+            if sql.contains("erro") {
+                return Err(DriverError::Db("syntax error at or near \"erro\"".into()));
+            }
+            if sql.contains("sleep") {
+                self.cancel_flag.store(false, Ordering::SeqCst);
+                for _ in 0..200 {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    if self.cancel_flag.load(Ordering::SeqCst) {
+                        return Err(DriverError::Cancelled(
+                            "canceling statement due to user request".into(),
+                        ));
+                    }
+                }
+                return Ok(Outcome::default());
+            }
+            if sql.to_ascii_lowercase().starts_with("update") {
+                return Ok(Outcome {
+                    affected: Some(3),
+                    ..Outcome::default()
+                });
+            }
+            let n: usize = sql
+                .split_whitespace()
+                .nth(1)
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(1);
+            let keep = limit.map_or(n, |l| l.min(n));
+            Ok(Outcome {
+                rows: Some(TextRows {
+                    columns: vec!["n".into()],
+                    rows: (1..=keep).map(|i| vec![Some(i.to_string())]).collect(),
+                }),
+                affected: None,
+                truncated: keep < n,
+            })
+        }
+        async fn cancel(&self) -> Result<(), DriverError> {
+            self.cancel_flag.store(true, Ordering::SeqCst);
+            Ok(())
         }
         async fn query_text(&self, sql: &str) -> Result<TextRows, DriverError> {
             self.queries.fetch_add(1, Ordering::SeqCst);
@@ -483,6 +528,7 @@ mod tests {
                 queries: Arc::clone(&self.queries),
                 batches: Arc::clone(&self.batches),
                 fail_structure: Arc::clone(&self.fail_structure),
+                cancel_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             })
         }
     }

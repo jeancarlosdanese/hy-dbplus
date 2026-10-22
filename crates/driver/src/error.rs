@@ -22,6 +22,11 @@ pub enum DriverError {
     Closed,
     #[error("erro do banco: {0}")]
     Db(String),
+    /// O servidor cancelou o statement (`57014`): a pedido nosso (`Connection::cancel`, o limite
+    /// de linhas) ou de fora (`statement_timeout`, um DBA). O motivo vem do servidor; quem pediu
+    /// o cancel sabe que foi ele.
+    #[error("statement cancelado: {0}")]
+    Cancelled(String),
     /// Um statement do lote falhou; a transação foi desfeita. `position` a partir de 1.
     #[error("statement {position} do lote falhou e nada foi gravado: {reason}")]
     Statement { position: usize, reason: String },

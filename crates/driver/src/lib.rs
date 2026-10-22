@@ -38,6 +38,16 @@ impl TextRows {
     }
 }
 
+/// O resultado de um statement do editor ([`Connection::execute`]): linhas (quem devolve
+/// `RowDescription`, mesmo vazio) ou contagem de linhas afetadas (o resto); `truncated` quando o
+/// limite cortou a leitura.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Outcome {
+    pub rows: Option<TextRows>,
+    pub affected: Option<u64>,
+    pub truncated: bool,
+}
+
 /// Um statement de um lote ([`Connection::execute_batch`]) e quantas linhas ele deve afetar;
 /// `None` não confere.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,6 +83,22 @@ pub trait Connection: Send + Sync {
         &self,
         statements: &[BatchStatement],
     ) -> impl Future<Output = Result<Vec<u64>, DriverError>> + Send;
+    /// Um statement do editor pelo protocolo simples, lendo o resultado como stream: no máximo
+    /// `limit` linhas ficam e o resto é descartado (`truncated = true`), mas o statement vai até
+    /// o fim no servidor: nada é cancelado por causa do limite (dentro de uma transação aberta o
+    /// ERROR do cancel a abortaria, e sem TLS um cancel em voo derruba o statement seguinte).
+    /// O SQL roda como veio, sem `LIMIT` por fora. Erro do
+    /// servidor sobe como [`DriverError::Db`]; cancelado (por [`Connection::cancel`] ou por fora,
+    /// como um `statement_timeout`), como [`DriverError::Cancelled`] com o motivo do servidor.
+    fn execute(
+        &self,
+        sql: &str,
+        limit: Option<usize>,
+    ) -> impl Future<Output = Result<Outcome, DriverError>> + Send;
+    /// Pede ao servidor para cancelar o statement em curso nesta conexão (abre uma conexão
+    /// própria só para isso). O statement cancelado volta com [`DriverError::Cancelled`]; só quem
+    /// chamou sabe que o cancelamento foi dele.
+    fn cancel(&self) -> impl Future<Output = Result<(), DriverError>> + Send;
 }
 
 /// Abre conexões para um tipo de banco. Só PostgreSQL no MVP.

@@ -10,16 +10,18 @@
 //! selecionar; tabelas e funções por schema; colunas e stats por tabela) e fica em cache até `refresh`.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant, SystemTime};
 
 use hy_dbplus_catalog::{
     self as catalog, ChangeSet, Column, Direction, EditError, Function, Order, Schema, Table,
     TableStats, TableStructure,
 };
 use hy_dbplus_driver::{
-    Connection as DriverConnection, ConnectionConfig, DatabaseInfo, Driver, DriverError, Secret,
-    TextRows,
+    Connection as DriverConnection, ConnectionConfig, DatabaseInfo, Driver, DriverError, Outcome,
+    Secret, TextRows,
 };
 
 use crate::store::{Connection, ConnectionId};
@@ -1001,7 +1003,7 @@ mod tests {
     use super::*;
     use crate::store::Tag;
     use hy_dbplus_catalog::RowUpdate;
-    use hy_dbplus_driver::{BatchStatement, TextRows};
+    use hy_dbplus_driver::{BatchStatement, Outcome, TextRows};
 
     /// Driver falso: demora 20 ms; falha quando a senha é "errada"; conta as queries de catálogo
     /// e responde conforme a tabela de `pg_catalog` citada no SQL.
@@ -1015,6 +1017,8 @@ mod tests {
         queries: Arc<AtomicUsize>,
         last_sql: Arc<Mutex<String>>,
         batches: Arc<Mutex<Vec<Vec<BatchStatement>>>>,
+        /// `cancel()` liga; `execute` de "sleep" olha a cada 10 ms e volta `Cancelled`.
+        cancel_flag: Arc<AtomicBool>,
     }
 
     fn row(cells: &[Option<&str>]) -> Vec<Option<String>> {
@@ -1061,6 +1065,55 @@ mod tests {
                 .iter()
                 .map(|s| s.expected_rows.unwrap_or(0))
                 .collect())
+        }
+        /// "select N" devolve N linhas (truncadas pelo limite); "update" devolve 3 afetadas;
+        /// "erro" é erro do servidor; "sleep" espera até 2 s ou até o cancel.
+        async fn execute(&self, sql: &str, limit: Option<usize>) -> Result<Outcome, DriverError> {
+            self.queries.fetch_add(1, Ordering::SeqCst);
+            if sql.contains("erro") {
+                return Err(DriverError::Db("syntax error".into()));
+            }
+            if sql.contains("timeout") {
+                return Err(DriverError::Cancelled(
+                    "canceling statement due to statement timeout".into(),
+                ));
+            }
+            if sql.contains("sleep") {
+                self.cancel_flag.store(false, Ordering::SeqCst);
+                for _ in 0..200 {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    if self.cancel_flag.load(Ordering::SeqCst) {
+                        return Err(DriverError::Cancelled(
+                            "canceling statement due to user request".into(),
+                        ));
+                    }
+                }
+                return Ok(Outcome::default());
+            }
+            if sql.starts_with("update") {
+                return Ok(Outcome {
+                    affected: Some(3),
+                    ..Outcome::default()
+                });
+            }
+            let n: usize = sql
+                .split_whitespace()
+                .nth(1)
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(1);
+            let keep = limit.map_or(n, |l| l.min(n));
+            Ok(Outcome {
+                rows: Some(TextRows {
+                    columns: vec!["n".into()],
+                    rows: (1..=keep).map(|i| vec![Some(i.to_string())]).collect(),
+                }),
+                affected: None,
+                truncated: keep < n,
+            })
+        }
+        async fn cancel(&self) -> Result<(), DriverError> {
+            self.cancel_flag.store(true, Ordering::SeqCst);
+            Ok(())
         }
         async fn query_text(&self, sql: &str) -> Result<TextRows, DriverError> {
             self.queries.fetch_add(1, Ordering::SeqCst);
@@ -1171,6 +1224,7 @@ mod tests {
                 queries: Arc::clone(&self.queries),
                 last_sql: Arc::clone(&self.last_sql),
                 batches: Arc::clone(&self.batches),
+                cancel_flag: Arc::new(AtomicBool::new(false)),
             })
         }
     }

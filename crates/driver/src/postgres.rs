@@ -20,8 +20,8 @@ use tokio_postgres_rustls::MakeRustlsConnect;
 use tokio_postgres::SimpleQueryMessage;
 
 use crate::{
-    BatchStatement, Connection, ConnectionConfig, DatabaseInfo, Driver, DriverError, Secret,
-    TextRows, TlsMode,
+    BatchStatement, Connection, ConnectionConfig, DatabaseInfo, Driver, DriverError, Outcome,
+    Secret, TextRows, TlsMode,
 };
 
 /// Tempo máximo padrão para abrir a conexão: DNS, TCP, TLS e autenticação, tudo junto (o
@@ -50,6 +50,10 @@ pub struct PostgresConnection {
     /// um lote pega a escrita e roda a transação sozinho, senão a query de outra tarefa entraria
     /// no `BEGIN … COMMIT` dele.
     client: RwLock<Client>,
+    /// Para cancelar o statement em curso sem esperar o lock (a query que roda segura a leitura).
+    cancel: tokio_postgres::CancelToken,
+    /// O TLS da conexão, para a conexão de cancelamento usar o mesmo.
+    tls: Option<ClientConfig>,
 }
 
 impl std::fmt::Debug for PostgresConnection {
@@ -289,7 +293,8 @@ impl Driver for PostgresDriver {
         tokio::runtime::Handle::try_current()
             .map_err(|_| DriverError::Config("connect exige um runtime tokio".into()))?;
         let pg = pg_config(config, password, self.connect_timeout);
-        let client = match tls_config(config.tls)? {
+        let tls = tls_config(config.tls)?;
+        let client = match tls.clone() {
             None => open(config, &pg, NoTls, self.connect_timeout).await?,
             Some(tls) => {
                 open(
@@ -302,7 +307,9 @@ impl Driver for PostgresDriver {
             }
         };
         Ok(PostgresConnection {
+            cancel: client.cancel_token(),
             client: RwLock::new(client),
+            tls,
         })
     }
 }
@@ -393,6 +400,62 @@ impl Connection for PostgresConnection {
         tx.commit().await.map_err(|e| db_error(&e))?;
         Ok(counts)
     }
+
+    async fn execute(&self, sql: &str, limit: Option<usize>) -> Result<Outcome, DriverError> {
+        use futures_util::StreamExt;
+
+        let client = self.client.read().await;
+        let mut stream = std::pin::pin!(
+            client
+                .simple_query_raw(sql)
+                .await
+                .map_err(|e| db_error(&e))?
+        );
+        let mut outcome = Outcome::default();
+        let mut columns: Option<Vec<String>> = None;
+        let mut rows = Vec::new();
+        while let Some(message) = stream.next().await {
+            match message.map_err(|e| db_error(&e))? {
+                SimpleQueryMessage::RowDescription(description) => {
+                    columns = Some(description.iter().map(|c| c.name().to_owned()).collect());
+                }
+                SimpleQueryMessage::Row(row) => {
+                    if columns.is_none() {
+                        columns = Some(row.columns().iter().map(|c| c.name().to_owned()).collect());
+                    }
+                    // Passou do limite: a linha é descartada, mas o statement vai até o fim. Nada
+                    // de cancelar no servidor: dentro de uma transação aberta o ERROR do cancel a
+                    // aborta e o COMMIT seguinte viraria ROLLBACK em silêncio; e sem TLS o pedido
+                    // de cancel fica em voo e derruba o statement seguinte desta conexão.
+                    if limit.is_some_and(|n| rows.len() >= n) {
+                        outcome.truncated = true;
+                        continue;
+                    }
+                    rows.push(
+                        (0..row.len())
+                            .map(|i| row.get(i).map(str::to_owned))
+                            .collect(),
+                    );
+                }
+                SimpleQueryMessage::CommandComplete(n) if columns.is_none() => {
+                    outcome.affected = Some(n);
+                }
+                _ => {}
+            }
+        }
+        if let Some(columns) = columns {
+            outcome.rows = Some(TextRows { columns, rows });
+        }
+        Ok(outcome)
+    }
+
+    async fn cancel(&self) -> Result<(), DriverError> {
+        match self.tls.clone() {
+            None => self.cancel.cancel_query(NoTls).await,
+            Some(tls) => self.cancel.cancel_query(MakeRustlsConnect::new(tls)).await,
+        }
+        .map_err(|e| db_error(&e))
+    }
 }
 
 /// As linhas afetadas pelo último `CommandComplete` (um statement por texto; com vários, vale o
@@ -442,6 +505,9 @@ fn text_rows(messages: Vec<SimpleQueryMessage>) -> Result<TextRows, DriverError>
 /// Erro de uma query já conectada: sem host nem usuário para citar.
 fn db_error(e: &tokio_postgres::Error) -> DriverError {
     if let Some(db) = e.as_db_error() {
+        if *db.code() == SqlState::QUERY_CANCELED {
+            return DriverError::Cancelled(db.message().to_owned());
+        }
         return DriverError::Db(db.message().to_owned());
     }
     if e.is_closed() {
@@ -628,6 +694,119 @@ mod tests {
                 dbs.iter().all(|d| !d.name.starts_with("template")),
                 "{dbs:?}"
             );
+        }
+
+        /// `execute`: linhas com limite (descarta o excesso e marca truncado), contagem de
+        /// linhas afetadas, erro de sintaxe sem derrubar a conexão; `cancel` interrompe um
+        /// `pg_sleep` em menos de um segundo com `Cancelled`.
+        #[tokio::test]
+        async fn execute_com_limite_contagem_erro_e_cancel() {
+            let Some((cfg, secret)) = config_from_env() else {
+                return;
+            };
+            let conn = std::sync::Arc::new(
+                PostgresDriver::default()
+                    .connect(&cfg, &secret)
+                    .await
+                    .unwrap(),
+            );
+            let out = conn
+                .execute("SELECT g AS n FROM generate_series(1, 100000) g", Some(5))
+                .await
+                .unwrap();
+            let rows = out.rows.unwrap();
+            assert_eq!(rows.columns, ["n"]);
+            assert_eq!(rows.rows.len(), 5);
+            assert_eq!(rows.cell(4, 0), Some("5"));
+            assert!(out.truncated && out.affected.is_none());
+            // Sem limite: tudo, sem truncar; resultado vazio ainda é `rows`.
+            let out = conn.execute("SELECT 1 WHERE false", None).await.unwrap();
+            assert_eq!(out.rows.unwrap().rows.len(), 0);
+            assert!(!out.truncated);
+            let out = conn
+                .execute("CREATE TEMP TABLE t_exec (x int); INSERT INTO t_exec SELECT generate_series(1, 7)", None)
+                .await
+                .unwrap();
+            assert_eq!((out.rows, out.affected), (None, Some(7)));
+            let err = conn.execute("SELEC 1", None).await.unwrap_err();
+            assert!(matches!(err, DriverError::Db(m) if m.contains("syntax error")));
+            // A conexão segue servindo depois do erro.
+            assert_eq!(
+                conn.execute("SELECT count(*) FROM t_exec", None)
+                    .await
+                    .unwrap()
+                    .rows
+                    .unwrap()
+                    .cell(0, 0),
+                Some("7")
+            );
+            // Resultado maior que o limite, numa conexão sem TLS: o statement seguinte tem de
+            // passar. Sem TLS um pedido de cancel só é escrito no socket e fica em voo; um cancel
+            // por limite que chegasse depois do fim do statement derrubaria o próximo (revisão de
+            // 22/10/2026). Com TLS o filho do servidor já leu o pedido quando `cancel` volta, e o
+            // cancel chega com o backend ocioso, onde é descartado: por isso a conexão própria.
+            let plain = PostgresDriver::default()
+                .connect(
+                    &ConnectionConfig {
+                        tls: TlsMode::Disable,
+                        ..cfg.clone()
+                    },
+                    &secret,
+                )
+                .await
+                .unwrap();
+            for total in [150, 1_200, 150, 1_200] {
+                let out = plain
+                    .execute(
+                        &format!("SELECT g FROM generate_series(1, {total}) g"),
+                        Some(100),
+                    )
+                    .await
+                    .unwrap();
+                assert!(out.truncated);
+                assert_eq!(out.rows.unwrap().rows.len(), 100);
+                let next = plain
+                    .execute("SELECT count(*) FROM generate_series(1, 20000)", None)
+                    .await;
+                assert!(next.is_ok(), "depois de {total} linhas: {next:?}");
+            }
+            // Limite dentro de uma transação aberta: nada pode cancelar no servidor (um ERROR,
+            // inclusive o 57014 do cancel, aborta a transação e o COMMIT viraria ROLLBACK em
+            // silêncio; revisão de 22/10/2026). A tabela criada antes do SELECT tem de existir depois.
+            plain.execute("BEGIN", None).await.unwrap();
+            plain
+                .execute("CREATE TEMP TABLE t_tx (x int)", None)
+                .await
+                .unwrap();
+            plain
+                .execute("INSERT INTO t_tx VALUES (1)", None)
+                .await
+                .unwrap();
+            let out = plain
+                .execute("SELECT g FROM generate_series(1, 200000) g", Some(100))
+                .await
+                .unwrap();
+            assert!(out.truncated);
+            plain.execute("COMMIT", None).await.unwrap();
+            let count = plain
+                .execute("SELECT count(*) FROM t_tx", None)
+                .await
+                .unwrap_or_else(|e| panic!("a transação foi abortada pelo limite: {e}"));
+            assert_eq!(count.rows.unwrap().cell(0, 0), Some("1"));
+            // Cancel: a query longa volta com Cancelled em menos de um segundo.
+            let started = std::time::Instant::now();
+            let sleeping = {
+                let conn = std::sync::Arc::clone(&conn);
+                tokio::spawn(async move { conn.execute("SELECT pg_sleep(5)", None).await })
+            };
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            conn.cancel().await.unwrap();
+            let result = sleeping.await.unwrap();
+            assert!(
+                matches!(result.unwrap_err(), DriverError::Cancelled(m) if m.contains("user request"))
+            );
+            assert!(started.elapsed() < std::time::Duration::from_secs(2));
+            conn.ping().await.unwrap();
         }
 
         /// O lote é tudo ou nada: erro no 2º statement ou contagem diferente da esperada desfaz
