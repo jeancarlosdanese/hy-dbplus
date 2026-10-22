@@ -1,4 +1,4 @@
-<!-- FEAT_EM_ANDAMENTO — docs, driver e engine em 21/10/2026; próximo: ui-egui e app -->
+<!-- FEAT_EM_ANDAMENTO — driver, engine, UI e app em 21/10/2026; falta push, CI e a conferência do Jean -->
 <!-- PRIO_ALTA -->
 # @file: docs/features/FEAT-003-driver-postgres-e-conexoes/context.index.md
 
@@ -34,7 +34,7 @@ senha no Keychain, conectar e listar bancos.
 5. CLAUDE.md (raiz)           → regras de engenharia (segredos, never panic, async fora da UI)
 ```
 
-## Onde está o quê (quando existir)
+## Onde está o quê
 
 ```
 crates/driver/src/config.rs       ConnectionConfig, TlsMode, Secret
@@ -44,9 +44,9 @@ crates/driver/src/postgres.rs     implementação tokio-postgres + rustls
 crates/engine/src/store.rs        ConnectionStore (TOML) e Connection (id, nome, tag, host, porta, usuário, banco)
 crates/engine/src/secrets.rs      trait SecretStore; keyring e memória
 crates/engine/src/session.rs      Sessions (genérico no driver), Session, Event, canal para a UI; PgSessions no lib.rs
-crates/ui-egui/src/connections.rs lista, busca, formulário, conectar
+crates/ui-egui/src/connections.rs lista, busca, formulário (ConnectionForm), remover com confirmação, conectar
 crates/ui-egui/src/workspace.rs   barra superior do ambiente e lista de bancos (tela 3.2)
-apps/hy-dbplus/src/main.rs        runtime tokio entregue ao engine
+apps/hy-dbplus/src/main.rs        runtime tokio, store, chaveiro (ou memória com HY_DBPLUS_SECRETS=memory), janela
 ```
 
 ## Workflow Claude Code

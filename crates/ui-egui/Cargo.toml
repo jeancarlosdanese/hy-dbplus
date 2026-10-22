@@ -15,3 +15,7 @@ workspace = true
 hy-dbplus-engine = { workspace = true }
 egui = { workspace = true }
 eframe = { workspace = true }
+
+[dev-dependencies]
+# Runtime para o teste de cadeia completa (formulário, store, conectar, evento).
+tokio = { workspace = true }

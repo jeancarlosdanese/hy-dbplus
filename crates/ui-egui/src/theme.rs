@@ -120,6 +120,22 @@ pub fn current(ctx: &egui::Context) -> Tokens {
     Tokens::for_theme(ctx.theme())
 }
 
+/// Cor de erro e de ação destrutiva, igual nas duas variantes. Não é a cor de nenhuma tag.
+pub fn error_color() -> Color32 {
+    Color32::from_rgb(0xD6, 0x3A, 0x3A)
+}
+
+/// Cor da tag de ambiente (lista e barra superior): verde local, azul dev, laranja staging,
+/// vermelho prod. Igual nas duas variantes: é sinal, não decoração.
+pub fn tag_color(tag: hy_dbplus_engine::Tag) -> Color32 {
+    match tag {
+        hy_dbplus_engine::Tag::Local => Color32::from_rgb(0x2E, 0xA0, 0x5C),
+        hy_dbplus_engine::Tag::Dev => Color32::from_rgb(0x2F, 0x6F, 0xED),
+        hy_dbplus_engine::Tag::Staging => Color32::from_rgb(0xE0, 0x8A, 0x1E),
+        hy_dbplus_engine::Tag::Prod => Color32::from_rgb(0xD6, 0x3A, 0x3A),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

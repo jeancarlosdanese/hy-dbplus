@@ -1400,7 +1400,9 @@ name = "hy-dbplus"
 version = "0.1.0"
 dependencies = [
  "eframe",
+ "hy-dbplus-engine",
  "hy-dbplus-ui-egui",
+ "tokio",
 ]
 
 [[package]]
@@ -1467,6 +1469,7 @@ dependencies = [
  "eframe",
  "egui",
  "hy-dbplus-engine",
+ "tokio",
 ]
 
 [[package]]

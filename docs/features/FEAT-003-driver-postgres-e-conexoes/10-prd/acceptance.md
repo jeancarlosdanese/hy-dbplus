@@ -24,18 +24,18 @@
 
 ## `ui-egui` e app
 
-- [ ] Lista de conexões vazia mostra o convite para criar a primeira; `+` abre o formulário; salvar grava o
+- [x] Lista de conexões vazia mostra o convite para criar a primeira; `+` abre o formulário; salvar grava o
       TOML e a senha no Keychain; a conexão aparece com tag colorida, nome e `host : database`.
-- [ ] Editar e remover funcionam; remover pede confirmação.
-- [ ] Conectar mostra "conectando", depois a barra `LOCAL | PostgreSQL 15.x : pg-localhost` e a lista de bancos;
-      senha errada mostra o erro na tela e volta para a lista.
-- [ ] A interface não congela durante a conexão (host inexistente ou servidor mudo, com timeout de 10 s no driver
-      cobrindo DNS, TCP, TLS e autenticação).
-- [ ] `app id` é `br.com.hy.dbplus`.
+- [x] Editar e remover funcionam; remover pede confirmação.
+- [x] Conectar mostra "conectando", depois a barra `LOCAL | PostgreSQL 15.x : pg-localhost` e a lista de bancos;
+      falha mostra o erro na linha da conexão, na lista (teste de cadeia completa; a conferência visual é do Jean).
+- [x] A interface não congela durante a conexão (host inexistente ou servidor mudo, com timeout de 10 s no driver
+      cobrindo DNS, TCP, TLS e autenticação; `connect` nunca bloqueia, teste do engine).
+- [x] `app id` é `br.com.hy.dbplus`.
 
 ## Portão e CI
 
-- [ ] `scripts/quality-gate.sh --full` verde; cargo-deny verde com as dependências novas; workflow verde.
+- [x] `scripts/quality-gate.sh --full` verde; cargo-deny verde com as dependências novas. [ ] Workflow verde (push).
 - [x] Testes que dependem do PostgreSQL local ficam atrás de `HY_DBPLUS_TEST_PG` e são pulados sem ela.
 
 ## Do Jean

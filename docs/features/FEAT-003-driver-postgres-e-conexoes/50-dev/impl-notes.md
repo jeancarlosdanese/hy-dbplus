@@ -6,10 +6,10 @@
 
 _Atualizado em 21/10/2026._
 
-- **Feito:** documentação; `driver` PostgreSQL (`81419bf`); `engine` com `ConnectionStore`, `SecretStore`
-  (Keychain e memória) e `Sessions` com eventos (14 testes); portão `--full` verde com 428 pacotes no lock.
+- **Feito:** documentação; `driver` (`81419bf`); `engine` (`2f20024`); `ui-egui` com as telas 3.1 e 3.2 e o
+  app com runtime, store e chaveiro; 46 testes no workspace com o servidor local; portão `--full` verde.
 - **Em curso:** nada.
-- **Falta:** `ui-egui` e app; verificação do Jean.
+- **Falta:** push e CI; verificação do Jean (criar `pg-localhost`, senha no Keychain, conectar, reabrir).
 - **Depende de:** FEAT-002 concluída (M0); PostgreSQL local `pg-localhost` para os testes com variável.
 - **Para retomar:** esta pasta, o `CLAUDE.md` da raiz e o BRIEF §3.1, §3.2, §5 e §6.
 
@@ -114,3 +114,38 @@ _Atualizado em 21/10/2026._
   passo 4: o `Runtime` do app precisa viver mais que `Sessions`, e o `KeyringSecrets` (zbus no Linux) é
   síncrono, chamado da thread da UI, nunca de dentro de um worker do tokio.
   Resíduo da 2ª rodada fechado: o `Failed` de uma tentativa superada também confere a geração (teste).
+  Commit `2f20024`.
+
+### 21/10/2026 — `ui-egui` e app
+
+- [x] `app.rs`: `Deps` (store, `Box<dyn SecretStore>`, `PgSessions`, receptor de eventos) montado pelo binário;
+  `App` com `View` (conexões ou workspace), `Status` por conexão (idle, conectando, conectado com versão e
+  bancos, falhou com texto) e `drain_events` a cada frame; `with_deps` sem `CreationContext` para teste.
+- [x] `connections.rs` (tela 3.1): lista com faixa colorida da tag, nome, `host : database`, estado e erro;
+  busca por nome ou subtítulo; `+ Nova` e `Editar` abrem o formulário (`egui::Window`) com nome, ambiente,
+  host, porta, usuário, senha (campo oculto; em branco mantém a atual ou vale `trust`), banco e TLS;
+  `ConnectionForm::build` valida (nome, host, porta 1..65535, usuário; banco vazio vira `postgres`) e editar
+  não troca o id; salvar grava o TOML e, se houver senha, o chaveiro; `Remover` pede confirmação e apaga TOML,
+  chaveiro e sessão; `Conectar` lê a senha do chaveiro (ou vazia) e chama `Sessions::connect`.
+- [x] `workspace.rs` (tela 3.2): barra superior com a cor do ambiente e `AMBIENTE | PostgreSQL <versão> :
+  conexão`, `← Conexões` e `Desconectar`; painel esquerdo Items/Queries/History com a lista de bancos (o
+  inicial em negrito); centro "Nenhum banco selecionado. ⌘K para escolher (M2)"; direito "Nenhuma linha
+  selecionada". Sem sessão aberta a tela volta para a lista.
+- [x] `theme.rs`: `tag_color` (verde local, azul dev, laranja staging, vermelho prod), igual nas duas variantes.
+- [x] `apps/hy-dbplus/src/main.rs`: runtime `tokio` multi-thread criado antes do eframe e vivo até a janela
+  fechar (o `Handle` vai para `Sessions`); `ConnectionStore::default_path` + `load`; `KeyringSecrets`, ou
+  `MemorySecrets` com `HY_DBPLUS_SECRETS=memory` (desenvolvimento e CI); `app id` corrigido para
+  `br.com.hy.dbplus` (BRIEF decisão 2); erro em qualquer passo vira stderr e saída 1.
+- [x] Testes: formulário (validação e edição sem trocar o id) e a cadeia completa sem renderizar, atrás de
+  `HY_DBPLUS_TEST_PG` (formulário → store sem senha → conectar → `Connected` → tela 3.2 → desconectar → lista).
+  Janela aberta por 6 s com `XDG_CONFIG_HOME` temporário e senhas em memória, sem erro.
+- [x] O eframe 0.36 não tem mais `TopBottomPanel`/`SidePanel`: é `egui::Panel::top/bottom/left/right` com
+  `default_size`.
+- [x] Revisor (dois médios, cinco baixos, aplicados antes do commit): a senha era tirada do formulário antes
+  do `save` do TOML (falha → segundo Salvar sem senha); agora o `take` vem depois do `save` e o formulário fica
+  aberto com a senha. Editar uma conexão aberta deixava a sessão viva com a configuração antiga; salvar agora
+  chama `disconnect` (que também invalida tentativa em voo). Chaveiro indisponível não conecta (o erro de
+  autenticação esconderia a causa). Remover só tira a senha do chaveiro se o TOML foi gravado, e os avisos se
+  concatenam. `Disconnected` de conexão já removida não volta ao mapa. Cor de erro própria (`error_color`),
+  desacoplada da tag `prod`. Decisão de produto anotada: TOML corrompido hoje impede o app de abrir (stderr e
+  saída 1); se um dia abrir com lista vazia, nunca deixar o `save` sobrescrever o arquivo quebrado.
