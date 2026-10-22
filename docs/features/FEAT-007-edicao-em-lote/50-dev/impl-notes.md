@@ -10,7 +10,9 @@ _Atualizado em 22/10/2026._
   `Statement { sql, expected_rows }`, `changes_sql`, `EditError`; 4 testes).
 - **Feito também:** `driver::execute_batch` (`BatchStatement { sql, expected_rows }`, transação pela API
   `Transaction` do tokio-postgres sob `RwLock`, `DriverError::Statement` e `RowCount`; teste com servidor).
-- **Em curso:** `engine::apply_changes`.
+- **Feito também:** `engine::apply_changes` e `preview_sql`, eventos `ChangesApplied`/`ChangesFailed`
+  (teste com driver falso que grava os lotes).
+- **Em curso:** revisão e commit do engine.
 - **Falta:** `ui-egui`; verificação do Jean.
 - **Depende de:** FEAT-006 (seleção múltipla, painel Form, `Column::is_primary_key` no cache de colunas).
 - **Para retomar:** esta pasta, o brief (Must 1–5) e o `CLAUDE.md`.
@@ -89,3 +91,30 @@ _Atualizado em 22/10/2026._
 - [x] "stream e cancelamento no M3" → M5 também na doc de `PostgresConnection` e no BRIEF §5.
 - Aceito sem mudar: o teste com servidor deixa o schema `hy_batch_*` para trás se uma asserção falhar antes
   do `DROP` (mesmo padrão dos testes do catálogo).
+
+### 22/10/2026 — `engine::apply_changes`
+
+- [x] `Sessions::apply_changes(id, database, schema, table, &ChangeSet)`: SQL por `catalog::changes_sql` (o
+  mesmo de `preview_sql`); `EditError` (sem chave) vira `ChangesFailed` na hora, sem tarefa; o lote vai ao
+  driver numa tarefa e o resultado passa por `commit_if_current`. Sucesso esvazia o cache de stats da
+  tabela (a contagem mudou) e emite `ChangesApplied { updated, deleted }`; erro emite `ChangesFailed` com o
+  texto do `DriverError`. Lote vazio sai como `ChangesApplied` com zeros, sem ir ao banco.
+- [x] `ChangesFailed { error: String, position: Option<usize> }`: o texto de `EditError` ou `DriverError` para
+  mostrar, e o statement que falhou (de `DriverError::Statement`/`RowCount`) para a caixa destacar no SQL.
+- [x] Teste: o driver falso grava os lotes; o SQL enviado é igual ao `preview_sql`, com `Some(1)`/`Some(1)`;
+  stats pedidos de novo vão ao banco; `qtd = 'x'` vira `ChangesFailed` com "statement 1"; sem chave não
+  chega ao driver; disconnect com o lote em voo não entrega o resultado.
+- [x] UI: braço `ChangesApplied | ChangesFailed => {}` só para o `match` compilar; o passo 4 o preenche.
+
+### 22/10/2026 — Revisão do engine (`process:reviewer`, 1ª rodada): nada bloqueante
+
+- [x] `position` no `ChangesFailed` (ver acima), decidido antes de a UI consumir o evento.
+- [x] Lote com chave e sem statement: `ChangesApplied` com zeros na hora, sem tarefa e sem esvaziar o cache
+  de stats (teste: stats seguem do cache). Sem chave continua `ChangesFailed`.
+- [x] `ChangeSet::update_count()` no catálogo: a regra "linha com `set` não vazio é um UPDATE" num lugar só,
+  usada por `is_empty`, por `changes_sql` (implícito) e pelo `updated` do engine.
+- [x] Docs: brief Must 3 com a assinatura real de `preview_sql` e `ChangesFailed`; doc do `catalog::edit`
+  dizia que o engine confere a contagem (é o driver); "rollback por contagem" saiu dos testes do engine (a
+  prova real é o teste com servidor do driver).
+- Para o passo 4: ao receber `ChangesApplied`, pedir os stats sempre (não reaproveitar `retry_data`, que só
+  os pede quando `tab.stats` está vazio).

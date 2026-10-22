@@ -17,8 +17,9 @@
 
 ## `engine`
 
-- [ ] `apply_changes` emite `ChangesApplied` com as contagens e, em seguida, a página recarregada; erro emite
-      `ChangesFailed` com a mensagem do servidor, sem segredo.
+- [ ] `apply_changes` emite `ChangesApplied` com as contagens e esvazia o cache de stats da tabela (a UI
+      recarrega página e stats); erro emite `ChangesFailed` com a mensagem do servidor, sem segredo; tabela
+      sem chave primária é recusada antes de ir ao driver.
 - [ ] `preview_sql` devolve exatamente os statements que `apply_changes` manda ao driver (teste com driver
       falso que grava o SQL).
 - [ ] Eventos passam por `commit_if_current` (sessão reconectada não recebe o resultado).

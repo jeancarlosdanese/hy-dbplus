@@ -1,7 +1,7 @@
 //! O SQL de um lote de Update e Delete da aba Data (FEAT-007): um `UPDATE` por linha alterada, só
 //! com as colunas que mudaram, e um `DELETE … IN` para todas as linhas marcadas. Só tabela com
 //! chave primária: o `WHERE` é pela chave, e cada statement traz quantas linhas deve afetar (o
-//! engine confere e desfaz a transação se a contagem não bater).
+//! driver confere e desfaz a transação se a contagem não bater).
 //!
 //! Identificador entre aspas duplas (`quote_ident`), valor como literal `E'…'` (`literal`) e
 //! `NULL` literal: nada cru chega ao SQL. O texto gerado aqui é exatamente o que o driver manda
@@ -34,7 +34,13 @@ pub struct ChangeSet {
 
 impl ChangeSet {
     pub fn is_empty(&self) -> bool {
-        self.updates.iter().all(|u| u.set.is_empty()) && self.deletes.is_empty()
+        self.update_count() == 0 && self.deletes.is_empty()
+    }
+
+    /// Quantos `UPDATE` o lote gera: uma linha com alguma coluna em `set` é um. A mesma regra de
+    /// [`changes_sql`], num lugar só (o engine relata este número em `ChangesApplied`).
+    pub fn update_count(&self) -> usize {
+        self.updates.iter().filter(|u| !u.set.is_empty()).count()
     }
 }
 
@@ -219,6 +225,7 @@ mod tests {
         assert!(empty.is_empty());
         assert!(changes_sql("s", "t", &empty).unwrap().is_empty());
         assert!(!changes.is_empty());
+        assert_eq!(changes.update_count(), 1);
     }
 
     #[test]

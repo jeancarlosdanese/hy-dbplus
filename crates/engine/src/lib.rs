@@ -12,14 +12,15 @@ pub mod store;
 
 pub use error::EngineError;
 pub use hy_dbplus_catalog::{
-    Column, Direction, Function, Order, Schema, Table, TableKind, TableStats,
+    ChangeSet, Column, Direction, EditError, Function, Order, RowUpdate, Schema, Table, TableKind,
+    TableStats,
 };
 pub use hy_dbplus_driver::postgres::PostgresDriver;
 pub use hy_dbplus_driver::{
     ConnectionConfig, DatabaseInfo, Driver, DriverError, Secret, TextRows, TlsMode,
 };
 pub use secrets::{KeyringSecrets, MemorySecrets, SecretStore};
-pub use session::{Event, Page, Session, Sessions};
+pub use session::{Event, Page, Session, Sessions, preview_sql};
 
 /// As sessões PostgreSQL: o único driver do MVP, pronto para a UI e os apps.
 pub type PgSessions = Sessions<PostgresDriver>;

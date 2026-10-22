@@ -310,6 +310,8 @@ where
                         tab.error = Some(error.to_string());
                     }
                 }
+                // FEAT-007 passo 4: recarga da página e dos stats, e a caixa de Commit com o erro.
+                Event::ChangesApplied { .. } | Event::ChangesFailed { .. } => {}
                 Event::CatalogFailed {
                     database, error, ..
                 } => {

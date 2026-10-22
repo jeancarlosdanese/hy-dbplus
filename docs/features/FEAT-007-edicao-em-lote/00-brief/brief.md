@@ -33,8 +33,9 @@ limpa as pendências. Tabela sem chave primária continua só leitura, com aviso
 3. **`engine`**: `Sessions::apply_changes(id, database, schema, table, ChangeSet)`; monta o SQL pelo
    catálogo (`BatchStatement` com a contagem esperada: 1 por `UPDATE`, N no `DELETE`) e roda
    `execute_batch`; contagem diferente (linha mudou ou sumiu por outra sessão) é o driver que desfaz.
-   Eventos: `ChangesApplied { schema, table, updated, deleted }` e `ChangesFailed { schema, table, message }`.
-   `preview_sql(ChangeSet) -> Vec<String>` puro, para a caixa de Commit (o mesmo texto que roda).
+   Eventos: `ChangesApplied { schema, table, updated, deleted }` e `ChangesFailed { schema, table, error,
+   position }` (`position` é o statement que falhou, para a caixa destacar). `preview_sql(schema, table,
+   &ChangeSet) -> Result<Vec<String>, EditError>` puro, para a caixa de Commit (o mesmo texto que roda).
 4. **`ui-egui`**:
    - Só com chave primária (`Column::is_primary_key` no cache): sem ela, a linha de tamanhos mostra "sem
      chave primária: só leitura" e nada entra em edição.
@@ -53,7 +54,8 @@ limpa as pendências. Tabela sem chave primária continua só leitura, com aviso
 5. **Testes**: `catalog::edit` (escape de `'` e `\`, identificador com aspas, PK composta, `NULL`, só as
    colunas alteradas, ordem estável); `driver` atrás de `HY_DBPLUS_TEST_PG` (erro no 2º statement deixa a
    tabela como estava; contagem esperada errada faz rollback); `engine` com driver falso (eventos, SQL do
-   preview igual ao executado, rollback por contagem); UI com `egui_kittest` (duplo clique, digitar, Enter →
+   preview igual ao executado, sem chave recusado antes do driver, lote vazio); UI com `egui_kittest` (duplo
+   clique, digitar, Enter →
    `1 alteração`; ⌫ marca; Commit mostra o SQL; Executar → o driver falso recebe `BEGIN`, `UPDATE`,
    `DELETE`, `COMMIT`, a página recarrega; Descartar limpa; ordenar desabilitado com pendência; tabela sem
    PK não entra em edição).

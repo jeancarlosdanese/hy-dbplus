@@ -14,7 +14,8 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
 use hy_dbplus_catalog::{
-    self as catalog, Column, Direction, Function, Order, Schema, Table, TableStats,
+    self as catalog, ChangeSet, Column, Direction, EditError, Function, Order, Schema, Table,
+    TableStats,
 };
 use hy_dbplus_driver::{
     Connection as DriverConnection, ConnectionConfig, DatabaseInfo, Driver, DriverError, Secret,
@@ -93,6 +94,28 @@ pub enum Event {
         table: String,
         error: DriverError,
     },
+    /// O lote de edição gravou (`updated` linhas alteradas, `deleted` apagadas). O cache de stats
+    /// da tabela foi esvaziado: a UI recarrega a página e os stats.
+    ChangesApplied {
+        connection: ConnectionId,
+        database: String,
+        schema: String,
+        table: String,
+        updated: u64,
+        deleted: u64,
+    },
+    /// O lote não gravou nada: SQL recusado (sem chave primária ou chave incompleta), statement
+    /// com erro ou contagem de linhas diferente da esperada. `error` é o texto para mostrar (de
+    /// `EditError` ou `DriverError`, sem segredo); `position` é o statement que falhou, a partir
+    /// de 1, quando o erro é de um statement (a caixa de Commit o destaca no SQL).
+    ChangesFailed {
+        connection: ConnectionId,
+        database: String,
+        schema: String,
+        table: String,
+        error: String,
+        position: Option<usize>,
+    },
 }
 
 /// O que uma página pede: ordenação opcional, tamanho e deslocamento (`LIMIT/OFFSET`).
@@ -126,7 +149,9 @@ impl Event {
             | Event::CatalogFailed { connection, .. }
             | Event::StatsLoaded { connection, .. }
             | Event::PageLoaded { connection, .. }
-            | Event::DataFailed { connection, .. } => connection,
+            | Event::DataFailed { connection, .. }
+            | Event::ChangesApplied { connection, .. }
+            | Event::ChangesFailed { connection, .. } => connection,
         }
     }
 }
@@ -593,6 +618,102 @@ where
         });
     }
 
+    /// Grava um lote de Update e Delete numa transação só dele (FEAT-007): o SQL é o de
+    /// [`preview_sql`], cada statement com a contagem de linhas esperada; erro de um statement ou
+    /// contagem diferente desfaz tudo (`ChangesFailed`). No sucesso, o cache de stats da tabela é
+    /// esvaziado (a contagem mudou) e sai `ChangesApplied`; a UI recarrega página e stats. Lote
+    /// com chave mas sem statement sai na hora como `ChangesApplied` com zeros, sem banco nem
+    /// cache. Mesma pré-condição de `load_schema`.
+    pub fn apply_changes(
+        &self,
+        id: &str,
+        database: &str,
+        schema: &str,
+        table: &str,
+        changes: &ChangeSet,
+    ) {
+        let (generation, conn) = {
+            let Ok(map) = self.slots.lock() else { return };
+            let Some(slot) = map.get(id) else { return };
+            let Some(db) = slot.databases.get(database) else {
+                return;
+            };
+            (slot.generation, Arc::clone(&db.conn))
+        };
+        let (id, database, schema, table) = (
+            id.to_owned(),
+            database.to_owned(),
+            schema.to_owned(),
+            table.to_owned(),
+        );
+        let statements = match hy_dbplus_catalog::changes_sql(&schema, &table, changes) {
+            Ok(statements) => statements,
+            Err(error) => {
+                self.emit(Event::ChangesFailed {
+                    connection: id,
+                    database,
+                    schema,
+                    table,
+                    error: error.to_string(),
+                    position: None,
+                });
+                return;
+            }
+        };
+        let updated = changes.update_count() as u64;
+        let deleted = changes.deletes.len() as u64;
+        if statements.is_empty() {
+            // Nada a gravar: nem banco, nem cache de stats.
+            self.emit(Event::ChangesApplied {
+                connection: id,
+                database,
+                schema,
+                table,
+                updated,
+                deleted,
+            });
+            return;
+        }
+        let events = self.events.clone();
+        let repaint = Arc::clone(&self.repaint);
+        let slots = Arc::clone(&self.slots);
+        self.runtime.spawn(async move {
+            let sent = match conn.execute_batch(&statements).await {
+                Ok(_) => commit_if_current(&slots, &events, &id, generation, |slot| {
+                    if let Some(db) = slot.databases.get_mut(&database) {
+                        db.stats.remove(&(schema.clone(), table.clone()));
+                    }
+                    Event::ChangesApplied {
+                        connection: id.clone(),
+                        database: database.clone(),
+                        schema: schema.clone(),
+                        table: table.clone(),
+                        updated,
+                        deleted,
+                    }
+                }),
+                Err(error) => {
+                    let position = match &error {
+                        DriverError::Statement { position, .. }
+                        | DriverError::RowCount { position, .. } => Some(*position),
+                        _ => None,
+                    };
+                    commit_if_current(&slots, &events, &id, generation, |_| Event::ChangesFailed {
+                        connection: id.clone(),
+                        database: database.clone(),
+                        schema: schema.clone(),
+                        table: table.clone(),
+                        error: error.to_string(),
+                        position,
+                    })
+                }
+            };
+            if sent {
+                repaint();
+            }
+        });
+    }
+
     /// Uma página de linhas (`LIMIT/OFFSET`), ordenada pela coluna pedida e, como desempate, pela
     /// chave primária: se as colunas da tabela ainda não estão em cache, a tarefa as lê antes da
     /// primeira página (uma query a mais, uma vez por tabela), para todas as páginas saírem sob a
@@ -743,6 +864,19 @@ async fn open_session<D: Driver>(
     })
 }
 
+/// O SQL que [`Sessions::apply_changes`] vai mandar, statement por statement, para a caixa de
+/// Commit mostrar; o mesmo texto, pela mesma função do catálogo.
+pub fn preview_sql(
+    schema: &str,
+    table: &str,
+    changes: &ChangeSet,
+) -> Result<Vec<String>, EditError> {
+    Ok(hy_dbplus_catalog::changes_sql(schema, table, changes)?
+        .into_iter()
+        .map(|s| s.sql)
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -750,6 +884,7 @@ mod tests {
 
     use super::*;
     use crate::store::Tag;
+    use hy_dbplus_catalog::RowUpdate;
     use hy_dbplus_driver::{BatchStatement, TextRows};
 
     /// Driver falso: demora 20 ms; falha quando a senha é "errada"; conta as queries de catálogo
@@ -758,10 +893,12 @@ mod tests {
     struct FakeDriver {
         queries: Arc<AtomicUsize>,
         last_sql: Arc<Mutex<String>>,
+        batches: Arc<Mutex<Vec<Vec<BatchStatement>>>>,
     }
     struct FakeConn {
         queries: Arc<AtomicUsize>,
         last_sql: Arc<Mutex<String>>,
+        batches: Arc<Mutex<Vec<Vec<BatchStatement>>>>,
     }
 
     fn row(cells: &[Option<&str>]) -> Vec<Option<String>> {
@@ -785,11 +922,29 @@ mod tests {
                 },
             ])
         }
+        /// Registra o lote; demora 30 ms (para o teste do disconnect no meio); `qtd = E'x'` é o
+        /// statement que o servidor recusaria (texto numa coluna integer).
         async fn execute_batch(
             &self,
-            _statements: &[BatchStatement],
+            statements: &[BatchStatement],
         ) -> Result<Vec<u64>, DriverError> {
-            Err(DriverError::Db("lote fora deste teste".into()))
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            if let Ok(mut batches) = self.batches.lock() {
+                batches.push(statements.to_vec());
+            }
+            if let Some(i) = statements
+                .iter()
+                .position(|s| s.sql.contains("\"qtd\" = E'x'"))
+            {
+                return Err(DriverError::Statement {
+                    position: i + 1,
+                    reason: "invalid input syntax for type integer: \"x\"".into(),
+                });
+            }
+            Ok(statements
+                .iter()
+                .map(|s| s.expected_rows.unwrap_or(0))
+                .collect())
         }
         async fn query_text(&self, sql: &str) -> Result<TextRows, DriverError> {
             self.queries.fetch_add(1, Ordering::SeqCst);
@@ -871,6 +1026,7 @@ mod tests {
             Ok(FakeConn {
                 queries: Arc::clone(&self.queries),
                 last_sql: Arc::clone(&self.last_sql),
+                batches: Arc::clone(&self.batches),
             })
         }
     }
@@ -882,6 +1038,7 @@ mod tests {
         repaints: Arc<AtomicUsize>,
         queries: Arc<AtomicUsize>,
         last_sql: Arc<Mutex<String>>,
+        batches: Arc<Mutex<Vec<Vec<BatchStatement>>>>,
     }
 
     fn setup() -> Harness {
@@ -891,6 +1048,7 @@ mod tests {
         let driver = FakeDriver::default();
         let queries = Arc::clone(&driver.queries);
         let last_sql = Arc::clone(&driver.last_sql);
+        let batches = Arc::clone(&driver.batches);
         let (sessions, rx) = Sessions::new(driver, rt.handle().clone(), move || {
             counter.fetch_add(1, Ordering::SeqCst);
         });
@@ -901,6 +1059,7 @@ mod tests {
             repaints,
             queries,
             last_sql,
+            batches,
         }
     }
 
@@ -1287,5 +1446,126 @@ mod tests {
             "{event:?}"
         );
         assert!(h.sessions.is_open(&c.id));
+    }
+
+    fn changes(column: &str, value: &str) -> ChangeSet {
+        ChangeSet {
+            key_columns: vec!["id".into()],
+            updates: vec![RowUpdate {
+                key: vec!["1".into()],
+                set: vec![(column.into(), Some(value.into()))],
+            }],
+            deletes: vec![vec!["2".into()]],
+        }
+    }
+
+    #[test]
+    fn lote_manda_o_sql_do_preview_esvazia_os_stats_e_falha_sem_gravar() {
+        let h = setup();
+        let c = conn();
+        connected(&h, &c);
+        h.sessions.select_database(&c.id, "loja");
+        let _ = next(&h.rx);
+        h.sessions.load_stats(&c.id, "loja", "public", "pedido");
+        assert!(matches!(next(&h.rx), Event::StatsLoaded { .. }));
+        let before = h.queries.load(Ordering::SeqCst);
+
+        // Sucesso: o driver recebe exatamente o SQL do preview, com as contagens esperadas.
+        let ok = changes("nome", "novo");
+        let preview = preview_sql("public", "pedido", &ok).unwrap();
+        assert_eq!(preview.len(), 2);
+        h.sessions
+            .apply_changes(&c.id, "loja", "public", "pedido", &ok);
+        assert_eq!(
+            next(&h.rx),
+            Event::ChangesApplied {
+                connection: c.id.clone(),
+                database: "loja".into(),
+                schema: "public".into(),
+                table: "pedido".into(),
+                updated: 1,
+                deleted: 1,
+            }
+        );
+        let batches = h.batches.lock().unwrap().clone();
+        assert_eq!(batches.len(), 1);
+        let sent: Vec<String> = batches[0].iter().map(|s| s.sql.clone()).collect();
+        assert_eq!(sent, preview);
+        assert_eq!(
+            batches[0]
+                .iter()
+                .map(|s| s.expected_rows)
+                .collect::<Vec<_>>(),
+            [Some(1), Some(1)]
+        );
+        // Os stats saíram do cache: pedir de novo vai ao banco.
+        h.sessions.load_stats(&c.id, "loja", "public", "pedido");
+        assert!(matches!(next(&h.rx), Event::StatsLoaded { .. }));
+        assert_eq!(
+            h.queries.load(Ordering::SeqCst),
+            before + 2,
+            "tamanhos + count"
+        );
+
+        // Statement recusado pelo servidor: ChangesFailed com a posição, nada gravado.
+        h.sessions
+            .apply_changes(&c.id, "loja", "public", "pedido", &changes("qtd", "x"));
+        let event = next(&h.rx);
+        let Event::ChangesFailed {
+            error, position, ..
+        } = &event
+        else {
+            panic!("{event:?}")
+        };
+        assert!(
+            error.starts_with("statement 1 do lote falhou e nada foi gravado: invalid input"),
+            "{error}"
+        );
+        assert_eq!(*position, Some(1));
+
+        // Lote com chave e sem statement: zeros na hora, sem driver e sem esvaziar os stats.
+        let nothing = ChangeSet {
+            key_columns: vec!["id".into()],
+            ..Default::default()
+        };
+        h.sessions
+            .apply_changes(&c.id, "loja", "public", "pedido", &nothing);
+        assert!(matches!(
+            next(&h.rx),
+            Event::ChangesApplied {
+                updated: 0,
+                deleted: 0,
+                ..
+            }
+        ));
+        let before = h.queries.load(Ordering::SeqCst);
+        h.sessions.load_stats(&c.id, "loja", "public", "pedido");
+        assert!(matches!(next(&h.rx), Event::StatsLoaded { .. }));
+        assert_eq!(h.queries.load(Ordering::SeqCst), before, "stats do cache");
+
+        // Sem chave primária: recusado antes de ir ao driver.
+        let no_key = ChangeSet {
+            deletes: vec![vec!["1".into()]],
+            ..Default::default()
+        };
+        h.sessions
+            .apply_changes(&c.id, "loja", "public", "pedido", &no_key);
+        let event = next(&h.rx);
+        assert!(
+            matches!(&event, Event::ChangesFailed { error, .. } if error.contains("chave primária")),
+            "{event:?}"
+        );
+        assert_eq!(
+            h.batches.lock().unwrap().len(),
+            2,
+            "o lote sem chave não chegou ao driver"
+        );
+
+        // Disconnect com o lote em voo: o resultado não chega à sessão que fechou.
+        h.sessions
+            .apply_changes(&c.id, "loja", "public", "pedido", &ok);
+        h.sessions.disconnect(&c.id);
+        assert!(matches!(next(&h.rx), Event::Disconnected { .. }));
+        assert!(h.rx.recv_timeout(Duration::from_millis(150)).is_err());
     }
 }
