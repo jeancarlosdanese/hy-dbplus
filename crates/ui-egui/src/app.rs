@@ -2,7 +2,7 @@
 //! Genérico no driver para o teste de interação rodar com um engine falso; o binário usa
 //! [`PgApp`].
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 
@@ -37,6 +37,14 @@ pub enum Status {
     Failed(String),
 }
 
+/// O formato do painel de registro.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PanelMode {
+    #[default]
+    Form,
+    Json,
+}
+
 /// Qual tela está na frente.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum View {
@@ -62,6 +70,23 @@ pub struct Workspace {
     pub data: Option<DataTab>,
 }
 
+impl Workspace {
+    /// As colunas do catálogo (nome, tipo) na ordem das colunas de uma página de dados, casadas pelo
+    /// nome; `None` onde o cache não tem a coluna. Cabeçalho do grid, Form e JSON usam esta busca.
+    pub fn catalog_columns(
+        &self,
+        schema: &str,
+        table: &str,
+        names: &[String],
+    ) -> Vec<Option<&Column>> {
+        let cache = self.columns.get(&(schema.to_owned(), table.to_owned()));
+        names
+            .iter()
+            .map(|name| cache.and_then(|c| c.iter().find(|c| &c.name == name)))
+            .collect()
+    }
+}
+
 /// A aba Data de uma tabela (tela 3.4): página atual, ordenação, contagem, tamanhos e seleção.
 #[derive(Debug, Clone)]
 pub struct DataTab {
@@ -73,7 +98,11 @@ pub struct DataTab {
     /// `Arc`: a aba é clonada a cada frame para desenhar; as linhas não.
     pub rows: Option<Arc<TextRows>>,
     pub stats: Option<TableStats>,
-    pub selected_row: Option<usize>,
+    /// Linhas selecionadas (índices da página); `anchor` é a última clicada, para ⇧ estender.
+    pub selected_rows: BTreeSet<usize>,
+    pub anchor: Option<usize>,
+    /// Campos do Form abertos por "mostrar tudo".
+    pub expanded_fields: HashSet<String>,
     pub loading: bool,
     pub error: Option<String>,
 }
@@ -87,7 +116,9 @@ impl DataTab {
             requested: Some(Page::default()),
             rows: None,
             stats: None,
-            selected_row: None,
+            selected_rows: BTreeSet::new(),
+            anchor: None,
+            expanded_fields: HashSet::new(),
             loading: true,
             error: None,
         }
@@ -109,8 +140,9 @@ pub struct App<D: Driver> {
     pub(crate) status: HashMap<ConnectionId, Status>,
     pub(crate) workspaces: HashMap<ConnectionId, Workspace>,
     pub(crate) palette: Option<Palette>,
-    /// Painel direito visível (botão na barra superior).
+    /// Painel direito visível (botão na barra superior; abre sozinho na primeira seleção).
     pub(crate) side_panel_open: bool,
+    pub(crate) panel_mode: PanelMode,
     pub(crate) connections: Connections,
     pub(crate) form: Option<ConnectionForm>,
     /// Último erro de arquivo ou chaveiro, mostrado no rodapé até o próximo sucesso.
@@ -136,7 +168,8 @@ where
             status: HashMap::new(),
             workspaces: HashMap::new(),
             palette: None,
-            side_panel_open: true,
+            side_panel_open: false,
+            panel_mode: PanelMode::default(),
             connections: Connections::default(),
             form: None,
             notice: None,
@@ -258,7 +291,8 @@ where
                         tab.rows = Some(Arc::new(rows));
                         tab.loading = false;
                         tab.error = None;
-                        tab.selected_row = None;
+                        tab.selected_rows.clear();
+                        tab.anchor = None;
                     }
                 }
                 Event::DataFailed {
@@ -339,7 +373,8 @@ where
         tab.requested = Some(page.clone());
         tab.loading = true;
         tab.error = None;
-        tab.selected_row = None;
+        tab.selected_rows.clear();
+        tab.anchor = None;
         let (schema, table) = (tab.schema.clone(), tab.table.clone());
         self.deps
             .sessions
@@ -363,6 +398,46 @@ where
             self.deps
                 .sessions
                 .load_stats(id, &database, &schema, &table);
+        }
+    }
+
+    /// Clique numa linha do grid: simples seleciona só ela; ⌘ (Ctrl fora do macOS) alterna; ⇧ estende
+    /// da última clicada. Só a primeira seleção (de nenhuma linha para alguma) abre o painel: depois, o
+    /// botão "Painel" manda, e o clique numa linha não o reabre.
+    pub(crate) fn select_row(
+        &mut self,
+        id: &ConnectionId,
+        index: usize,
+        modifiers: egui::Modifiers,
+    ) {
+        let Some(tab) = self.workspaces.get_mut(id).and_then(|ws| ws.data.as_mut()) else {
+            return;
+        };
+        let was_empty = tab.selected_rows.is_empty();
+        if modifiers.shift {
+            // Sem âncora (primeiro clique já com ⇧), a linha clicada vira a âncora dos próximos.
+            let from = *tab.anchor.get_or_insert(index);
+            let (lo, hi) = if from <= index {
+                (from, index)
+            } else {
+                (index, from)
+            };
+            tab.selected_rows.extend(lo..=hi);
+        } else if modifiers.command {
+            if !tab.selected_rows.remove(&index) {
+                tab.selected_rows.insert(index);
+            }
+            tab.anchor = Some(index);
+        } else {
+            let only_this = tab.selected_rows.len() == 1 && tab.selected_rows.contains(&index);
+            tab.selected_rows.clear();
+            if !only_this {
+                tab.selected_rows.insert(index);
+            }
+            tab.anchor = Some(index);
+        }
+        if was_empty && !tab.selected_rows.is_empty() {
+            self.side_panel_open = true;
         }
     }
 

@@ -6,7 +6,7 @@
 use hy_dbplus_engine::{ConnectionId, Driver};
 
 use crate::app::{App, Status, View};
-use crate::{data, palette, theme, tree};
+use crate::{data, palette, record, theme, tree};
 
 pub fn show<D>(app: &mut App<D>, ui: &mut egui::Ui, id: &ConnectionId)
 where
@@ -107,16 +107,16 @@ where
     let data_tab = app.workspaces.get(id).and_then(|ws| ws.data.clone());
     if app.side_panel_open {
         egui::Panel::right("workspace-right")
-            .default_size(260.0)
-            .min_size(180.0)
-            .max_size(560.0)
-            .show(ui, |ui| match &data_tab {
-                Some(tab) => data::side_panel(ui, tab),
-                None => {
+            .default_size(300.0)
+            .min_size(200.0)
+            .max_size(640.0)
+            .show(ui, |ui| {
+                if data_tab.is_some() {
+                    record::show(app, ui, id);
+                } else {
                     ui.centered_and_justified(|ui| {
                         ui.label(
-                            egui::RichText::new("Nenhuma linha selecionada")
-                                .color(tokens.text_muted),
+                            egui::RichText::new("Nenhuma tabela aberta").color(tokens.text_muted),
                         );
                     });
                 }

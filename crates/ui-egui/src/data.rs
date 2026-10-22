@@ -4,7 +4,7 @@
 use egui_extras::{Column as TableColumn, TableBuilder};
 use hy_dbplus_engine::{ConnectionId, Direction, Driver, Order, Page};
 
-use crate::app::{App, DataTab};
+use crate::app::App;
 use crate::theme;
 
 const ROW_HEIGHT: f32 = 22.0;
@@ -21,7 +21,7 @@ where
         return;
     };
     let mut next_page: Option<Page> = None;
-    let mut select: Option<usize> = None;
+    let mut select: Option<(usize, egui::Modifiers)> = None;
     let mut retry = false;
 
     egui::Panel::bottom("data-footer").show(ui, |ui| {
@@ -65,7 +65,10 @@ where
                     });
                 }
                 let total_text = total.map_or_else(|| "…".to_owned(), |t| t.to_string());
-                let counter = if shown == 0 {
+                let selected = tab.selected_rows.len();
+                let counter = if selected > 0 {
+                    format!("{selected} of {shown} rows selected")
+                } else if shown == 0 {
                     format!("0 of {total_text} rows")
                 } else {
                     format!("{}-{} of {total_text} rows", offset + 1, offset + shown)
@@ -101,6 +104,16 @@ where
     egui::CentralPanel::default_margins().show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(format!("{}.{}", tab.schema, tab.table)).strong());
+            if let Some(stats) = &tab.stats {
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{} rows · total {} · data {} · index {}",
+                        stats.row_count, stats.total_size, stats.data_size, stats.index_size
+                    ))
+                    .small()
+                    .color(tokens.text_muted),
+                );
+            }
             if tab.loading {
                 ui.label(
                     egui::RichText::new("carregando…")
@@ -109,6 +122,17 @@ where
                 );
             }
         });
+        if let Some(comment) = tab.stats.as_ref().and_then(|s| s.comment.as_deref()) {
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(comment)
+                        .small()
+                        .color(tokens.text_muted),
+                )
+                .wrap(),
+            );
+        }
+
         if let Some(error) = &tab.error {
             // O grid já carregado fica; o erro (página ou stats) vai numa faixa em cima dele.
             ui.horizontal(|ui| {
@@ -125,19 +149,16 @@ where
             ui.label(egui::RichText::new("Carregando…").color(tokens.text_muted));
             return;
         };
-        let types: Vec<Option<String>> = {
-            let cols = app
-                .workspaces
-                .get(id)
-                .and_then(|ws| ws.columns.get(&(tab.schema.clone(), tab.table.clone())));
-            rows.columns
-                .iter()
-                .map(|name| {
-                    cols.and_then(|c| c.iter().find(|c| &c.name == name))
-                        .map(|c| c.data_type.clone())
-                })
-                .collect()
-        };
+        let types: Vec<Option<String>> = app
+            .workspaces
+            .get(id)
+            .map(|ws| ws.catalog_columns(&tab.schema, &tab.table, &rows.columns))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|c| c.map(|c| c.data_type.clone()))
+            .collect();
+        // Lidos antes de o TableBuilder tomar o `ui`: ⌘ alterna e ⇧ estende a seleção.
+        let modifiers = ui.input(|i| i.modifiers);
         let mut builder = TableBuilder::new(ui)
             .striped(true)
             .resizable(true)
@@ -199,18 +220,18 @@ where
             .body(|body| {
                 body.rows(ROW_HEIGHT, rows.rows.len(), |mut row| {
                     let index = row.index();
-                    row.set_selected(tab.selected_row == Some(index));
+                    row.set_selected(tab.selected_rows.contains(&index));
                     row.col(|ui| {
                         // O número da linha é o alvo de seleção; o resto da linha também seleciona.
                         let number = (tab.page.offset + index as u64 + 1).to_string();
                         if ui
                             .selectable_label(
-                                tab.selected_row == Some(index),
+                                tab.selected_rows.contains(&index),
                                 egui::RichText::new(number).small(),
                             )
                             .clicked()
                         {
-                            select = Some(index);
+                            select = Some((index, modifiers));
                         }
                     });
                     if let Some(cells) = rows.rows.get(index) {
@@ -230,85 +251,18 @@ where
                         }
                     }
                     if row.response().clicked() {
-                        select = Some(index);
+                        select = Some((index, modifiers));
                     }
                 });
             });
     });
 
-    if let Some(index) = select
-        && let Some(tab) = app.workspaces.get_mut(id).and_then(|ws| ws.data.as_mut())
-    {
-        tab.selected_row = if tab.selected_row == Some(index) {
-            None
-        } else {
-            Some(index)
-        };
+    if let Some((index, modifiers)) = select {
+        app.select_row(id, index, modifiers);
     }
     if retry {
         app.retry_data(id);
     } else if let Some(page) = next_page {
         app.load_data_page(id, page);
-    }
-}
-
-/// O painel direito: tamanhos e comentário, ou os campos da linha selecionada. Tudo quebra linha
-/// na largura do painel: valor ou comentário longo não trava a largura mínima.
-pub fn side_panel(ui: &mut egui::Ui, tab: &DataTab) {
-    let tokens = theme::current(ui.ctx());
-    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-    if let (Some(index), Some(rows)) = (tab.selected_row, tab.rows.as_ref())
-        && let Some(cells) = rows.rows.get(index)
-    {
-        ui.label(
-            egui::RichText::new(format!("Linha {}", tab.page.offset + index as u64 + 1)).strong(),
-        );
-        ui.separator();
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            for (name, cell) in rows.columns.iter().zip(cells) {
-                ui.label(egui::RichText::new(name).small().color(tokens.text_muted));
-                match cell {
-                    Some(value) => ui.label(egui::RichText::new(value).monospace()),
-                    None => ui.label(
-                        egui::RichText::new("NULL")
-                            .italics()
-                            .color(tokens.text_muted),
-                    ),
-                };
-                ui.add_space(6.0);
-            }
-        });
-        return;
-    }
-    ui.label(egui::RichText::new(&tab.table).strong());
-    ui.separator();
-    match &tab.stats {
-        Some(stats) => {
-            for (name, value) in [
-                ("total_size", stats.total_size.as_str()),
-                ("data_size", stats.data_size.as_str()),
-                ("index_size", stats.index_size.as_str()),
-                ("rows", &stats.row_count.to_string()),
-            ] {
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(name).small().color(tokens.text_muted));
-                    ui.label(value);
-                });
-            }
-            ui.add_space(6.0);
-            ui.label(
-                egui::RichText::new("comment")
-                    .small()
-                    .color(tokens.text_muted),
-            );
-            ui.label(stats.comment.as_deref().unwrap_or("—"));
-        }
-        None => {
-            ui.label(
-                egui::RichText::new("carregando…")
-                    .small()
-                    .color(tokens.text_muted),
-            );
-        }
     }
 }

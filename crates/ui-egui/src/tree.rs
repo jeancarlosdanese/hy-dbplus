@@ -280,11 +280,11 @@ mod tests {
                 let first = if desc { "b" } else { "a" };
                 let second = if desc { "a" } else { "b" };
                 return Ok(TextRows {
-                    columns: vec!["id".into(), "nome".into()],
+                    columns: vec!["id".into(), "nome".into(), "status".into()],
                     rows: vec![
-                        row(&[Some("1"), Some(first)]),
-                        row(&[Some("2"), Some(second)]),
-                        row(&[Some("3"), None]),
+                        row(&[Some("1"), Some(first), Some("ok")]),
+                        row(&[Some("2"), Some(second), Some("ok")]),
+                        row(&[Some("3"), None, Some("ok")]),
                     ],
                 });
             } else if sql.contains("pg_attribute") {
@@ -303,6 +303,14 @@ mod tests {
                         Some("f"),
                         None,
                         Some("2"),
+                        Some("f"),
+                    ]),
+                    row(&[
+                        Some("status"),
+                        Some("text"),
+                        Some("f"),
+                        None,
+                        Some("3"),
                         Some("f"),
                     ]),
                 ]
@@ -666,20 +674,9 @@ mod tests {
         });
         harness.get_by_label("public.pedido");
         harness.get_by_label("1-3 of 250 rows");
-        harness.get_by_label("24 kB");
+        // Tamanhos e comentário numa linha acima do grid (o painel começa fechado).
+        harness.get_by_label_contains("250 rows · total 24 kB");
         harness.get_by_label("pedidos");
-        // O botão da barra esconde e mostra o painel direito.
-        harness.get_by_label("Painel ▸").click_accesskit();
-        harness.step();
-        harness.step(); // o rótulo do botão muda no frame seguinte ao do clique
-        assert!(
-            harness.query_by_label("24 kB").is_none(),
-            "painel ainda visível"
-        );
-        harness.get_by_label("◂ Painel").click_accesskit();
-        harness.step();
-        harness.step();
-        harness.get_by_label("24 kB");
         let names = |app: &App<FakeDriver>| -> Vec<String> {
             app.workspaces[&id]
                 .data
@@ -733,17 +730,136 @@ mod tests {
         harness.get_by_label("101").click_accesskit();
         harness.step();
         harness.step(); // o painel direito é desenhado antes do grid: lê a seleção no frame seguinte
-        assert_eq!(
-            harness.state().workspaces[&id]
+        let selected = |app: &App<FakeDriver>| {
+            app.workspaces[&id]
                 .data
                 .as_ref()
                 .unwrap()
-                .selected_row,
-            Some(0)
-        );
+                .selected_rows
+                .iter()
+                .copied()
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(selected(harness.state()), [0]);
+        // O painel começa fechado e abre na primeira seleção, em Form, com nome, tipo e valor.
         harness.get_by_label("Linha 101");
+        // O tipo aparece no cabeçalho do grid e no Form.
+        assert!(
+            harness.get_all_by_label("integer").count() >= 2,
+            "tipo da coluna no cabeçalho e no Form"
+        );
+        harness.get_by_label("1 of 3 rows selected");
+        // ⌘-clique na terceira linha: duas selecionadas; campo igual mostra o valor, diferente "Múltiplos valores".
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::ModifiersChanged(egui::Modifiers::COMMAND));
+        harness.get_by_label("103").click_accesskit();
+        harness.step();
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+        harness.step();
+        assert_eq!(selected(harness.state()), [0, 2]);
+        harness.get_by_label("2 of 3 rows selected");
+        harness.get_by_label("2 linhas");
+        assert_eq!(
+            harness.get_all_by_label("Múltiplos valores").count(),
+            2,
+            "id e nome diferem"
+        );
+        // "ok" nas três células do grid e uma vez no Form (campo igual nas duas linhas).
+        assert_eq!(harness.get_all_by_label("ok").count(), 4);
+        // JSON: lista com os dois objetos, tipos pelo catálogo; Copiar não quebra.
+        harness.get_by_label("JSON").click_accesskit();
+        harness.step();
+        harness.step();
+        harness.get_by_label_contains("\"id\": 1");
+        harness.get_by_label_contains("\"status\": \"ok\"");
+        harness.get_by_label("Copiar").click_accesskit();
+        harness.step();
+        // O botão da barra esconde e mostra o painel.
+        harness.get_by_label("Painel ▸").click_accesskit();
+        harness.step();
+        harness.step();
+        assert!(
+            harness.query_by_label("2 linhas").is_none(),
+            "painel ainda visível"
+        );
+        harness.get_by_label("◂ Painel").click_accesskit();
+        harness.step();
+        harness.step();
+        harness.get_by_label("2 linhas");
+        // Fechado pelo botão, o painel não reabre num clique de linha: só a primeira seleção abre.
+        harness.get_by_label("Painel ▸").click_accesskit();
+        harness.step();
+        harness.get_by_label("102").click_accesskit();
+        harness.step();
+        harness.step();
+        assert_eq!(selected(harness.state()), [1]);
+        assert!(
+            harness.query_by_label("Linha 102").is_none(),
+            "o clique numa linha reabriu o painel fechado pelo botão"
+        );
         // schemas, tabelas e funções (3), stats (tamanhos + count = 2), colunas antes da primeira página (1),
         // quatro páginas (1 cada): sem count a cada página.
         assert_eq!(queries.load(Ordering::SeqCst), 3 + 2 + 1 + 4);
+    }
+
+    /// `select_row` sem harness: ⇧ estende da âncora (para frente e para trás, ou da própria linha sem
+    /// âncora), o clique simples na única linha selecionada desmarca, e o painel só abre na primeira seleção.
+    #[test]
+    fn selecionar_com_shift_e_clique_simples() {
+        use crate::app::{DataTab, Workspace};
+        use hy_dbplus_engine::ConnectionId;
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut app = App::with_deps(deps(FakeDriver::default(), &rt));
+        let id: ConnectionId = "c1".into();
+        let mut tab = DataTab::new("public", "pedidos");
+        tab.rows = Some(Arc::new(TextRows {
+            columns: vec!["id".into()],
+            rows: (1..=6).map(|i| vec![Some(i.to_string())]).collect(),
+        }));
+        app.workspaces.insert(
+            id.clone(),
+            Workspace {
+                data: Some(tab),
+                ..Default::default()
+            },
+        );
+        let selected = |app: &App<FakeDriver>| {
+            app.workspaces[&id]
+                .data
+                .as_ref()
+                .unwrap()
+                .selected_rows
+                .iter()
+                .copied()
+                .collect::<Vec<_>>()
+        };
+        assert!(!app.side_panel_open);
+        // ⇧ sem âncora: só a linha clicada; o painel abre.
+        app.select_row(&id, 3, egui::Modifiers::SHIFT);
+        assert_eq!(selected(&app), [3]);
+        assert!(app.side_panel_open);
+        // ⇧ para trás e para frente a partir da âncora 3.
+        app.select_row(&id, 1, egui::Modifiers::SHIFT);
+        assert_eq!(selected(&app), [1, 2, 3]);
+        app.select_row(&id, 5, egui::Modifiers::SHIFT);
+        assert_eq!(selected(&app), [1, 2, 3, 4, 5]);
+        // Clique simples: só ela; de novo na única selecionada: nenhuma. O painel fechado fica fechado.
+        app.side_panel_open = false;
+        app.select_row(&id, 4, egui::Modifiers::NONE);
+        assert_eq!(selected(&app), [4]);
+        assert!(!app.side_panel_open);
+        app.select_row(&id, 4, egui::Modifiers::NONE);
+        assert!(selected(&app).is_empty());
+        assert!(!app.side_panel_open);
+        // Da seleção vazia, a próxima abre o painel de novo.
+        app.select_row(&id, 0, egui::Modifiers::COMMAND);
+        assert_eq!(selected(&app), [0]);
+        assert!(app.side_panel_open);
     }
 }

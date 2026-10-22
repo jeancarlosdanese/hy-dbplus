@@ -7,6 +7,7 @@ mod app;
 mod connections;
 mod data;
 mod palette;
+mod record;
 pub mod theme;
 mod tree;
 mod workspace;
