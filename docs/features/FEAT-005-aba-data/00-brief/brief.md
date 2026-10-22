@@ -21,8 +21,9 @@ Tela 3.4 sem edição: `+ Row`, Filters e Columns ficam desenhados e desativados
    `count(*)`; construtores puros de SQL `page_sql(schema, table, order, limit, offset)` e `count_sql`, com
    identificadores entre aspas duplas (dobradas), testados sem servidor.
 2. **`engine`**: `load_stats(id, banco, schema, tabela)` emite `StatsLoaded` (cache por tabela, invalidado no
-   `refresh`); `load_page(id, banco, schema, tabela, Page { order, limit, offset })` emite `PageLoaded { rows,
-   total, page }` sem cache; `CatalogFailed` para erro. Tudo pela conexão do banco, conferindo a geração.
+   `refresh`); `load_page(id, banco, schema, tabela, Page { order, limit, offset })` emite `PageLoaded { rows, page }`
+   sem cache (a ordem leva a coluna pedida e a PK como desempate; o total vem dos stats); `CatalogFailed`
+   para erro. Tudo pela conexão do banco, conferindo a geração.
 3. **`ui-egui`**: na árvore, clicar no nome da tabela abre a aba Data (a seta continua expandindo as
    colunas). Central: grid virtualizado com `egui_extras::TableBuilder` (cabeçalho por coluna com o tipo em
    cinza, número da linha, valores monoespaçados, `NULL` em itálico, colunas redimensionáveis), clique no

@@ -4,16 +4,17 @@
 
 ## `catalog`
 
-- [ ] `page_sql("public", "pedido", Some(("total", Desc)), 100, 200)` produz `SELECT * FROM "public"."pedido"
-      ORDER BY "total" DESC LIMIT 100 OFFSET 200`; nomes com aspas duplas saem dobradas (teste puro).
-- [ ] `stats` devolve tamanhos legíveis, `row_count` exato e o comentário (teste com servidor no schema de teste).
+- [x] `page_sql("public", "pedido", &[total desc, id asc], 100, 200)` produz `SELECT * FROM "public"."pedido"
+      ORDER BY "total" DESC, "id" ASC LIMIT 100 OFFSET 200`; nomes com aspas duplas saem dobradas (teste puro).
+- [x] `stats` devolve tamanhos legíveis, `row_count` exato e o comentário (teste com servidor no schema de teste).
 
 ## `engine`
 
 - [ ] `load_stats` emite `StatsLoaded` e a segunda chamada sai do cache; `refresh` invalida (teste com driver
       falso contando queries).
-- [ ] `load_page` emite `PageLoaded { rows, total, page }` com o SQL contendo `ORDER BY`, `LIMIT` e `OFFSET`
-      pedidos (driver falso guarda o último SQL).
+- [ ] `load_page` emite `PageLoaded { rows, page }` com o SQL contendo `ORDER BY` (coluna pedida e a PK como
+      desempate quando as colunas estão em cache), `LIMIT` e `OFFSET` (driver falso guarda o último SQL); o
+      total vem de `StatsLoaded`.
 
 ## `ui-egui`
 

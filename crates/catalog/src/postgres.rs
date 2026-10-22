@@ -8,12 +8,12 @@ use crate::model::{Column, Function, Schema, Table, TableKind};
 /// Literal SQL válido nos dois modos de `standard_conforming_strings`: sempre `E'...'`, com
 /// `\` e `'` dobrados. Os nomes vêm do próprio catálogo, e um nome com aspa ou barra é um
 /// nome válido, não um erro.
-fn literal(value: &str) -> String {
+pub(crate) fn literal(value: &str) -> String {
     format!("E'{}'", value.replace('\\', "\\\\").replace('\'', "''"))
 }
 
 /// A célula como texto ou vazio: quem lê decide o que fazer com o NULL.
-fn text(rows: &TextRows, row: usize, col: usize) -> String {
+pub(crate) fn text(rows: &TextRows, row: usize, col: usize) -> String {
     rows.cell(row, col).unwrap_or_default().to_owned()
 }
 
@@ -118,6 +118,59 @@ pub async fn functions(conn: &impl Connection, schema: &str) -> Result<Vec<Funct
 }
 
 #[cfg(test)]
+/// Conexão e nome de schema para os testes com servidor desta crate (`data.rs` também usa).
+pub(crate) mod test_support {
+    use super::*;
+    use hy_dbplus_driver::postgres::PostgresDriver;
+    use hy_dbplus_driver::{ConnectionConfig, Driver, Secret, TlsMode};
+
+    // Igual ao helper dos testes do driver: a URL de teste é uma só; mudar lá e aqui.
+    pub(crate) async fn connect() -> Option<impl Connection> {
+        let url = std::env::var_os("HY_DBPLUS_TEST_PG")?;
+        let pg: tokio_postgres::Config = url
+            .to_string_lossy()
+            .parse()
+            .expect("HY_DBPLUS_TEST_PG inválida");
+        let host = match pg.get_hosts().first() {
+            Some(tokio_postgres::config::Host::Tcp(h)) => h.clone(),
+            _ => "localhost".into(),
+        };
+        let cfg = ConnectionConfig {
+            host,
+            port: pg.get_ports().first().copied().unwrap_or(5432),
+            user: pg.get_user().unwrap_or("postgres").into(),
+            database: pg.get_dbname().unwrap_or("postgres").into(),
+            tls: TlsMode::Prefer,
+        };
+        let secret = Secret::new(String::from_utf8_lossy(
+            pg.get_password().unwrap_or_default(),
+        ));
+        Some(
+            PostgresDriver::default()
+                .connect(&cfg, &secret)
+                .await
+                .unwrap(),
+        )
+    }
+
+    /// Nome único por teste: pid, instante e um contador (dois testes no mesmo microssegundo
+    /// colidiam pelo instante sozinho).
+    pub(crate) fn schema_name() -> String {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static COUNTER: AtomicU32 = AtomicU32::new(0);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(0);
+        format!(
+            "hy_dbplus_test_{}_{nanos}_{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::SeqCst)
+        )
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -135,45 +188,7 @@ mod tests {
     /// schema e só então confere (uma asserção falha não deixa o schema para trás).
     mod with_server {
         use super::*;
-        use hy_dbplus_driver::postgres::PostgresDriver;
-        use hy_dbplus_driver::{ConnectionConfig, Driver, Secret, TlsMode};
-
-        // Igual ao helper dos testes do driver: a URL de teste é uma só; mudar lá e aqui.
-        async fn connect() -> Option<impl Connection> {
-            let url = std::env::var_os("HY_DBPLUS_TEST_PG")?;
-            let pg: tokio_postgres::Config = url
-                .to_string_lossy()
-                .parse()
-                .expect("HY_DBPLUS_TEST_PG inválida");
-            let host = match pg.get_hosts().first() {
-                Some(tokio_postgres::config::Host::Tcp(h)) => h.clone(),
-                _ => "localhost".into(),
-            };
-            let cfg = ConnectionConfig {
-                host,
-                port: pg.get_ports().first().copied().unwrap_or(5432),
-                user: pg.get_user().unwrap_or("postgres").into(),
-                database: pg.get_dbname().unwrap_or("postgres").into(),
-                tls: TlsMode::Prefer,
-            };
-            let secret = Secret::new(String::from_utf8_lossy(
-                pg.get_password().unwrap_or_default(),
-            ));
-            Some(
-                PostgresDriver::default()
-                    .connect(&cfg, &secret)
-                    .await
-                    .unwrap(),
-            )
-        }
-
-        fn schema_name() -> String {
-            let nanos = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.subsec_nanos())
-                .unwrap_or(0);
-            format!("hy_dbplus_test_{}_{nanos}", std::process::id())
-        }
+        use crate::postgres::test_support::{connect, schema_name};
 
         struct Loaded {
             schemas: Vec<Schema>,

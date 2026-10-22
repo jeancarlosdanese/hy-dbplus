@@ -1,4 +1,4 @@
-<!-- FEAT_EM_ANDAMENTO — docs criados em 21/10/2026; próximo: catalog (stats e SQL da página) -->
+<!-- FEAT_EM_ANDAMENTO — docs e catalog em 22/10/2026; próximo: engine -->
 <!-- PRIO_ALTA -->
 # @file: docs/features/FEAT-005-aba-data/context.index.md
 
@@ -15,7 +15,7 @@
 | **Origem** | BRIEF §7, marco M3 |
 | **Status** | marcador da linha 1 deste arquivo |
 | **Criado em** | 2026-10-21 |
-| **Atualizado em** | 2026-10-21 |
+| **Atualizado em** | 2026-10-22 |
 
 ## TL;DR
 

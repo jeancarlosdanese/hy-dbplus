@@ -1,12 +1,16 @@
-//! Modelo neutro do catálogo (`Schema`, `Table`, `Column`, `Function`; índices e FKs no M4) e os
-//! carregadores por driver a partir de `pg_catalog`.
+//! Modelo neutro do catálogo (`Schema`, `Table`, `Column`, `Function`; índices e FKs no M4), os
+//! carregadores por driver a partir de `pg_catalog`, e os dados de uma tabela para a aba Data
+//! ([`data`]: tamanhos, contagem, página ordenada).
 //!
-//! Camada 1: depende só do `driver`. Sem cache aqui: o cache é do engine. Cada carregador é uma
-//! query pelo protocolo simples (`Connection::query_text`), com os nomes escapados como literal.
+//! Camada 1: depende só do `driver`. Sem cache aqui: o cache é do engine. Tudo pelo protocolo
+//! simples (`Connection::query_text`): os carregadores do catálogo escapam os nomes como literal
+//! (`E'...'`); os da aba Data usam identificador entre aspas duplas.
 
+pub mod data;
 pub mod model;
 pub mod postgres;
 
+pub use data::{Direction, Order, TableStats, count, count_sql, page, page_sql, stats};
 pub use model::{Column, Function, Schema, Table, TableKind};
 pub use postgres::{columns, functions, schemas, tables};
 
