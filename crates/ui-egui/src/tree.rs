@@ -56,6 +56,10 @@ where
                         ws.objects.remove(schema);
                         ws.columns.clear();
                         ws.expanded.clear(); // tabela aberta pede as colunas de novo
+                        for tab in &mut ws.tabs {
+                            tab.structure = None; // Structure/Index pedem de novo
+                            tab.structure_requested = false;
+                        }
                         ws.loading = true;
                     }
                     app.deps.sessions.load_schema(&id, &database, schema);
@@ -310,6 +314,73 @@ mod tests {
                         row(&[Some("3"), None, Some("ok")]),
                     ],
                 });
+            } else if sql.contains("pg_get_viewdef") {
+                // Cabeçalho da estrutura (FEAT-009): tabela com comentário; a view com definição.
+                if sql.contains("E'v_pedido'") {
+                    vec![row(&[
+                        Some("v"),
+                        None,
+                        Some(" SELECT id, nome FROM public.pedido;"),
+                    ])]
+                } else {
+                    vec![row(&[Some("r"), Some("pedidos"), None])]
+                }
+            } else if sql.contains("pg_am ") {
+                vec![
+                    row(&[
+                        Some("pedido_obs_idx"),
+                        Some("btree"),
+                        Some("f"),
+                        Some("f"),
+                        Some(
+                            "CREATE INDEX pedido_obs_idx ON public.pedido USING btree (nome) INCLUDE (status) WHERE (nome IS NOT NULL)",
+                        ),
+                        Some("nome"),
+                        Some("nome IS NOT NULL"),
+                        Some("status"),
+                        Some("fillfactor=70"),
+                        Some("parcial"),
+                        Some("f"),
+                    ]),
+                    row(&[
+                        Some("pedido_pkey"),
+                        Some("btree"),
+                        Some("t"),
+                        Some("t"),
+                        Some("CREATE UNIQUE INDEX pedido_pkey ON public.pedido USING btree (id)"),
+                        Some("id"),
+                        None,
+                        None,
+                        None,
+                        None,
+                        Some("t"),
+                    ]),
+                ]
+            } else if sql.contains("pg_get_constraintdef") {
+                vec![
+                    row(&[
+                        Some("pedido_cliente_fkey"),
+                        Some("f"),
+                        Some("FOREIGN KEY (cliente) REFERENCES cliente(id) ON DELETE CASCADE"),
+                        Some("cliente"),
+                        Some("public"),
+                        Some("cliente"),
+                        Some("id"),
+                        Some("a"),
+                        Some("c"),
+                    ]),
+                    row(&[
+                        Some("pedido_pkey"),
+                        Some("p"),
+                        Some("PRIMARY KEY (id)"),
+                        Some("id"),
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    ]),
+                ]
             } else if sql.contains("pg_attribute") {
                 // A view v_pedido tem as mesmas colunas, sem chave primária (só leitura).
                 let pk = if sql.contains("E'v_pedido'") {
@@ -1694,6 +1765,78 @@ mod tests {
             ws.tabs[1].requested, other_requested_before,
             "a aba ativa (outra) não foi recarregada no lugar da do lote"
         );
+    }
+
+    /// FEAT-009: as sub-abas Structure e Index mostram colunas, restrições (FK apontando) e índices;
+    /// o DDL abre numa caixa com Copiar; voltar a Data traz o grid.
+    #[test]
+    fn structure_index_e_ddl_de_uma_tabela() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let driver = FakeDriver::default();
+        let queries = Arc::clone(&driver.queries);
+        let mut app = App::with_deps(deps(driver, &rt));
+        let c = Connection::new("pg-localhost", Tag::Local, ConnectionConfig::default());
+        app.deps.store.upsert(c.clone());
+        crate::connections::connect(&mut app, &c);
+        let id = c.id.clone();
+        let mut harness = wide_harness(app);
+        wait_for(&mut harness, "Connected", |app| app.view == View::Workspace);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::K);
+        harness.step();
+        harness.get_by_label("loja").click();
+        wait_for(&mut harness, "SchemaLoaded", |app| {
+            app.workspace_of(&id)
+                .is_some_and(|ws| ws.objects.contains_key("public"))
+        });
+        harness.get_by_label("▦ pedido").click();
+        wait_for(&mut harness, "tabela carregada", |app| {
+            app.workspace_of(&id).is_some_and(|ws| {
+                ws.data()
+                    .is_some_and(|d| d.rows.is_some() && d.stats.is_some() && !d.loading)
+            })
+        });
+        let before = queries.load(Ordering::SeqCst);
+        harness.get_by_label("Structure").click_accesskit();
+        wait_for(&mut harness, "StructureLoaded", |app| {
+            app.workspace_of(&id)
+                .is_some_and(|ws| ws.data().is_some_and(|d| d.structure.is_some()))
+        });
+        assert_eq!(
+            queries.load(Ordering::SeqCst),
+            before + 4,
+            "cabeçalho, colunas, restrições, índices"
+        );
+        harness.get_by_label("🔑 id");
+        harness.get_by_label("character varying(80)");
+        harness.get_by_label("pedido_cliente_fkey");
+        harness
+            .get_by_label_contains("→ public.cliente(id) on update no action / on delete cascade");
+        // DDL: caixa com o CREATE TABLE, Copiar e Fechar.
+        harness.get_by_label("DDL").click_accesskit();
+        harness.step();
+        harness.step();
+        harness.get_by_label_contains("CREATE TABLE \"public\".\"pedido\"");
+        harness.get_by_label_contains("CREATE INDEX pedido_obs_idx");
+        harness.get_by_label("Copiar").click_accesskit();
+        harness.step();
+        harness.get_by_label("Fechar").click_accesskit();
+        harness.step();
+        harness.step();
+        assert!(harness.query_by_label_contains("CREATE TABLE").is_none());
+        // Index: do cache (sem query nova), com include, condição e parâmetros.
+        harness.get_by_label("Index").click_accesskit();
+        harness.step();
+        harness.step();
+        harness.get_by_label("pedido_obs_idx");
+        harness.get_by_label("nome IS NOT NULL");
+        harness.get_by_label("fillfactor=70");
+        harness.get_by_label("parcial");
+        assert_eq!(queries.load(Ordering::SeqCst), before + 4);
+        // Data de volta: o grid continua como estava.
+        harness.get_by_label("Data").click_accesskit();
+        harness.step();
+        harness.step();
+        harness.get_by_label("1-3 of 250 rows");
     }
 
     /// `select_row` sem harness: ⇧ estende da âncora (para frente e para trás, ou da própria linha sem

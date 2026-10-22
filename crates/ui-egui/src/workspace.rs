@@ -6,7 +6,7 @@
 use hy_dbplus_engine::Driver;
 
 use crate::app::{App, Status, View};
-use crate::{commit, data, palette, rail, record, tabs, theme, tree};
+use crate::{commit, data, palette, rail, record, structure, tabs, theme, tree};
 
 pub fn show<D>(app: &mut App<D>, ui: &mut egui::Ui)
 where
@@ -162,6 +162,7 @@ where
         (Some(key), Some(_)) => {
             data::show(app, ui, key);
             commit::show(app, ui.ctx(), key);
+            structure::ddl_dialog(app, ui.ctx(), key);
         }
         _ => {
             egui::CentralPanel::default_margins().show(ui, |ui| {

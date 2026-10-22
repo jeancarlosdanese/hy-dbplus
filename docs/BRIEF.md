@@ -70,13 +70,15 @@ num banco de desenvolvimento local. Servem como especificação visual e funcion
   pendência próprias (× e ⌘W fecham; fechar aba, banco ou conexão com pendência pede confirmação).
 
 ### 3.5 Aba Structure
-- Campos editáveis **Name** e **Primary**.
-- Tabela de colunas: `#`, `column_name`, `data_type`, `is_nullable`, `check`,
-  `default`.
-- Rodapé: `+ Column`, **Triggers**, **DDL**.
+- Somente leitura no MVP (FEAT-009): colunas `#`, nome (🔑 na chave), tipo, nulo, default (identidade e
+  gerada), comentário; restrições (chave primária, únicas, checks, chaves estrangeiras apontando para a
+  tabela referenciada); view mostra a definição.
+- Rodapé: `+ Column` e **Triggers** desabilitados; **DDL** abre o `CREATE TABLE` montado pelo catálogo
+  (particionada e estrangeira com aviso; sem `PARTITION BY`, collation e sequências).
+- Editar **Name**, **Primary**, tipo e chave fica para depois do MVP.
 
 ### 3.6 Aba Index
-- Tabela: `index_name`, `index_algorithm`, `is_unique`, `column_name`,
+- Somente leitura (FEAT-009): `index_name`, `index_algorithm`, `is_unique`, `column_name`,
   `condition`, `include`, `storage_parameters`, `comment`.
 
 ### 3.7 Editor SQL

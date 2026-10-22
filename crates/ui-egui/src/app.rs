@@ -8,8 +8,8 @@ use std::sync::mpsc::Receiver;
 
 use hy_dbplus_engine::{
     ChangeSet, Column, ConnectionId, ConnectionStore, DatabaseInfo, Driver, Event, Function, Page,
-    PostgresDriver, RowUpdate, Schema, SecretStore, Sessions, Table, TableStats, TextRows,
-    preview_sql,
+    PostgresDriver, RowUpdate, Schema, SecretStore, Sessions, Table, TableStats, TableStructure,
+    TextRows, preview_sql,
 };
 
 use crate::connections::{ConnectionForm, Connections};
@@ -150,6 +150,15 @@ impl Workspace {
     }
 }
 
+/// A sub-aba de uma aba de tabela (FEAT-009): Data é o padrão; Structure e Index são só leitura.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TabView {
+    #[default]
+    Data,
+    Structure,
+    Index,
+}
+
 /// Uma célula do grid em edição (FEAT-007): posição na página e o texto digitado.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CellEdit {
@@ -206,6 +215,11 @@ pub struct DataTab {
     pub commit: Option<CommitDialog>,
     pub loading: bool,
     pub error: Option<String>,
+    /// Sub-aba na tela; a estrutura (Structure, Index, DDL) chega uma vez e fica (o ↻ a esvazia).
+    pub view: TabView,
+    pub structure: Option<Arc<TableStructure>>,
+    pub structure_requested: bool,
+    pub ddl_open: bool,
 }
 
 impl DataTab {
@@ -226,6 +240,10 @@ impl DataTab {
             commit: None,
             loading: true,
             error: None,
+            view: TabView::default(),
+            structure: None,
+            structure_requested: false,
+            ddl_open: false,
         }
     }
 
@@ -567,8 +585,18 @@ where
                         tab.error = Some(error.to_string());
                     }
                 }
-                // FEAT-009 passo 3: a aba guarda a estrutura para Structure, Index e DDL.
-                Event::StructureLoaded { .. } => {}
+                Event::StructureLoaded {
+                    database,
+                    schema,
+                    table,
+                    structure,
+                    ..
+                } => {
+                    if let Some(tab) = self.data_tab_mut(&id, &database, &schema, &table) {
+                        tab.structure = Some(Arc::new(structure));
+                        tab.structure_requested = false;
+                    }
+                }
                 Event::DatabaseClosed { database, .. } => {
                     self.forget_database(&(id, database));
                 }
@@ -847,6 +875,22 @@ where
         self.workspaces
             .iter()
             .any(|(k, ws)| k.0 == id && ws.tabs.iter().any(DataTab::commit_running))
+    }
+
+    /// Troca a sub-aba da aba ativa; Structure e Index pedem a estrutura ao engine uma vez.
+    pub(crate) fn set_view(&mut self, key: &DbKey, view: TabView) {
+        let Some(tab) = self.data_tab(key) else {
+            return;
+        };
+        tab.view = view;
+        if view == TabView::Data || tab.structure.is_some() || tab.structure_requested {
+            return;
+        }
+        tab.structure_requested = true;
+        let (schema, table) = (tab.schema.clone(), tab.table.clone());
+        self.deps
+            .sessions
+            .load_structure(&key.0, &key.1, &schema, &table);
     }
 
     /// Alguma aba do banco com edição pendente.

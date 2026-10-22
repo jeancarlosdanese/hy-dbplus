@@ -1,4 +1,4 @@
-<!-- FEAT_EM_ANDAMENTO — docs criados em 22/10/2026; próximo: catalog::structure e ddl -->
+<!-- FEAT_EM_ANDAMENTO — implementada em 22/10/2026; falta push, CI e conferência do Jean -->
 <!-- PRIO_ALTA -->
 # @file: docs/features/FEAT-009-structure-e-index/context.index.md
 
@@ -32,7 +32,7 @@ chave), restrições (PK, unique, check, FK) e o botão DDL com o `CREATE TABLE`
 4. docs/features/FEAT-008-bancos-e-abas/ → a aba de tabela que ganha as sub-abas
 ```
 
-## Onde está o quê (quando existir)
+## Onde está o quê
 
 ```
 crates/catalog/src/model.rs       Column (comentário, identidade, gerada), Constraint, Index, TableStructure

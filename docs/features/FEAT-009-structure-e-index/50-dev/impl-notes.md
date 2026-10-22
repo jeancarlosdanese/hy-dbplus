@@ -10,8 +10,10 @@ _Atualizado em 22/10/2026._
   gerador de DDL; testes puros e com servidor, inclusive o round-trip do DDL).
 - **Feito também:** `engine::load_structure` com cache por tabela, `StructureLoaded`, `refresh` esvazia
   (teste com driver falso).
-- **Em curso:** revisão e commit do engine.
-- **Falta:** `ui-egui` (sub-abas, Structure, Index, caixa do DDL); verificação do Jean.
+- **Feito também:** `ui-egui`: sub-abas Data / Structure / Index no rodapé, `structure.rs` (colunas,
+  restrições, definição de view, caixa do DDL), `index.rs`; teste kittest.
+- **Em curso:** revisão e commit da UI.
+- **Falta:** verificação do Jean.
 - **Depende de:** FEAT-008 (aba de tabela).
 - **Para retomar:** esta pasta, BRIEF §3.5 e §3.6, e o `CLAUDE.md`.
 
@@ -94,3 +96,21 @@ _Atualizado em 22/10/2026._
 - [x] Doc do `refresh` cita as estruturas; nota do driver falso com a justificativa certa.
 - [x] As colunas lidas pela estrutura abastecem `db.columns` (`entry().or_insert_with`), como `load_page` faz:
   sem duas cópias e sem query a mais ao abrir Structure depois de Data; teste cobre.
+
+### 22/10/2026 — `ui-egui`: sub-abas, Structure, Index e DDL
+
+- [x] `DataTab`: `view: TabView { Data, Structure, Index }`, `structure: Option<Arc<TableStructure>>`,
+  `structure_requested`, `ddl_open`. `App::set_view` troca a sub-aba e pede a estrutura uma vez;
+  `StructureLoaded` vai à aba da tabela (`data_tab_mut`); o ↻ da árvore zera `structure` das abas do banco
+  (o engine esvaziou o cache dele).
+- [x] `data.rs`: os botões Data / Structure / Index do rodapé são `selectable_label` por aba; fora de Data o
+  rodapé mostra `+ Column` e Triggers desabilitados e o botão DDL (Structure), e o centro delega a
+  `structure::show` / `index::show`; paginação, seleção e edição ficam na sub-aba Data.
+- [x] `structure.rs`: grid de colunas (`#`, coluna com 🔑, tipo, nulo, default com identidade/gerada,
+  comentário) e grid de restrições (nome, tipo, colunas, definição; FK como `→ schema.tabela(colunas) on
+  update … / on delete …`); view mostra a definição. `ddl_dialog`: `Modal` com o `table_ddl`, Copiar e Fechar.
+- [x] `index.rs`: grid nome, algoritmo, único, colunas, condição, include, parâmetros, comentário.
+- [x] Driver falso da UI responde às queries da estrutura (tabela com FK e índice parcial com include; a view
+  com definição). Teste `structure_index_e_ddl_de_uma_tabela`: Structure com quatro queries, 🔑, tipo, FK
+  apontando; DDL com `CREATE TABLE` e o índice, Copiar e Fechar; Index do cache com include, condição e
+  parâmetros; Data de volta com o grid.

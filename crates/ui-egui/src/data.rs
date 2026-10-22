@@ -7,7 +7,7 @@
 use egui_extras::{Column as TableColumn, TableBuilder};
 use hy_dbplus_engine::{Direction, Driver, Order, Page};
 
-use crate::app::{App, DbKey};
+use crate::app::{App, DbKey, TabView};
 use crate::theme;
 
 const ROW_HEIGHT: f32 = 22.0;
@@ -43,6 +43,8 @@ where
     let mut toggle_delete = false;
     let mut open_commit = false;
     let mut discard = false;
+    let mut view_change: Option<TabView> = None;
+    let mut open_ddl = false;
 
     // Atalhos, antes dos widgets: ⌘S abre o Commit; ⌘Z descarta (sem campo em foco: dentro de um
     // campo, ⌘Z é o desfazer do próprio campo); ⌫ sem campo em foco marca a seleção.
@@ -73,12 +75,33 @@ where
 
     egui::Panel::bottom("data-footer").show(ui, |ui| {
         ui.horizontal(|ui| {
-            let _ = ui.selectable_label(true, "Data");
-            ui.add_enabled(false, egui::Button::new("Structure"))
-                .on_disabled_hover_text("em breve");
-            ui.add_enabled(false, egui::Button::new("Index"))
-                .on_disabled_hover_text("em breve");
+            // Sub-abas (FEAT-009): Data, Structure e Index, por aba de tabela.
+            for (view, label) in [
+                (TabView::Data, "Data"),
+                (TabView::Structure, "Structure"),
+                (TabView::Index, "Index"),
+            ] {
+                if ui.selectable_label(tab.view == view, label).clicked() && tab.view != view {
+                    view_change = Some(view);
+                }
+            }
             ui.separator();
+            if tab.view != TabView::Data {
+                if tab.view == TabView::Structure {
+                    ui.add_enabled(false, egui::Button::new("+ Column"))
+                        .on_disabled_hover_text("não disponível nesta versão");
+                    ui.add_enabled(false, egui::Button::new("Triggers"))
+                        .on_disabled_hover_text("em breve");
+                    if ui
+                        .add_enabled(tab.structure.is_some(), egui::Button::new("DDL"))
+                        .on_hover_text("O CREATE TABLE montado a partir do catálogo")
+                        .clicked()
+                    {
+                        open_ddl = true;
+                    }
+                }
+                return;
+            }
             ui.add_enabled(false, egui::Button::new("+ Row"))
                 .on_disabled_hover_text("não disponível nesta versão");
             let can_delete = editable && !tab.selected_rows.is_empty() && tab.commit.is_none();
@@ -192,6 +215,20 @@ where
         });
     });
 
+    match tab.view {
+        TabView::Structure => crate::structure::show(app, ui, key),
+        TabView::Index => crate::index::show(app, ui, key),
+        TabView::Data => {}
+    }
+    if tab.view != TabView::Data {
+        if let Some(view) = view_change {
+            app.set_view(key, view);
+        }
+        if open_ddl && let Some(tab) = app.workspaces.get_mut(key).and_then(|ws| ws.data_mut()) {
+            tab.ddl_open = true;
+        }
+        return;
+    }
     egui::CentralPanel::default_margins().show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(format!("{}.{}", tab.schema, tab.table)).strong());
@@ -412,6 +449,9 @@ where
             });
     });
 
+    if let Some(view) = view_change {
+        app.set_view(key, view);
+    }
     if let Some(text) = edit_text
         && let Some(tab) = app.workspaces.get_mut(key).and_then(|ws| ws.data_mut())
         && let Some(edit) = tab.editing.as_mut()
