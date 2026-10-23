@@ -6,9 +6,13 @@
 
 _Atualizado em 23/10/2026._
 
-- **Feito:** docs, `packaging/` (ícone e logomarca aprovados) e a linha do M8 no BRIEF.
-- **Falta:** `xtask bundle` (build, iconset, `Info.plist`, árvore, `codesign`, `hdiutil`, notarização
-  opcional); testes; `CLAUDE.md` ("Comandos").
+- **Feito:** docs, `packaging/` e BRIEF (`da82b5a`); `xtask bundle` (`xtask/src/bundle.rs`: `parse_args`,
+  `plist`, `iconset_entries`, `layout` testados; `run` encadeia build → iconset → `.app` → `codesign` →
+  `.dmg` → notarização opcional), `CLAUDE.md` "Comandos". Rodado de ponta a ponta em 23/10: 64 s,
+  `.app` assinado ad hoc (`codesign --verify` ok), `.dmg` UDZO de 5,9 MB, `.icns` com os dez tamanhos
+  (`f82e8d4`). Ícone embutido no binário (`packaging/icon-256.png`, Dock no `cargo run` e por cima do
+  cache) e ⌘M minimizando a janela, com testes: no commit seguinte.
+- **Falta:** push e conferência do Jean (aceite "Do Jean").
 - **Depende de:** nada no código; das ferramentas do macOS na máquina (todas presentes em 23/10).
 - **Para retomar:** este arquivo, o brief, `xtask/src/main.rs` (tabela `COMMANDS`) e `layers.rs` como
   molde de comando com `cargo metadata`.
@@ -30,9 +34,10 @@ _Atualizado em 23/10/2026._
 
 ## Plano
 
-1. `xtask/src/bundle.rs`: `plist(version)`, `iconset_sizes()`, `layout(app_dir, binary, icns)` puros
-   e testados; `run_bundle(args)` encadeia build → iconset → layout → codesign → dmg → notarização.
-   `COMMANDS` ganha `bundle`. Reviewer (xtask é sensível). Commit `feat(xtask)`.
+1. `xtask/src/bundle.rs`: `parse_args`, `plist(version)`, `iconset_entries()`, `layout(bundle_dir,
+   binary, icns, version)` puros e testados; `run(args, root, target_dir, version)` encadeia build →
+   iconset → layout → codesign → dmg → notarização. `COMMANDS` ganha `bundle`. Reviewer (xtask é
+   sensível). Commit `feat(xtask)`.
 2. `CLAUDE.md` "Comandos" (o BRIEF M8 já cita a FEAT).
 
 ## Riscos e lições a conferir
@@ -46,6 +51,37 @@ _Atualizado em 23/10/2026._
   sobrevive (`ln -s /Applications`).
 
 ## Log
+
+### 23/10/2026 — Conferência do Jean: ícone na Dock e ⌘M
+
+- O `.app` instalado abriu com o tile preto genérico na Dock (cache da Dock: o diálogo do Keychain já
+  mostrava o ícone certo). Além do `killall Dock`, o app passa a embutir o ícone
+  (`packaging/icon-256.png` por `include_bytes!` e `with_icon` no `ViewportBuilder`): o eframe o põe na
+  Dock ao abrir, o que vale no `cargo run` e passa por cima do cache.
+- ⌘M não minimizava (o menu padrão do winit no macOS não traz o atalho): `App::ui` consome ⌘M e manda
+  `ViewportCommand::Minimized(true)`. Teste kittest pelo `viewport_output`.
+
+### 23/10/2026 — Revisão do `xtask bundle` (`process:reviewer`): aplicada
+
+- [x] **Baixa.** `HY_DBPLUS_NOTARY_PROFILE` com `--no-dmg` era ignorada em silêncio: agora é erro.
+- [x] **Baixa.** Diretório de build fixo em `root/target`: agora é o `target_directory` do `cargo metadata`
+  (`CARGO_TARGET_DIR` vale). Teste.
+- [x] **Baixa.** `cargo build` e `notarytool --wait` rodavam mudos até o fim: `sh_live` herda o terminal.
+- [x] **Baixa.** `BUNDLE_ID` duplicava o `APP_ID` do `main.rs` sem nada prender os dois: teste do xtask lê o
+  fonte do app e confere.
+- [x] **Baixa.** Brief dizia "texto exato" do plist (o teste confere as chaves); plano com nomes velhos.
+- [ ] **Baixa (fica).** O comentário de `.cargo/config.toml` ainda diz "M0: só `layers`"; o arquivo é
+  sensível e não entrou nesta revisão: ajuste num próximo commit do xtask.
+
+### 23/10/2026 — `xtask bundle`
+
+- `bundle.rs`: `--universal` (dois targets + `lipo`, com checagem do target x86_64 no rustup) e `--no-dmg`;
+  ferramentas conferidas no PATH antes de começar; `HY_DBPLUS_NOTARY_PROFILE` sem Developer ID é erro
+  (a notarização recusa ad hoc). O `qlmanage` rendeu os sete tamanhos com fundo transparente fora do
+  quadrado arredondado (o risco anotado não se confirmou). `codesign --deep` só no `.app`; o `.dmg` é
+  assinado só com identidade real. `cp -R` para a pasta do `.dmg` (preserva a assinatura); link
+  `/Applications` absoluto. `spctl --assess` dá "rejected" com ad hoc: esperado, é o Gatekeeper.
+- Versão do app pelo `cargo metadata` (`app_version` no `main.rs`, testado).
 
 ### 23/10/2026 — Criação
 

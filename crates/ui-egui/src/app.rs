@@ -2092,6 +2092,17 @@ where
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         self.drain_events();
         self.autosave_unfocused_queries(ui.ctx());
+        // ⌘M minimiza a janela: o menu padrão que o winit monta no macOS não traz o atalho, e
+        // sem ele a janela só minimiza pelo botão amarelo. Vale nas duas telas.
+        if ui.input_mut(|i| {
+            i.consume_shortcut(&egui::KeyboardShortcut::new(
+                egui::Modifiers::COMMAND,
+                egui::Key::M,
+            ))
+        }) {
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+        }
         match self.view.clone() {
             View::Connections => crate::connections::show(self, ui),
             View::Workspace => crate::workspace::show(self, ui),

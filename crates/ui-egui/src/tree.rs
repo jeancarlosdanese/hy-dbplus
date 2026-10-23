@@ -3015,4 +3015,34 @@ mod tests {
         assert_eq!(query(harness.state()).unwrap().buffer, before);
         assert_eq!(executes.load(Ordering::SeqCst), 0);
     }
+
+    /// ⌘M manda o comando de minimizar ao viewport (o handler fica antes do `match` das telas em
+    /// `App::ui`; o teste exercita a tela de conexões).
+    #[test]
+    fn cmd_m_minimiza_a_janela() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let app = App::with_deps(deps(FakeDriver::default(), &rt));
+        let mut harness = wide_harness(app);
+        harness.step();
+        // Um evento só, num frame só: o `output()` é o do último frame, e o `key_press` do kittest
+        // gasta mais três frames (modificadores e soltura) depois do que manda o comando.
+        harness.input_mut().events.push(egui::Event::Key {
+            key: egui::Key::M,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::COMMAND,
+        });
+        harness.step();
+        let minimized = harness
+            .output()
+            .viewport_output
+            .get(&egui::ViewportId::ROOT)
+            .is_some_and(|v| {
+                v.commands
+                    .iter()
+                    .any(|c| matches!(c, egui::ViewportCommand::Minimized(true)))
+            });
+        assert!(minimized, "⌘M sem comando de minimizar");
+    }
 }

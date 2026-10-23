@@ -1,4 +1,4 @@
-<!-- FEAT_EM_ANDAMENTO — docs e packaging/ criados em 23/10/2026; xtask bundle não iniciado -->
+<!-- FEAT_IMPLEMENTADA — 23/10/2026: docs e packaging em da82b5a, xtask bundle em f82e8d4, ícone embutido e ⌘M no commit seguinte; falta push e conferência do Jean -->
 <!-- PRIO_ALTA -->
 # @file: docs/features/FEAT-014-empacotamento-macos/context.index.md
 

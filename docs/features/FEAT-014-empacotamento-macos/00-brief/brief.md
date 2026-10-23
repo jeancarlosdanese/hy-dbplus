@@ -21,7 +21,11 @@ apontarem o certificado e o perfil do `notarytool`. Só ferramentas do macOS, ne
 1. **`packaging/`** (diretório protegido pelo processo): `icon.svg` (o balão com o "h" vazado do
    `hyberica-icon.svg`, azul-petróleo `#1C4F5E → #07252E` sobre o quadrado arredondado claro do macOS;
    sem texto) e `logo.svg` + `logo.png` (balão + `y-dbplus` em Inter Bold, padrão `hy-vox`; o PNG é a
-   versão renderizada, porque o texto depende da fonte). Aprovados pelo Jean em 23/10/2026.
+   versão renderizada, porque o texto depende da fonte) e `icon-256.png`, o ícone em 256 px que o app
+   embute (`include_bytes!` + `with_icon`: a Dock mostra o balão também no `cargo run` e por cima do
+   cache). Aprovados pelo Jean em 23/10/2026. Para regenerar o PNG depois de mudar o SVG:
+   `qlmanage -t -s 256 -o /tmp/icone packaging/icon.svg && cp /tmp/icone/icon.svg.png packaging/icon-256.png`
+   (o `xtask bundle` regenera só o `.icns`).
 2. **`xtask bundle`** (`xtask/src/bundle.rs`), só no macOS (fora dele, erro claro):
    - `cargo build --release -p hy-dbplus --locked`; com `--universal`, também
      `--target x86_64-apple-darwin` e `lipo` (exige o target no rustup; sem ele, erro que diz o
@@ -44,9 +48,10 @@ apontarem o certificado e o perfil do `notarytool`. Só ferramentas do macOS, ne
      identidade real, assina o `.dmg`; com `HY_DBPLUS_NOTARY_PROFILE`, `xcrun notarytool submit --wait`
      e `xcrun stapler staple` no `.dmg`. `--no-dmg` para só o `.app`.
    - Saída: caminhos gerados e, no modo ad hoc, o aviso de que o Gatekeeper pede botão direito →
-     Abrir na primeira vez (ou `xattr -d com.apple.quarantine`).
-3. **Testes** (`cargo test -p xtask`, sem `codesign`/`hdiutil`): o `Info.plist` gerado (texto exato
-   para uma versão de exemplo), a lista de tamanhos do iconset com os nomes `@2x`, e a montagem da
+     Abrir na primeira vez (ou `xattr -d com.apple.quarantine`). O diretório de build vem do
+     `cargo metadata` (`CARGO_TARGET_DIR` vale); `HY_DBPLUS_NOTARY_PROFILE` com `--no-dmg` é erro.
+3. **Testes** (`cargo test -p xtask`, sem `codesign`/`hdiutil`): o `Info.plist` gerado (as chaves que
+   importam, com a versão de exemplo), o identificador igual ao `APP_ID` do `main.rs`, a lista de tamanhos do iconset com os nomes `@2x`, e a montagem da
    árvore do `.app` num diretório temporário a partir de um binário e de um `.icns` falsos (caminhos,
    `PkgInfo`, bit de execução).
 4. **Docs**: BRIEF M8 cita a FEAT; `CLAUDE.md` da raiz ganha o comando em "Comandos".
