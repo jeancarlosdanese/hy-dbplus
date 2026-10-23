@@ -1,20 +1,28 @@
 //! Tarefas de build e verificação do hy-dbplus, via `cargo xtask <comando>` (alias em
-//! `.cargo/config.toml`). No M0 só `layers`; os demais entram quando houver o que verificar.
+//! `.cargo/config.toml`): `layers` (M0) e `bundle` (FEAT-014, o `.app` e o `.dmg` do macOS).
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
+mod bundle;
 mod layers;
 
 type Task = fn(&[OsString]) -> Result<(), String>;
 
 /// Cada subcomando: nome, resumo de uma linha, função.
-const COMMANDS: &[(&str, &str, Task)] = &[(
-    "layers",
-    "Confere as camadas das crates (docs/BRIEF.md §5): nada abaixo da UI depende de egui",
-    run_layers,
-)];
+const COMMANDS: &[(&str, &str, Task)] = &[
+    (
+        "layers",
+        "Confere as camadas das crates (docs/BRIEF.md §5): nada abaixo da UI depende de egui",
+        run_layers,
+    ),
+    (
+        "bundle",
+        "Monta target/bundle/hy-dbplus.app e o .dmg (macOS; --universal, --no-dmg)",
+        run_bundle,
+    ),
+];
 
 fn main() -> ExitCode {
     // `args_os`: a versão `String` da `std` entra em pânico com byte inválido (CLAUDE.md).
@@ -81,6 +89,33 @@ fn metadata() -> Result<serde_json::Value, String> {
     serde_json::from_slice(&out.stdout).map_err(|e| format!("cargo metadata: JSON inválido: {e}"))
 }
 
+/// O diretório de build (`target_directory` do `cargo metadata`: respeita `CARGO_TARGET_DIR`).
+fn target_dir(meta: &serde_json::Value) -> Result<PathBuf, String> {
+    meta.get("target_directory")
+        .and_then(|v| v.as_str())
+        .map(PathBuf::from)
+        .ok_or_else(|| "metadata sem `target_directory`".to_owned())
+}
+
+/// A versão do app no workspace (`version.workspace = true`), pelo `cargo metadata`.
+fn app_version(meta: &serde_json::Value) -> Result<String, String> {
+    meta.get("packages")
+        .and_then(|p| p.as_array())
+        .and_then(|packages| {
+            packages
+                .iter()
+                .find(|p| p.get("name").and_then(|n| n.as_str()) == Some(bundle::APP_NAME))
+        })
+        .and_then(|p| p.get("version").and_then(|v| v.as_str()))
+        .map(str::to_owned)
+        .ok_or_else(|| format!("metadata sem a versão do pacote {}", bundle::APP_NAME))
+}
+
+fn run_bundle(args: &[OsString]) -> Result<(), String> {
+    let meta = metadata()?;
+    bundle::run(args, &root()?, &target_dir(&meta)?, &app_version(&meta)?)
+}
+
 fn run_layers(_: &[OsString]) -> Result<(), String> {
     let crates = layers::from_metadata(&metadata()?)?;
     println!("Camadas (docs/BRIEF.md §5)\n");
@@ -136,6 +171,19 @@ mod tests {
         }
         assert_eq!(exit(&[]), ExitCode::FAILURE);
         assert_eq!(exit(&["xyz"]), ExitCode::FAILURE);
+    }
+
+    #[test]
+    fn a_versao_do_app_vem_do_metadata() {
+        let meta = serde_json::json!({"packages": [
+            {"name": "xtask", "version": "0.1.0"},
+            {"name": "hy-dbplus", "version": "1.2.3"}
+        ]});
+        assert_eq!(app_version(&meta).unwrap(), "1.2.3");
+        assert!(app_version(&serde_json::json!({"packages": []})).is_err());
+        let meta = serde_json::json!({"target_directory": "/x/target"});
+        assert_eq!(target_dir(&meta).unwrap(), PathBuf::from("/x/target"));
+        assert!(target_dir(&serde_json::json!({})).is_err());
     }
 
     #[cfg(unix)]

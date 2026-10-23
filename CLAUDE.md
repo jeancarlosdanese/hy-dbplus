@@ -57,6 +57,7 @@ cargo run -p hy-dbplus                  # app desktop (a partir do M0)
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo xtask layers                      # camadas do BRIEF §5 (xtask/src/layers.rs)
+cargo xtask bundle                      # hy-dbplus.app e .dmg em target/bundle/ (macOS; FEAT-014)
 scripts/quality-gate.sh --fast          # fmt + clippy + layers + coerência dos CLAUDE.md
 scripts/quality-gate.sh --full          # + testes, cargo-deny, gitleaks
 scripts/quality-gate-tools.sh           # instala cargo-deny e gitleaks (uma vez por máquina)
