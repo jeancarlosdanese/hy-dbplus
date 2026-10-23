@@ -2643,7 +2643,11 @@ mod tests {
                 .is_some_and(|n| n.contains("não foi possível salvar"))
         );
         // Aba restaurada, texto apagado, ⌘W: fecha direto, mas apagar o arquivo falha e o erro não
-        // pode sumir com a aba (vai ao aviso do app).
+        // pode sumir com a aba (vai ao aviso do app). O alvo é um diretório chamado `1.sql`: `remove_file`
+        // recusa nas três plataformas. Com `<id>` arquivo, como acima, o Windows daria
+        // `ERROR_PATH_NOT_FOUND`, que é `NotFound`, e o remove passaria como "ausente" (CI de 23/10).
+        std::fs::remove_file(app.deps.queries.dir().join(&id)).unwrap();
+        std::fs::create_dir_all(&file).unwrap();
         {
             let q = app.workspaces.get_mut(&key).unwrap().query_mut().unwrap();
             q.buffer.clear();

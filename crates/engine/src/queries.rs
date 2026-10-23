@@ -293,9 +293,12 @@ mod tests {
     fn erro_de_leitura_vira_io_com_o_caminho() {
         let root = TempRoot::new();
         let store = root.store();
-        // Um arquivo onde deveria estar o diretório da conexão: `read_dir` falha (não é "ausente").
-        std::fs::create_dir_all(store.dir()).unwrap();
-        std::fs::write(store.dir().join("c1"), "não sou um diretório").unwrap();
+        // Um arquivo onde deveria estar o diretório do banco: `read_dir` falha com `NotADirectory`
+        // nas duas plataformas (Unix `ENOTDIR`, Windows `ERROR_DIRECTORY`). Com o arquivo no lugar
+        // do diretório da conexão, o Windows dá `ERROR_PATH_NOT_FOUND`, que é `NotFound`, e o `list`
+        // devolve a lista vazia (nada a restaurar ali mesmo); o CI do Windows pegou isso em 23/10.
+        std::fs::create_dir_all(store.dir().join("c1")).unwrap();
+        std::fs::write(store.dir().join("c1").join("loja"), "não sou um diretório").unwrap();
         let err = store.list("c1", "loja").unwrap_err();
         assert!(
             matches!(&err, EngineError::Io { path, .. } if path.starts_with(store.dir())),

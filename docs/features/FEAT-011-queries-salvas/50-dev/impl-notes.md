@@ -127,3 +127,21 @@ _Atualizado em 22/10/2026._
 - [x] **Baixa.** `request_close_tab` de aba SQL vazia descartava o `Err` do `save` (que apaga o arquivo); com
   falha de I/O a aba fechava, o aviso dela sumia e o arquivo voltava na próxima abertura. O erro vai para a
   conexão e para o aviso do app; a aba fecha mesmo assim. Teste.
+
+### 23/10/2026 — CI do Windows (job `build`): aplicada
+
+- [x] **Baixa.** O teste `erro_de_leitura_vira_io_com_o_caminho` punha um arquivo no lugar do diretório da
+  conexão; no Windows `read_dir` de `c1\loja` com `c1` arquivo dá `ERROR_PATH_NOT_FOUND`, que a `std` mapeia
+  para `NotFound`, e o `list` devolve a lista vazia (no Unix é `ENOTDIR`, erro). O arquivo foi para o lugar
+  do diretório do banco: `NotADirectory` nas duas plataformas (`ERROR_DIRECTORY` no Windows). O
+  comportamento do `list` no Windows fica como está: um arquivo no lugar da conexão não tem nada a
+  restaurar. Sem Windows local, a prova é a leitura da `std` (`sys/io/error/windows.rs`) e o próprio CI.
+- [x] **Média (reviewer).** O último bloco de `descartar_banco_ou_conexao_mantem_as_queries_e_falha_nao_repete_a_cada_frame`
+  dependia do mesmo `ENOTDIR`: com o diretório da conexão virado arquivo, o `remove` do arquivo da aba no
+  Windows daria `NotFound` e passaria como "ausente". O alvo do remove agora é um diretório chamado
+  `1.sql`, que `remove_file` recusa nas três plataformas. Os testes de `sql` e `ui-egui` nunca tinham
+  rodado no Windows (o job parava no engine); o reviewer varreu os dois e não achou outra dependência.
+- [ ] **Baixa (reviewer, anterior).** No Windows, um arquivo no lugar do diretório da conexão faz o `list`
+  devolver lista vazia sem aviso (no Unix vira erro na conexão); o usuário só descobre no primeiro autosave.
+  Cenário patológico; fechar exigiria, no `NotFound` do `list` e do `remove`, conferir se um ancestral
+  dentro de `queries/` existe e não é diretório. Decisão do Jean.
