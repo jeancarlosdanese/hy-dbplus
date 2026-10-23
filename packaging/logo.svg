@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Logomarca do hy-dbplus (FEAT-014), no padrão da família Hyberica (hy-vox-preto.svg): o balão faz o
+     "h" e o nome segue em Inter Bold. O texto depende da fonte Inter instalada; logo.png é a versão
+     renderizada, para README e telas. Aprovada pelo Jean em 23/10/2026. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="330" viewBox="0 -20 1100 330">
+  <g transform="matrix(1.2359012,0,0,1.2359012,38.68,-0.218)">
+    <path fill="#12404D" fill-rule="evenodd" d="m 25,10 h 150 q 20,0 20,20 v 140 q 0,20 -20,20 h -30 l 10,35 -35,-35 H 25 Q 5,190 5,170 V 30 Q 5,10 25,10 Z m 25,35 h 25 v 35 h 75 v 65 H 125 V 105 H 75 v 40 H 50 Z"/>
+  </g>
+  <text x="313" y="177.6" font-family="Inter, 'Inter Variable', -apple-system, sans-serif" font-weight="700" font-size="175" fill="#0A2A34" letter-spacing="-2">y-dbplus</text>
+</svg>

@@ -144,6 +144,7 @@ hy-dbplus/
 │   ├── hy-dbplus/             # app desktop (eframe)
 │   └── hy-dbplus-cli/         # CLI + `mcp`
 ├── xtask/                     # tarefas de build e checks (layers, fmt, clippy)
+├── packaging/                 # ícone e logomarca do app (FEAT-014)
 └── docs/
 ```
 
@@ -186,7 +187,7 @@ portão de qualidade têm um dono só: o [CLAUDE.md](../CLAUDE.md) da raiz. Este
 | **M5** | Editor SQL: abas, highlight, Run Current, limite, Beautify, resultado | Executa as queries da tela 3.7 e vê o resultado |
 | **M6** | Gerar SQL pela árvore (FEAT-013) e autocomplete por schema (FEAT-012) | Botão direito numa tabela gera o INSERT; digita `select * from` e o prefixo de uma tabela e recebe o nome; `alias.` lista as colunas |
 | **M7** | Filtros, navegação por FK, histórico de queries, busca na árvore | Fluxo diário completo sem sair do app |
-| **M8** | CLI + MCP opt-in, empacotamento macOS (`.app`), README | Um agente lista tabelas e roda uma query via MCP |
+| **M8** | CLI + MCP opt-in, empacotamento macOS (`.app` e `.dmg` por `cargo xtask bundle`, FEAT-014), README | Um agente lista tabelas e roda uma query via MCP |
 
 Cada marco é um ou mais commits pequenos. Documentação de cada feature em
 `docs/features/FEAT-NNN-slug/` (brief, aceite, notas de implementação e `context.index.md`),

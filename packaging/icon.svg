@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Ícone do hy-dbplus (FEAT-014): o balão com o "h" vazado da Hyberica (hyberica-icon.svg, mesma
+     forma) em azul-petróleo sobre o quadrado arredondado do macOS. Sem texto: não depende de fonte.
+     O xtask bundle converte em .icns (qlmanage + iconutil). Aprovado pelo Jean em 23/10/2026. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#DFE9EC"/>
+    </linearGradient>
+    <linearGradient id="fg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1C4F5E"/>
+      <stop offset="1" stop-color="#07252E"/>
+    </linearGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="184" fill="url(#bg)"/>
+  <g transform="translate(512,500) scale(2.5) translate(-100,-117.5)">
+    <path fill="url(#fg)" fill-rule="evenodd" d="m 25,10 h 150 q 20,0 20,20 v 140 q 0,20 -20,20 h -30 l 10,35 -35,-35 H 25 Q 5,190 5,170 V 30 Q 5,10 25,10 Z m 25,35 h 25 v 35 h 75 v 65 H 125 V 105 H 75 v 40 H 50 Z"/>
+  </g>
+</svg>
