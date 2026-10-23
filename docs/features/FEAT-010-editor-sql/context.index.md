@@ -1,4 +1,4 @@
-<!-- FEAT_EM_ANDAMENTO — implementada em 22/10/2026, aguardando os commits (ver impl-notes), push, CI e conferência do Jean -->
+<!-- FEAT_IMPLEMENTADA — commitada em 22/10/2026 (27e92ed…7e68ca4, sete rodadas de revisão); falta a conferência visual do Jean -->
 <!-- PRIO_ALTA -->
 # @file: docs/features/FEAT-010-editor-sql/context.index.md
 
