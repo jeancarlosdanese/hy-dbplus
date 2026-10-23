@@ -165,16 +165,26 @@ fn path_from(
     xdg_config_home: Option<OsString>,
     home: Option<PathBuf>,
 ) -> Result<PathBuf, EngineError> {
+    Ok(config_dir_from(xdg_config_home, home)?.join("connections.toml"))
+}
+
+/// O diretório de configuração do app (`$XDG_CONFIG_HOME/hy-dbplus` ou `~/.config/hy-dbplus`),
+/// compartilhado com as queries salvas ([`crate::queries`]). `XDG_CONFIG_HOME` vazio conta como
+/// ausente.
+pub(crate) fn config_dir_from(
+    xdg_config_home: Option<OsString>,
+    home: Option<PathBuf>,
+) -> Result<PathBuf, EngineError> {
     let base = match xdg_config_home.filter(|v| !v.is_empty()) {
         Some(xdg) => PathBuf::from(xdg),
         None => home
             .ok_or_else(|| EngineError::Config("sem diretório home".into()))?
             .join(".config"),
     };
-    Ok(base.join("hy-dbplus").join("connections.toml"))
+    Ok(base.join("hy-dbplus"))
 }
 
-fn remove_if_exists(path: &Path) -> std::io::Result<()> {
+pub(crate) fn remove_if_exists(path: &Path) -> std::io::Result<()> {
     match std::fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -183,7 +193,7 @@ fn remove_if_exists(path: &Path) -> std::io::Result<()> {
 }
 
 #[cfg(unix)]
-fn create_private_dir(dir: &Path) -> std::io::Result<()> {
+pub(crate) fn create_private_dir(dir: &Path) -> std::io::Result<()> {
     use std::os::unix::fs::DirBuilderExt;
     std::fs::DirBuilder::new()
         .recursive(true)
@@ -192,12 +202,12 @@ fn create_private_dir(dir: &Path) -> std::io::Result<()> {
 }
 
 #[cfg(not(unix))]
-fn create_private_dir(dir: &Path) -> std::io::Result<()> {
+pub(crate) fn create_private_dir(dir: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)
 }
 
 #[cfg(unix)]
-fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
     let mut f = std::fs::OpenOptions::new()
@@ -210,7 +220,7 @@ fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 }
 
 #[cfg(not(unix))]
-fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     std::fs::write(path, bytes)
 }
 
