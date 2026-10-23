@@ -2846,4 +2846,173 @@ mod tests {
         assert!(q.results.is_empty() && !q.running);
         assert_eq!(executes.load(Ordering::SeqCst), 0);
     }
+
+    /// FEAT-012: o popup de autocomplete abre ao digitar, sugere keyword na caixa do prefixo,
+    /// tabela depois de `from`, colunas depois de `alias.` (pedindo ao engine as que faltam);
+    /// ↑/↓ movem, Tab e Enter aceitam, Esc fecha sem tirar o foco (e o Enter volta a ser nova
+    /// linha); dentro de string não abre; ⌃Space abre com prefixo vazio. Nada roda.
+    #[test]
+    fn autocomplete_sugere_keyword_tabela_e_coluna_e_as_teclas_aceitam_ou_fecham() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let driver = FakeDriver::default();
+        let executes = Arc::clone(&driver.executes);
+        let mut app = App::with_deps(deps(driver, &rt));
+        let c = Connection::new("pg-localhost", Tag::Local, ConnectionConfig::default());
+        app.deps.store.upsert(c.clone());
+        crate::connections::connect(&mut app, &c);
+        let id = c.id.clone();
+        let key = (id.clone(), "loja".to_owned());
+        let mut harness = wide_harness(app);
+        wait_for(&mut harness, "Connected", |app| app.view == View::Workspace);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::K);
+        harness.step();
+        harness.get_by_label("loja").click();
+        wait_for(&mut harness, "SchemaLoaded", |app| {
+            app.workspace_of(&id)
+                .is_some_and(|ws| ws.objects.contains_key("public"))
+        });
+        let query = |app: &App<FakeDriver>| app.workspace_of(&id).unwrap().query().cloned();
+        let labels = |app: &App<FakeDriver>| -> Vec<String> {
+            query(app)
+                .and_then(|q| q.completion)
+                .map(|c| c.items.iter().map(|i| i.label.clone()).collect())
+                .unwrap_or_default()
+        };
+        let type_text = |harness: &mut Harness<'_, App<FakeDriver>>, text: &str| {
+            harness
+                .input_mut()
+                .events
+                .push(egui::Event::Text(text.into()));
+            harness.step();
+            harness.step();
+        };
+        harness.get_by_label("+ SQL").click_accesskit();
+        harness.step();
+        harness.step();
+        harness
+            .get_by_role(egui::accesskit::Role::MultilineTextInput)
+            .focus();
+        harness.step();
+        let editor = crate::editor::editor_id(&key, query(harness.state()).unwrap().id);
+
+        // "sel": keyword na caixa do prefixo, na tela; Enter aceita.
+        type_text(&mut harness, "sel");
+        assert_eq!(labels(harness.state()), ["select"]);
+        harness.get_by_label("select");
+        harness.key_press(egui::Key::Enter);
+        harness.step();
+        harness.step();
+        let q = query(harness.state()).unwrap();
+        assert_eq!((q.buffer.as_str(), q.cursor), ("select", 6));
+        assert!(q.completion.is_none());
+
+        // " * from pe": pedido antes de v_pedido; ↓ e ↑ movem; Tab aceita o escolhido.
+        type_text(&mut harness, " * from pe");
+        assert_eq!(labels(harness.state()), ["pedido", "v_pedido"]);
+        harness.key_press(egui::Key::ArrowDown);
+        harness.step();
+        assert_eq!(
+            query(harness.state()).unwrap().completion.unwrap().selected,
+            1
+        );
+        harness.key_press(egui::Key::ArrowUp);
+        harness.step();
+        harness.key_press(egui::Key::Tab);
+        harness.step();
+        harness.step();
+        assert_eq!(
+            query(harness.state()).unwrap().buffer,
+            "select * from pedido"
+        );
+
+        // " p where p.": as colunas de pedido não estão na UI: o editor pede ao engine e a lista
+        // aparece quando chegam; "st" filtra; Enter aceita.
+        type_text(&mut harness, " p where p.");
+        wait_for(&mut harness, "colunas", |app| !labels(app).is_empty());
+        assert_eq!(labels(harness.state()), ["id", "cliente", "status"]);
+        assert!(
+            harness.state().workspaces[&key]
+                .columns
+                .contains_key(&("public".to_owned(), "pedido".to_owned()))
+        );
+        type_text(&mut harness, "st");
+        assert_eq!(labels(harness.state()), ["status"]);
+        harness.key_press(egui::Key::Enter);
+        harness.step();
+        harness.step();
+        assert_eq!(
+            query(harness.state()).unwrap().buffer,
+            "select * from pedido p where p.status"
+        );
+
+        // " a": abre (keywords com "a"); Esc fecha sem tirar o foco; o Enter seguinte é nova linha.
+        type_text(&mut harness, " a");
+        assert!(!labels(harness.state()).is_empty());
+        harness.key_press(egui::Key::Escape);
+        harness.step();
+        assert!(query(harness.state()).unwrap().completion.is_none());
+        assert_eq!(harness.ctx.memory(|m| m.focused()), Some(editor));
+        harness.key_press(egui::Key::Enter);
+        harness.step();
+        harness.step();
+        assert!(query(harness.state()).unwrap().buffer.ends_with(" a\n"));
+        assert!(query(harness.state()).unwrap().completion.is_none());
+
+        // Dentro de string não abre; fechada a string, ⌃Space abre com prefixo vazio (colunas da
+        // tabela do statement primeiro); Esc fecha.
+        type_text(&mut harness, "'ab");
+        assert!(query(harness.state()).unwrap().completion.is_none());
+        type_text(&mut harness, "' ");
+        assert!(query(harness.state()).unwrap().completion.is_none());
+        harness.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::Space);
+        harness.step();
+        harness.step();
+        let l = labels(harness.state());
+        assert_eq!(&l[..3], ["id", "cliente", "status"], "{l:?}");
+        harness.key_press(egui::Key::Escape);
+        harness.step();
+        assert!(query(harness.state()).unwrap().completion.is_none());
+
+        // Com o popup fechado, Tab é tabulação. Clique num item aceita. Backspace não abre.
+        harness.key_press(egui::Key::Tab);
+        harness.step();
+        harness.step();
+        assert!(query(harness.state()).unwrap().buffer.ends_with("\t"));
+        assert!(query(harness.state()).unwrap().completion.is_none());
+        type_text(&mut harness, "se");
+        assert_eq!(labels(harness.state())[0], "select");
+        harness.get_by_label("select").click_accesskit();
+        harness.step();
+        harness.step();
+        let q = query(harness.state()).unwrap();
+        assert!(q.buffer.ends_with("\tselect"), "{:?}", q.buffer);
+        assert!(q.completion.is_none());
+        assert_eq!(harness.ctx.memory(|m| m.focused()), Some(editor));
+        harness.key_press(egui::Key::Backspace);
+        harness.step();
+        harness.step();
+        assert!(query(harness.state()).unwrap().buffer.ends_with("\tselec"));
+        assert!(query(harness.state()).unwrap().completion.is_none());
+
+        // Popup aberto e o foco vai para a busca da árvore: o popup fecha e o Enter dado lá não
+        // mexe no buffer.
+        type_text(&mut harness, "t");
+        assert_eq!(labels(harness.state()), ["select"]);
+        harness
+            .get_all_by_role(egui::accesskit::Role::TextInput)
+            .next()
+            .unwrap()
+            .click();
+        harness.step();
+        harness.step();
+        assert_ne!(harness.ctx.memory(|m| m.focused()), Some(editor));
+        assert!(query(harness.state()).unwrap().completion.is_none());
+        assert!(harness.query_by_label("select").is_none());
+        let before = query(harness.state()).unwrap().buffer;
+        harness.key_press(egui::Key::Enter);
+        harness.step();
+        harness.step();
+        assert_eq!(query(harness.state()).unwrap().buffer, before);
+        assert_eq!(executes.load(Ordering::SeqCst), 0);
+    }
 }

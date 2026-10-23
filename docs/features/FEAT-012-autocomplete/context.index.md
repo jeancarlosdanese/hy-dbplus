@@ -1,4 +1,4 @@
-<!-- FEAT_PLANEJADA — docs criados em 23/10/2026; código não iniciado; vem depois da FEAT-013 -->
+<!-- FEAT_IMPLEMENTADA — 23/10/2026: cache 31b3eb8, motor 12f5def; fix do motor e popup na árvore aguardando commit; falta push e conferência do Jean -->
 <!-- PRIO_ALTA -->
 # @file: docs/features/FEAT-012-autocomplete/context.index.md
 
@@ -37,10 +37,9 @@ highlight e o Run Current.
 
 ```
 crates/sql/src/analysis.rs        Analysis: tokens, statements e spans do buffer, uma vez
-crates/sql/src/complete.rs        complete, CatalogView, Item, resolução de alias
-crates/sql/src/keywords.rs        lista curada de keywords
-crates/ui-egui/src/complete.rs    popup, teclas, inserção, pedidos ao engine
-crates/ui-egui/src/editor.rs      chama o popup; QueryTab.analysis
+crates/sql/src/complete.rs        complete, CatalogView, Item, Need, resolução de alias (keywords: highlight.rs)
+crates/ui-egui/src/editor.rs      teclas do popup, keep_open, complete por frame, show_popup, pedidos ao engine; QueryTab.analysis
+crates/ui-egui/src/app.rs         QueryTab.completion (CompletionState), accept_completion
 ```
 
 ## Workflow Claude Code

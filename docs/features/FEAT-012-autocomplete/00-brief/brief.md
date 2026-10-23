@@ -17,8 +17,10 @@ Tab ou Enter aceitam; Esc fecha; ⌃Space abre à força. Desenho fechado com o 
 
 ## Escopo (Must)
 
-1. **`sql::complete`** (camada 2, puro, testado): `complete(buffer, cursor_byte, catalog: &CatalogView)
-   -> Option<Completion { replace: Range<usize>, items: Vec<Item { label, kind, detail }> }>`, onde
+1. **`sql::complete`** (camada 2, puro, testado): `complete(&Analysis, cursor_byte, catalog: &CatalogView)
+   -> Option<Completion { replace: Range<usize>, items: Vec<Item { label, kind, detail }>, needs: Vec<Need> }>`
+   (`needs`: colunas de tabela do statement ou objetos de um `schema.` que a visão não tem; só de tabela
+   que o catálogo conhece, para o prefixo em digitação não virar query ao servidor), onde
    `CatalogView` é uma visão emprestada do que a UI tem (`current_schema`, schemas, tabelas por schema,
    colunas por `(schema, tabela)`) e `kind` é `Keyword | Schema | Table | View | Column | Alias |
    Function`. Contexto pelos tokens do statement sob o cursor (`statement_at` + tokenizador):
@@ -30,19 +32,19 @@ Tab ou Enter aceitam; Esc fecha; ⌃Space abre à força. Desenho fechado com o 
    - depois de `FROM`, `JOIN`, `INTO`, `UPDATE`, `TABLE` → tabelas e views do schema atual e schemas;
    - resto → colunas das tabelas do statement, aliases, keywords, tabelas do schema atual, funções;
    - dentro de string, comentário ou identificador entre aspas: `None`;
-   - ordem: começa com o prefixo antes de contém; empate por nome; caixa ignorada; no máximo 50;
+   - ordem: começa com o prefixo antes de contém; dentro do rank, a ordem dos grupos e do catálogo; caixa
+     ignorada; identificador sem aspas é dobrado para minúsculas como o servidor faz; no máximo 50;
    - keyword segue a caixa do prefixo (`sel` → `select`, `SEL` → `SELECT`); prefixo vazio → minúsculas;
    - nome que precisa de aspas entra com aspas (`quote_ident` do catálogo).
-   Lista de keywords curada (~80 do PostgreSQL: DML, DDL comum, cláusulas, operadores por extenso,
-   funções de agregação mais usadas), em `keywords.rs`.
+   A lista de keywords é a do `highlight.rs` (uma lista só para pintar e sugerir).
 2. **Cache de tokenização** (pendência do M5): `sql::Analysis::new(buffer)` guarda tokens, statements e
    spans uma vez e os expõe (`statements`, `spans`, `statement_at`, `tokens`); as funções livres
    `split`/`highlight`/`statement_at` continuam com o mesmo contrato por cima das mesmas partes;
    `complete` recebe a análise. A `QueryTab` guarda a análise do buffer atual e refaz só quando o texto
    muda (`Analysis::refresh`).
-3. **`ui-egui`** (`complete.rs`): popup ancorado no retângulo do cursor (galley do `TextEdit`), aberto
-   automaticamente ao digitar o primeiro caractere de identificador ou logo depois de `.`, ou por
-   ⌃Space; ↑/↓ movem, Tab e Enter aceitam (substituem `replace` pelo `label`, movem o cursor para o fim e
+3. **`ui-egui`** (`editor.rs` e o estado em `app.rs`): popup ancorado no retângulo do cursor (galley do
+   `TextEdit`), aberto automaticamente ao inserir um caractere de identificador ou `.` (não ao apagar,
+   colar ou desfazer), ou por ⌃Space; só com o editor focado, e fecha ao perder o foco; ↑/↓ movem, Tab e Enter aceitam (substituem `replace` pelo `label`, movem o cursor para o fim e
    fecham), Esc fecha, continuar digitando filtra, qualquer outra tecla de edição fecha. Teclas
    consumidas antes do `TextEdit` como os atalhos de hoje. Tabela do statement sem colunas no
    `Workspace` → `load_columns`; `schema.` sem objetos → `load_schema`; o evento reabre a lista. Até 10

@@ -4,24 +4,25 @@
 
 ## `sql::complete`
 
-- [ ] `from cl` sugere `clientes` (schema atual); `public.` lista as tabelas e views do schema; `c.` com
+- [x] `from cl` sugere `clientes` (schema atual); `public.` lista as tabelas e views do schema; `c.` com
       `clientes c` ou `clientes as c` no `FROM`/`JOIN`/`UPDATE`/`INSERT INTO` lista as colunas com o tipo.
-- [ ] Fora de `FROM`/`JOIN`, as colunas das tabelas do statement vêm antes de keywords e tabelas; o que
+- [x] Fora de `FROM`/`JOIN`, as colunas das tabelas do statement vêm antes de keywords e tabelas; o que
       começa com o prefixo vem antes do que só contém; no máximo 50 itens.
-- [ ] Dentro de string, comentário ou identificador entre aspas não sugere; keyword segue a caixa do prefixo;
+- [x] Dentro de string, comentário ou identificador entre aspas não sugere; keyword segue a caixa do prefixo;
       nome que precisa de aspas sai com aspas.
-- [ ] Highlight, Run Current e autocomplete tokenizam o buffer uma vez por mudança de texto.
+- [x] Highlight, Run Current e autocomplete tokenizam o buffer uma vez por mudança de texto.
 
 ## `ui-egui`
 
-- [ ] Popup abre ao digitar identificador ou após `.`, e por ⌃Space; ↑/↓, Tab/Enter aceitam, Esc fecha;
+- [x] Popup abre ao digitar identificador ou após `.`, e por ⌃Space; ↑/↓, Tab/Enter aceitam, Esc fecha;
       com o popup fechado, Enter insere nova linha e Tab tabulação, como hoje.
-- [ ] Tabela sem colunas carregadas: o editor pede ao engine e a lista aparece quando chegam.
-- [ ] Teste `egui_kittest` cobre aceitar keyword, tabela e coluna, pedir colunas, Esc e string.
+- [x] Tabela sem colunas carregadas: o editor pede ao engine e a lista aparece quando chegam.
+- [x] Teste `egui_kittest` cobre aceitar keyword, tabela e coluna, pedir colunas, ↑/↓, Tab, Enter, Esc
+      (foco fica e o Enter seguinte é nova linha), string e ⌃Space.
 
 ## Portão e CI
 
-- [ ] `scripts/quality-gate.sh --full` verde; [ ] workflow verde (push do Jean).
+- [x] `scripts/quality-gate.sh --full` verde; [ ] workflow verde (push do Jean).
 
 ## Do Jean
 

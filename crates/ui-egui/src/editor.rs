@@ -5,9 +5,9 @@
 //! (`results.rs`). O buffer é do `QueryTab`; o cursor é lido do estado do `TextEdit` a cada frame.
 
 use hy_dbplus_engine::Driver;
-use hy_dbplus_sql::{Analysis, Kind};
+use hy_dbplus_sql::{Analysis, CatalogView, ItemKind, Kind, Need, complete};
 
-use crate::app::{App, DbKey};
+use crate::app::{App, CompletionState, DbKey};
 use crate::{results, theme};
 
 pub const LIMITS: [Option<usize>; 4] = [None, Some(100), Some(500), Some(1000)];
@@ -40,6 +40,60 @@ where
     D::Conn: 'static,
 {
     let tokens = theme::current(ui.ctx());
+    // Teclas do popup de autocomplete (FEAT-012), consumidas antes do TextEdit e só com o editor
+    // focado no frame anterior (o Esc já tirou o foco neste; e sem foco as teclas são de outro
+    // widget): com o popup aberto, ↑/↓ movem, Tab e Enter aceitam (quando há itens), Esc fecha;
+    // ⌃Space abre. Shift junto é do editor (seleção, desindentar).
+    let (popup_open, has_items, editor_focused) =
+        match app.workspaces.get(key).and_then(|ws| ws.query()) {
+            Some(q) => (
+                q.completion.is_some(),
+                q.completion.as_ref().is_some_and(|c| !c.items.is_empty()),
+                ui.memory(|m| m.had_focus_last_frame(editor_id(key, q.id))),
+            ),
+            None => return,
+        };
+    let mut force_open = false;
+    let (mut up, mut down, mut accept, mut close) = (false, false, false, false);
+    let (mut pasted, mut command) = (false, false);
+    ui.input_mut(|i| {
+        pasted = i.events.iter().any(|e| matches!(e, egui::Event::Paste(_)));
+        command = i.modifiers.command;
+        if !editor_focused || i.modifiers.shift {
+            return;
+        }
+        force_open = i.consume_key(egui::Modifiers::CTRL, egui::Key::Space);
+        if popup_open {
+            up = i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp);
+            down = i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown);
+            if has_items {
+                accept = i.consume_key(egui::Modifiers::NONE, egui::Key::Tab)
+                    || i.consume_key(egui::Modifiers::NONE, egui::Key::Enter);
+            }
+            close = i.consume_key(egui::Modifiers::NONE, egui::Key::Escape);
+        }
+    });
+    if popup_open && let Some(q) = app.workspaces.get_mut(key).and_then(|ws| ws.query_mut()) {
+        if let Some(c) = q.completion.as_mut() {
+            let len = c.items.len().max(1);
+            if down {
+                c.selected = (c.selected + 1) % len;
+            }
+            if up {
+                c.selected = (c.selected + len - 1) % len;
+            }
+        }
+        if accept {
+            let index = q.completion.as_ref().map_or(0, |c| c.selected);
+            q.accept_completion(index);
+        } else if close {
+            q.completion = None;
+            // O egui solta o foco no Esc antes de qualquer widget ver a tecla: com o popup aberto
+            // o Esc é dele, e o editor fica com o foco.
+            let id = editor_id(key, q.id);
+            ui.memory_mut(|m| m.request_focus(id));
+        }
+    }
     let Some(ws) = app.workspaces.get(key) else {
         return;
     };
@@ -186,6 +240,7 @@ where
     };
     let editor_id = editor_id(key, q.id);
     let mut changed = false;
+    let mut cursor_rect: Option<egui::Rect> = None;
     egui::CentralPanel::default_margins().show(ui, |ui| {
         egui::Panel::bottom(egui::Id::new(("query-status", key, q.id))).show(ui, |ui| {
             let (line, column) = line_column(&buffer, cursor_byte);
@@ -238,16 +293,22 @@ where
                         state.store(ui.ctx(), editor_id);
                         ui.memory_mut(|m| m.request_focus(editor_id));
                     }
-                    let response = ui.add(
-                        egui::TextEdit::multiline(&mut buffer)
-                            .id(editor_id)
-                            .code_editor()
-                            .lock_focus(true)
-                            .desired_width(f32::INFINITY)
-                            .desired_rows(12)
-                            .layouter(&mut layouter),
-                    );
-                    changed = response.changed();
+                    let output = egui::TextEdit::multiline(&mut buffer)
+                        .id(editor_id)
+                        .code_editor()
+                        .lock_focus(true)
+                        .desired_width(f32::INFINITY)
+                        .desired_rows(12)
+                        .layouter(&mut layouter)
+                        .show(ui);
+                    changed = output.response.changed();
+                    // Onde o popup ancora: embaixo do cursor, em coordenadas de tela.
+                    cursor_rect = output.cursor_range.map(|r| {
+                        output
+                            .galley
+                            .pos_from_cursor(r.primary)
+                            .translate(output.galley_pos.to_vec2())
+                    });
                 });
             });
     });
@@ -255,6 +316,67 @@ where
     let cursor = egui::TextEdit::load_state(ui.ctx(), editor_id)
         .and_then(|state| state.cursor.char_range())
         .map(|range| range.primary.index.0);
+    // O popup: abre ao digitar identificador ou `.` (texto inserido, não apagado, colado nem
+    // desfeito), ou por ⌃Space; fecha quando o texto muda de outro jeito, quando o cursor anda
+    // sem texto, quando o editor perde o foco (sem cursor na tela), ou quando o motor não tem o
+    // que sugerir.
+    let cursor_moved = cursor.is_some_and(|c| c != cursor_chars_of(&buffer, q.cursor_byte));
+    let typed_ident = changed
+        && !pasted
+        && !command
+        && buffer.len() > q.buffer.len()
+        && cursor
+            .and_then(|c| byte_of(&buffer, c))
+            .and_then(|b| buffer.get(..b)?.chars().last())
+            .is_some_and(|ch| ch.is_alphanumeric() || ch == '_' || ch == '.');
+    let keep_open = cursor_rect.is_some()
+        && ((popup_open
+            && !accept
+            && !close
+            && (!changed || typed_ident)
+            && (changed || !cursor_moved))
+            || typed_ident
+            || force_open);
+    let mut popup: Option<CompletionState> = None;
+    let mut needs: Vec<Need> = Vec::new();
+    if keep_open && let Some(ws) = app.workspaces.get(key) {
+        let view = CatalogView {
+            current_schema: ws.current_schema.as_deref(),
+            schemas: &ws.schemas,
+            objects: &ws.objects,
+            columns: &ws.columns,
+        };
+        let analysis = Analysis::refresh(&mut analysis, &buffer);
+        let cursor_byte = cursor
+            .and_then(|c| byte_of(&buffer, c))
+            .unwrap_or(buffer.len());
+        if let Some(c) = complete(analysis, cursor_byte, &view) {
+            let previous = ws.query().and_then(|q| q.completion.as_ref());
+            // O item escolhido sobrevive enquanto a lista é a mesma; lista nova começa do zero.
+            let selected = previous
+                .filter(|p| p.items == c.items)
+                .map_or(0, |p| p.selected);
+            let requested = previous.map(|p| p.requested.clone()).unwrap_or_default();
+            needs = c
+                .needs
+                .iter()
+                .filter(|n| !requested.contains(n))
+                .cloned()
+                .collect();
+            if !c.items.is_empty() || !c.needs.is_empty() {
+                popup = Some(CompletionState {
+                    replace: c.replace,
+                    items: c.items,
+                    selected,
+                    requested: requested.into_iter().chain(needs.iter().cloned()).collect(),
+                });
+            }
+        }
+    }
+    let mut clicked: Option<usize> = None;
+    if let (Some(state), Some(rect)) = (&popup, cursor_rect) {
+        clicked = show_popup(ui.ctx(), editor_id, rect, state, &tokens, up || down);
+    }
     if let Some(q) = app.workspaces.get_mut(key).and_then(|ws| ws.query_mut()) {
         q.analysis = analysis;
         if changed {
@@ -265,6 +387,20 @@ where
         }
         if let Some(limit) = new_limit {
             q.limit = limit;
+        }
+        q.completion = popup;
+        if let Some(index) = clicked {
+            q.accept_completion(index);
+        }
+    }
+    for need in needs {
+        match need {
+            Need::Columns { schema, table } => {
+                app.deps
+                    .sessions
+                    .load_columns(&key.0, &key.1, &schema, &table);
+            }
+            Need::Schema(schema) => app.deps.sessions.load_schema(&key.0, &key.1, &schema),
         }
     }
     if beautify {
@@ -277,6 +413,98 @@ where
     } else if run_current {
         app.run_current(key);
     }
+}
+
+/// O popup de sugestões embaixo do cursor: até dez linhas visíveis com rolagem, o item escolhido
+/// realçado (e trazido à vista quando o teclado o moveu); clique aceita. Devolve o índice clicado.
+fn show_popup(
+    ctx: &egui::Context,
+    editor_id: egui::Id,
+    cursor_rect: egui::Rect,
+    state: &CompletionState,
+    tokens: &theme::Tokens,
+    scroll_to_selected: bool,
+) -> Option<usize> {
+    let mut clicked = None;
+    let row = 20.0;
+    egui::Area::new(editor_id.with("completion"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(cursor_rect.left_bottom() + egui::vec2(0.0, 2.0))
+        .show(ctx, |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.set_min_width(260.0);
+                if state.items.is_empty() {
+                    ui.label(
+                        egui::RichText::new("carregando colunas…")
+                            .small()
+                            .color(tokens.text_muted),
+                    );
+                    return;
+                }
+                egui::ScrollArea::vertical()
+                    .max_height(row * 10.0)
+                    .show(ui, |ui| {
+                        for (i, item) in state.items.iter().enumerate() {
+                            let selected = i == state.selected;
+                            let response = ui
+                                .horizontal(|ui| {
+                                    ui.set_min_height(row);
+                                    let label = ui.selectable_label(
+                                        selected,
+                                        egui::RichText::new(&item.label).monospace(),
+                                    );
+                                    ui.label(
+                                        egui::RichText::new(kind_tag(item.kind))
+                                            .small()
+                                            .color(tokens.text_muted),
+                                    );
+                                    if !item.detail.is_empty() {
+                                        ui.label(
+                                            egui::RichText::new(&item.detail)
+                                                .small()
+                                                .color(tokens.text_muted),
+                                        );
+                                    }
+                                    label
+                                })
+                                .inner;
+                            if response.clicked() {
+                                clicked = Some(i);
+                            }
+                            if selected && scroll_to_selected {
+                                response.scroll_to_me(None);
+                            }
+                        }
+                    });
+            });
+        });
+    clicked
+}
+
+fn kind_tag(kind: ItemKind) -> &'static str {
+    match kind {
+        ItemKind::Column => "coluna",
+        ItemKind::Alias => "alias",
+        ItemKind::Keyword => "keyword",
+        ItemKind::Table => "tabela",
+        ItemKind::View => "view",
+        ItemKind::Schema => "schema",
+        ItemKind::Function => "função",
+    }
+}
+
+/// O byte do caractere `chars` (o egui conta o cursor em caracteres).
+fn byte_of(buffer: &str, chars: usize) -> Option<usize> {
+    buffer
+        .char_indices()
+        .nth(chars)
+        .map(|(b, _)| b)
+        .or((chars == buffer.chars().count()).then_some(buffer.len()))
+}
+
+/// O índice em caracteres do byte `at` (o inverso de [`byte_of`]).
+fn cursor_chars_of(buffer: &str, at: usize) -> usize {
+    buffer.get(..at).map_or(0, |s| s.chars().count())
 }
 
 struct Colors {

@@ -178,6 +178,19 @@ pub struct QueryTab {
     /// A análise do buffer (tokens, statements, spans) do último frame; o editor refaz quando o
     /// texto muda e o Run Current a reaproveita (FEAT-012).
     pub analysis: Option<hy_dbplus_sql::Analysis>,
+    /// O popup de autocomplete aberto (FEAT-012): o que ele mostra e o item escolhido.
+    pub completion: Option<CompletionState>,
+}
+
+/// O popup de autocomplete de uma aba (FEAT-012): o trecho a substituir e os itens vêm do motor
+/// (`sql::complete`) no frame anterior; `requested` evita pedir ao engine as mesmas colunas a
+/// cada frame enquanto a resposta não chega.
+#[derive(Debug, Clone, Default)]
+pub struct CompletionState {
+    pub replace: std::ops::Range<usize>,
+    pub items: Vec<hy_dbplus_sql::Item>,
+    pub selected: usize,
+    pub requested: Vec<hy_dbplus_sql::Need>,
 }
 
 pub const DEFAULT_LIMIT: Option<usize> = Some(100);
@@ -214,6 +227,7 @@ impl QueryTab {
             save_failed: None,
             pending_cursor: None,
             analysis: None,
+            completion: None,
         }
     }
 
@@ -224,6 +238,27 @@ impl QueryTab {
             buffer: sql,
             ..Self::new(id)
         }
+    }
+
+    /// Aceita o item `index` do popup: o `label` entra no lugar do prefixo, o cursor vai para o
+    /// fim dele (pelo `pending_cursor`, que o editor aplica ao widget) e o popup fecha.
+    pub fn accept_completion(&mut self, index: usize) {
+        let Some(c) = self.completion.take() else {
+            return;
+        };
+        let Some(item) = c.items.get(index) else {
+            return;
+        };
+        let (Some(head), Some(tail)) = (
+            self.buffer.get(..c.replace.start),
+            self.buffer.get(c.replace.end..),
+        ) else {
+            return;
+        };
+        let cursor = head.chars().count() + item.label.chars().count();
+        self.buffer = format!("{head}{}{tail}", item.label);
+        self.cursor = cursor;
+        self.pending_cursor = Some(cursor);
     }
 
     /// O statement sob o cursor, pela análise guardada quando ela é deste texto.
@@ -1073,6 +1108,10 @@ where
                     ws.error = Some(error.to_string());
                     // O SQL do menu que esperava as colunas não vem mais; o erro já está na árvore.
                     ws.pending_sql = None;
+                    // Popup de autocomplete em "carregando colunas…" também não.
+                    for q in ws.tabs.iter_mut().filter_map(Tab::query_mut) {
+                        q.completion = None;
+                    }
                 } else if let Some(state) = self.conn_state.get_mut(&id) {
                     // Dois ⌘K seguidos: o erro do primeiro ainda aparece, mesmo que `opening` já
                     // seja o segundo.
@@ -1579,6 +1618,7 @@ where
         q.buffer = buffer;
         q.cursor = start;
         q.pending_cursor = Some(start);
+        q.completion = None;
     }
 
     /// Run Current (⌘↩): o statement sob o cursor.
@@ -1670,6 +1710,8 @@ where
             if formatted != q.buffer {
                 q.buffer = formatted;
                 q.cursor = q.cursor.min(q.buffer.chars().count());
+                // O popup guardava um trecho do texto antigo.
+                q.completion = None;
             }
         }
     }
