@@ -36,8 +36,10 @@ Tab ou Enter aceitam; Esc fecha; ⌃Space abre à força. Desenho fechado com o 
    Lista de keywords curada (~80 do PostgreSQL: DML, DDL comum, cláusulas, operadores por extenso,
    funções de agregação mais usadas), em `keywords.rs`.
 2. **Cache de tokenização** (pendência do M5): `sql::Analysis::new(buffer)` guarda tokens, statements e
-   spans uma vez; `highlight`, `statement_at` e `complete` passam a aceitar a análise. A `QueryTab`
-   guarda a análise do buffer atual e refaz só quando o texto muda.
+   spans uma vez e os expõe (`statements`, `spans`, `statement_at`, `tokens`); as funções livres
+   `split`/`highlight`/`statement_at` continuam com o mesmo contrato por cima das mesmas partes;
+   `complete` recebe a análise. A `QueryTab` guarda a análise do buffer atual e refaz só quando o texto
+   muda (`Analysis::refresh`).
 3. **`ui-egui`** (`complete.rs`): popup ancorado no retângulo do cursor (galley do `TextEdit`), aberto
    automaticamente ao digitar o primeiro caractere de identificador ou logo depois de `.`, ou por
    ⌃Space; ↑/↓ movem, Tab e Enter aceitam (substituem `replace` pelo `label`, movem o cursor para o fim e

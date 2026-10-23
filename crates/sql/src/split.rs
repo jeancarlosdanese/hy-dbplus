@@ -70,15 +70,35 @@ pub(crate) fn tokens(buffer: &str) -> (Vec<TokenWithSpan>, Option<usize>) {
     }
 }
 
+/// A posição em bytes de cada token (`None` quando o `Location` não cai no texto). O `end` do
+/// span é exclusivo (a posição depois do token), apesar da doc do tokenizador.
+pub(crate) fn byte_ranges(buffer: &str, tokens: &[TokenWithSpan]) -> Vec<Option<Range<usize>>> {
+    let lines = Lines::new(buffer);
+    tokens
+        .iter()
+        .map(|t| Some(lines.byte_at(buffer, t.span.start)?..lines.byte_at(buffer, t.span.end)?))
+        .collect()
+}
+
 /// Os statements do buffer, na ordem; vazio (só espaço e comentário) não entra; o último sem `;`
 /// entra.
 pub fn split(buffer: &str) -> Vec<Statement> {
     let (tokens, error_at) = tokens(buffer);
-    let lines = Lines::new(buffer);
+    let ranges = byte_ranges(buffer, &tokens);
+    split_tokens(buffer, &tokens, &ranges, error_at)
+}
+
+/// O `split` a partir dos tokens já lidos (a [`crate::Analysis`] os guarda).
+pub(crate) fn split_tokens(
+    buffer: &str,
+    tokens: &[TokenWithSpan],
+    ranges: &[Option<Range<usize>>],
+    error_at: Option<usize>,
+) -> Vec<Statement> {
     let mut out = Vec::new();
     let mut start: Option<usize> = None;
     let mut end = 0;
-    for t in &tokens {
+    for (t, range) in tokens.iter().zip(ranges) {
         match &t.token {
             Token::SemiColon => {
                 if let Some(s) = start.take() {
@@ -87,17 +107,13 @@ pub fn split(buffer: &str) -> Vec<Statement> {
             }
             Token::Whitespace(_) | Token::EOF => {}
             _ => {
-                // O `end` do span é exclusivo (a posição depois do token), apesar da doc.
-                let (Some(s), Some(e)) = (
-                    lines.byte_at(buffer, t.span.start),
-                    lines.byte_at(buffer, t.span.end),
-                ) else {
+                let Some(range) = range else {
                     continue;
                 };
                 if start.is_none() {
-                    start = Some(s);
+                    start = Some(range.start);
                 }
-                end = e.max(end);
+                end = range.end.max(end);
             }
         }
     }
@@ -145,19 +161,16 @@ fn push(out: &mut Vec<Statement>, buffer: &str, start: usize, end: usize, comple
 /// `range`; quem tem o cursor em caracteres (o egui) converte antes:
 /// `buffer.char_indices().nth(i).map_or(buffer.len(), |(b, _)| b)`.
 pub fn statement_at(buffer: &str, cursor: usize) -> Option<Statement> {
-    let statements = split(buffer);
-    if let Some(s) = statements
-        .iter()
-        .find(|s| s.range.start <= cursor && cursor <= s.range.end)
-    {
-        return Some(s.clone());
-    }
+    statement_of(&split(buffer), cursor).cloned()
+}
+
+/// A regra de [`statement_at`] sobre statements já divididos.
+pub(crate) fn statement_of(statements: &[Statement], cursor: usize) -> Option<&Statement> {
     statements
         .iter()
-        .rev()
-        .find(|s| s.range.end < cursor)
+        .find(|s| s.range.start <= cursor && cursor <= s.range.end)
+        .or_else(|| statements.iter().rev().find(|s| s.range.end < cursor))
         .or_else(|| statements.first())
-        .cloned()
 }
 
 #[cfg(test)]

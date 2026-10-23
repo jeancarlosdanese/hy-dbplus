@@ -4,9 +4,9 @@
 
 use std::ops::Range;
 
-use sqlparser::tokenizer::{Token, Whitespace};
+use sqlparser::tokenizer::{Token, TokenWithSpan, Whitespace};
 
-use crate::split::{Lines, tokens};
+use crate::split::{byte_ranges, tokens};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -29,14 +29,24 @@ pub struct Span {
 /// Os spans do buffer, em ordem, sem sobreposição; espaço em branco fica de fora.
 pub fn highlight(buffer: &str) -> Vec<Span> {
     let (tokens, error_at) = tokens(buffer);
-    let lines = Lines::new(buffer);
+    let ranges = byte_ranges(buffer, &tokens);
+    spans_of(buffer, &tokens, &ranges, error_at)
+}
+
+/// O `highlight` a partir dos tokens já lidos (a [`crate::Analysis`] os guarda).
+pub(crate) fn spans_of(
+    buffer: &str,
+    tokens: &[TokenWithSpan],
+    ranges: &[Option<Range<usize>>],
+    error_at: Option<usize>,
+) -> Vec<Span> {
     let mut out: Vec<Span> = tokens
         .iter()
-        .filter_map(|t| {
+        .zip(ranges)
+        .filter_map(|(t, range)| {
             let kind = kind_of(&t.token)?;
-            let s = lines.byte_at(buffer, t.span.start)?;
-            let e = lines.byte_at(buffer, t.span.end)?;
-            (s < e).then_some(Span { range: s..e, kind })
+            let range = range.clone()?;
+            (range.start < range.end).then_some(Span { range, kind })
         })
         .collect();
     if let Some(at) = error_at {

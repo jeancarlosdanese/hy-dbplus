@@ -1,10 +1,11 @@
 //! A aba "SQL Query" (FEAT-010, tela 3.7): barra com limite, Beautify ⌘I, Run Current ⌘↩, Run All
-//! ⌘⇧↩ e Cancelar; o editor com highlight (layouter sobre `sql::highlight`), gutter de linhas,
+//! ⌘⇧↩ e Cancelar; o editor com highlight (layouter sobre os spans da `sql::Analysis` da aba,
+//! refeita só quando o texto muda), gutter de linhas,
 //! fundo leve no statement sob o cursor e a barra de status `linha, coluna`; os resultados embaixo
 //! (`results.rs`). O buffer é do `QueryTab`; o cursor é lido do estado do `TextEdit` a cada frame.
 
 use hy_dbplus_engine::Driver;
-use hy_dbplus_sql::{Kind, highlight, statement_at};
+use hy_dbplus_sql::{Analysis, Kind};
 
 use crate::app::{App, DbKey};
 use crate::{results, theme};
@@ -56,10 +57,12 @@ where
     }) else {
         return;
     };
-    if q.pending_cursor.is_some()
-        && let Some(tab) = app.workspaces.get_mut(key).and_then(|ws| ws.query_mut())
-    {
+    // A análise do buffer sai da aba durante o frame (o layouter a refaz se o texto mudou) e
+    // volta no fim; o cursor pendente é consumido aqui.
+    let mut analysis = None;
+    if let Some(tab) = app.workspaces.get_mut(key).and_then(|ws| ws.query_mut()) {
         tab.pending_cursor = None;
+        analysis = tab.analysis.take();
     }
     let mut run_current = false;
     let mut run_all = false;
@@ -169,7 +172,9 @@ where
     // O editor: gutter com os números de linha e o TextEdit com o layouter de highlight.
     let mut buffer = q.buffer.clone();
     let cursor_byte = q.cursor_byte;
-    let current = statement_at(&buffer, cursor_byte).map(|s| s.range);
+    let current = Analysis::refresh(&mut analysis, &buffer)
+        .statement_at(cursor_byte)
+        .map(|s| s.range.clone());
     let font = egui::FontId::monospace(13.0);
     let colors = Colors {
         keyword: tokens.accent,
@@ -214,7 +219,10 @@ where
                         }
                     });
                     let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, _wrap: f32| {
-                        let job = layout(text.as_str(), &font, &colors, current.clone());
+                        // O texto que o TextEdit passa já tem a tecla deste frame: a análise é
+                        // refeita só nesse caso, e fica guardada para os frames seguintes.
+                        let analysis = Analysis::refresh(&mut analysis, text.as_str());
+                        let job = layout(analysis, &font, &colors, current.clone());
                         ui.fonts_mut(|f| f.layout_job(job))
                     };
                     // SQL gerado (FEAT-013): o cursor vai para o statement novo e o editor pega
@@ -248,6 +256,7 @@ where
         .and_then(|state| state.cursor.char_range())
         .map(|range| range.primary.index.0);
     if let Some(q) = app.workspaces.get_mut(key).and_then(|ws| ws.query_mut()) {
+        q.analysis = analysis;
         if changed {
             q.buffer = buffer;
         }
@@ -279,14 +288,15 @@ struct Colors {
     current: egui::Color32,
 }
 
-/// O `LayoutJob` do buffer: cada span do `sql::highlight` com a sua cor, o resto na cor do texto,
-/// e o statement sob o cursor com fundo leve. Sem quebra de linha automática (ScrollArea).
+/// O `LayoutJob` do buffer: cada span da análise com a sua cor, o resto na cor do texto, e o
+/// statement sob o cursor com fundo leve. Sem quebra de linha automática (ScrollArea).
 fn layout(
-    text: &str,
+    analysis: &Analysis,
     font: &egui::FontId,
     colors: &Colors,
     current: Option<std::ops::Range<usize>>,
 ) -> egui::text::LayoutJob {
+    let text = analysis.text();
     let mut job = egui::text::LayoutJob::default();
     job.wrap.max_width = f32::INFINITY;
     let format = |color: egui::Color32, start: usize, end: usize| egui::TextFormat {
@@ -299,7 +309,7 @@ fn layout(
         ..Default::default()
     };
     let mut at = 0;
-    for span in highlight(text) {
+    for span in analysis.spans() {
         if span.range.start > at
             && let Some(gap) = text.get(at..span.range.start)
         {
@@ -357,7 +367,12 @@ mod tests {
             text: egui::Color32::WHITE,
             current: egui::Color32::BLACK,
         };
-        let job = layout(text, &egui::FontId::monospace(13.0), &colors, Some(0..10));
+        let job = layout(
+            &Analysis::new(text),
+            &egui::FontId::monospace(13.0),
+            &colors,
+            Some(0..10),
+        );
         assert_eq!(job.text, text);
         let mut end = 0;
         for section in &job.sections {

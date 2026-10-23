@@ -175,6 +175,9 @@ pub struct QueryTab {
     /// Cursor a aplicar no `TextEdit` no próximo frame (FEAT-013: o SQL gerado entra no fim do
     /// buffer e o cursor vai para ele); o editor consome, grava no estado do widget e pede o foco.
     pub pending_cursor: Option<usize>,
+    /// A análise do buffer (tokens, statements, spans) do último frame; o editor refaz quando o
+    /// texto muda e o Run Current a reaproveita (FEAT-012).
+    pub analysis: Option<hy_dbplus_sql::Analysis>,
 }
 
 pub const DEFAULT_LIMIT: Option<usize> = Some(100);
@@ -210,6 +213,7 @@ impl QueryTab {
             saved: String::new(),
             save_failed: None,
             pending_cursor: None,
+            analysis: None,
         }
     }
 
@@ -219,6 +223,15 @@ impl QueryTab {
             saved: sql.clone(),
             buffer: sql,
             ..Self::new(id)
+        }
+    }
+
+    /// O statement sob o cursor, pela análise guardada quando ela é deste texto.
+    pub fn statement_at(&self) -> Option<hy_dbplus_sql::Statement> {
+        let cursor = self.cursor_byte();
+        match &self.analysis {
+            Some(a) if a.text() == self.buffer => a.statement_at(cursor).cloned(),
+            _ => hy_dbplus_sql::statement_at(&self.buffer, cursor),
         }
     }
 
@@ -1573,7 +1586,7 @@ where
         let Some(q) = self.workspaces.get(key).and_then(|ws| ws.query()) else {
             return;
         };
-        let Some(statement) = hy_dbplus_sql::statement_at(&q.buffer, q.cursor_byte()) else {
+        let Some(statement) = q.statement_at() else {
             self.run(key, Vec::new());
             return;
         };

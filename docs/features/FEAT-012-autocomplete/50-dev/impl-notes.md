@@ -6,8 +6,10 @@
 
 _Atualizado em 23/10/2026._
 
-- **Feito:** nada além destes docs. Vem depois da FEAT-013 (decisão do Jean, 23/10).
-- **Falta:** cache de tokenização; `sql::complete` + keywords; popup na UI; testes; docs.
+- **Feito:** docs (`a810dc7`); passo 1, cache de tokenização (`sql::Analysis`; `split`/`highlight`/
+  `statement_at` por cima das mesmas partes; `QueryTab.analysis` refeita só quando o texto muda; teste
+  comparando com as funções livres) na árvore, aguardando reviewer e "pode commitar".
+- **Falta:** `sql::complete` + keywords; popup na UI; testes; docs.
 - **Depende de:** FEAT-010 (editor, `statement_at`, tokenizador) e FEAT-004/009 (catálogo na UI).
 - **Para retomar:** este arquivo, o brief, `crates/sql/src/{split,highlight}.rs` e
   `crates/ui-egui/src/editor.rs` (atalhos consumidos antes do `TextEdit`, cursor lido do estado).
@@ -39,6 +41,15 @@ _Atualizado em 23/10/2026._
 - `egui_kittest`: texto por `Event::Text`, popup por `click_accesskit()` (lições da FEAT-010).
 
 ## Log
+
+### 23/10/2026 — Passo 1: `Analysis`
+
+- `Analysis::new(text)` guarda tokens com posição em bytes (`byte_ranges`), statements (`split_tokens`) e
+  spans (`spans_of`); `statement_of` é a regra do `statement_at` sobre statements prontos. `Analysis::refresh`
+  compara o texto e só refaz quando mudou. No editor a análise sai da aba no começo do frame, o layouter a
+  refaz com o texto que o TextEdit passa (já com a tecla do frame) e ela volta à aba no fim;
+  `QueryTab::statement_at` a reaproveita no Run Current. `Analysis::tokens()` público, para o motor.
+- A lista `KEYWORDS` do `highlight.rs` é a base da lista do autocomplete (passo 2).
 
 ### 23/10/2026 — Criação
 
