@@ -1,7 +1,8 @@
 //! `cargo xtask bundle` (FEAT-014): monta `target/bundle/hy-dbplus.app` a partir do build release,
-//! com o ícone (`packaging/icon.svg` → `.icns`), o `Info.plist` e a assinatura, e gera o `.dmg`
-//! com o `.app` e o atalho para `/Applications`. Só ferramentas do macOS (`qlmanage`, `iconutil`,
-//! `codesign`, `hdiutil`, `xcrun`); fora dele o comando recusa com erro claro.
+//! com o ícone (`packaging/icon.svg` → PNGs com alfa pelo AppKit via `packaging/render-icon.js` →
+//! `.icns`), o `Info.plist` e a assinatura, e gera o `.dmg` com o `.app` e o atalho para
+//! `/Applications`. Só ferramentas do macOS (`osascript`, `iconutil`, `codesign`, `hdiutil`,
+//! `xcrun`); fora dele o comando recusa com erro claro.
 //!
 //! Assinatura: `HY_DBPLUS_SIGN_IDENTITY` (padrão `-`, ad hoc: o Gatekeeper pede botão direito →
 //! Abrir na primeira vez). Com uma identidade Developer ID, assina com hardened runtime e
@@ -156,11 +157,11 @@ pub fn run(args: &[OsString], root: &Path, target_dir: &Path, version: &str) -> 
     let options = parse_args(args)?;
     if !cfg!(target_os = "macos") {
         return Err(
-            "o bundle só é montado no macOS (precisa de qlmanage, iconutil, codesign e hdiutil)"
+            "o bundle só é montado no macOS (precisa de osascript, iconutil, codesign e hdiutil)"
                 .into(),
         );
     }
-    for tool in ["qlmanage", "iconutil", "codesign", "hdiutil", "xcrun"] {
+    for tool in ["osascript", "iconutil", "codesign", "hdiutil", "xcrun"] {
         if !on_path(tool) {
             return Err(format!(
                 "`{tool}` não está no PATH: instale as ferramentas de linha de comando do Xcode"
@@ -306,49 +307,43 @@ fn build(
     Ok(out)
 }
 
-/// `packaging/icon.svg` → PNGs por tamanho (`qlmanage`) → `.iconset` → `.icns` (`iconutil`).
+/// `packaging/icon.svg` → PNGs por tamanho com fundo transparente (`packaging/render-icon.js`,
+/// AppKit via `osascript`) → `.iconset` → `.icns` (`iconutil`). O `qlmanage` pintava fundo branco
+/// fora do quadrado arredondado, e a Dock mostrava um quadrado branco.
 fn icns(root: &Path, bundle_dir: &Path) -> Result<PathBuf, String> {
     let svg = root.join("packaging").join("icon.svg");
-    if !svg.is_file() {
-        return Err(format!("ícone ausente: {}", svg.display()));
+    let script = root.join("packaging").join("render-icon.js");
+    for file in [&svg, &script] {
+        if !file.is_file() {
+            return Err(format!("arquivo ausente: {}", file.display()));
+        }
     }
     let iconset = bundle_dir.join(format!("{APP_NAME}.iconset"));
-    let renders = bundle_dir.join("icon-renders");
-    for dir in [&iconset, &renders] {
-        if dir.exists() {
-            fs::remove_dir_all(dir)
-                .map_err(|e| format!("não consegui limpar {}: {e}", dir.display()))?;
-        }
-        fs::create_dir_all(dir)
-            .map_err(|e| format!("não consegui criar {}: {e}", dir.display()))?;
+    if iconset.exists() {
+        fs::remove_dir_all(&iconset)
+            .map_err(|e| format!("não consegui limpar {}: {e}", iconset.display()))?;
     }
-    let mut sizes: Vec<u32> = iconset_entries().iter().map(|(_, s)| *s).collect();
-    sizes.sort_unstable();
-    sizes.dedup();
-    for size in sizes {
-        let out = renders.join(size.to_string());
-        fs::create_dir_all(&out)
-            .map_err(|e| format!("não consegui criar {}: {e}", out.display()))?;
-        // O qlmanage grava `<nome do arquivo>.png` na pasta de saída; o SVG é quadrado, então sai N×N.
-        sh(
-            &format!("qlmanage ({size}px)"),
-            Command::new("qlmanage")
-                .arg("-t")
-                .arg("-s")
-                .arg(size.to_string())
-                .arg("-o")
-                .arg(&out)
-                .arg(&svg),
-        )?;
-        let png = out.join("icon.svg.png");
-        if !png.is_file() {
-            return Err(format!("o qlmanage não gerou {}", png.display()));
-        }
-        for (name, s) in iconset_entries() {
-            if s == size {
-                fs::copy(&png, iconset.join(name))
-                    .map_err(|e| format!("não consegui copiar {name}: {e}"))?;
-            }
+    fs::create_dir_all(&iconset)
+        .map_err(|e| format!("não consegui criar {}: {e}", iconset.display()))?;
+    for (name, size) in iconset_entries() {
+        let png = iconset.join(name);
+        let out = Command::new("osascript")
+            .arg("-l")
+            .arg("JavaScript")
+            .arg(&script)
+            .arg(&svg)
+            .arg(&png)
+            .arg(size.to_string())
+            .output()
+            .map_err(|e| {
+                format!("render-icon.js ({size}px): não consegui rodar o osascript: {e}")
+            })?;
+        let said = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+        if !out.status.success() || said != "ok" || !png.is_file() {
+            return Err(format!(
+                "render-icon.js ({size}px) falhou: {said}{}",
+                String::from_utf8_lossy(&out.stderr)
+            ));
         }
     }
     let icns = bundle_dir.join(format!("{APP_NAME}.icns"));

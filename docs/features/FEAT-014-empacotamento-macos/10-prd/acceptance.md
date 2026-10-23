@@ -15,14 +15,15 @@
 - [x] `Info.plist` com identificador `br.com.hy.dbplus`, versão do workspace e HiDPI; `codesign --verify`
       passa (ad hoc por padrão); com `HY_DBPLUS_SIGN_IDENTITY` e `HY_DBPLUS_NOTARY_PROFILE`, assina com
       Developer ID e notariza (caminho escrito, não exercitado: sem certificado na máquina).
-- [x] Fora do macOS, ou sem `qlmanage`/`iconutil`/`codesign`/`hdiutil`, erro claro; `--universal` sem o
+- [x] Fora do macOS, ou sem `osascript`/`iconutil`/`codesign`/`hdiutil`, erro claro; `--universal` sem o
       target x86_64 instalado diz o comando do rustup.
 - [x] Testes do xtask cobrem o `Info.plist`, o iconset e a árvore do `.app`.
 
 ## Dock e janela
 
 - [x] O app embute `packaging/icon-256.png` e o passa ao viewport: a Dock mostra o balão também no
-      `cargo run`; PNG inválido avisa no stderr e cai no ícone padrão (teste do app decodifica em 256×256).
+      `cargo run`; PNG inválido avisa no stderr e cai no ícone padrão (teste do app decodifica em 256×256
+      e exige cantos com alfa 0: o PNG antigo, de fundo branco, reprova).
 - [x] ⌘M minimiza a janela nas duas telas (teste pelo `viewport_output`).
 
 ## Portão e CI

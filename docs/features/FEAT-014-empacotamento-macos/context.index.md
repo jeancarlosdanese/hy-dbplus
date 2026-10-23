@@ -37,6 +37,7 @@ macOS, nenhuma dependência nova.
 
 ```
 packaging/icon.svg            ícone do app (sem texto)
+packaging/render-icon.js      SVG → PNG com alfa pelo AppKit (xtask bundle e receita do icon-256.png)
 packaging/logo.svg, logo.png  logomarca y-dbplus (texto em Inter; PNG renderizado)
 xtask/src/bundle.rs           plist, iconset, layout, codesign, dmg, notarização
 ```

@@ -24,8 +24,8 @@ apontarem o certificado e o perfil do `notarytool`. Só ferramentas do macOS, ne
    versão renderizada, porque o texto depende da fonte) e `icon-256.png`, o ícone em 256 px que o app
    embute (`include_bytes!` + `with_icon`: a Dock mostra o balão também no `cargo run` e por cima do
    cache). Aprovados pelo Jean em 23/10/2026. Para regenerar o PNG depois de mudar o SVG:
-   `qlmanage -t -s 256 -o /tmp/icone packaging/icon.svg && cp /tmp/icone/icon.svg.png packaging/icon-256.png`
-   (o `xtask bundle` regenera só o `.icns`).
+   `osascript -l JavaScript packaging/render-icon.js packaging/icon.svg packaging/icon-256.png 256`
+   (o `xtask bundle` regenera só o `.icns`, com o mesmo script).
 2. **`xtask bundle`** (`xtask/src/bundle.rs`), só no macOS (fora dele, erro claro):
    - `cargo build --release -p hy-dbplus --locked`; com `--universal`, também
      `--target x86_64-apple-darwin` e `lipo` (exige o target no rustup; sem ele, erro que diz o
@@ -38,8 +38,9 @@ apontarem o certificado e o perfil do `notarytool`. Só ferramentas do macOS, ne
      `CFBundleIconFile`, `CFBundlePackageType APPL`, `LSMinimumSystemVersion 12.0`,
      `NSHighResolutionCapable`, `LSApplicationCategoryType public.app-category.developer-tools`,
      `NSHumanReadableCopyright`.
-   - Ícone: `packaging/icon.svg` → PNG em 16, 32, 64, 128, 256, 512 e 1024 (`qlmanage -t -s N`) →
-     `hy-dbplus.iconset` com os pares `@2x` → `iconutil -c icns`.
+   - Ícone: `packaging/icon.svg` → PNG com fundo transparente em 16, 32, 64, 128, 256, 512 e 1024
+     (`packaging/render-icon.js`: AppKit via `osascript -l JavaScript`; o `qlmanage` pintava fundo
+     branco) → `hy-dbplus.iconset` com os pares `@2x` → `iconutil -c icns`.
    - Assinatura: `codesign --force --deep --sign <identidade>` com `HY_DBPLUS_SIGN_IDENTITY` (padrão
      `-`, ad hoc); com identidade real, `--options runtime --timestamp`. Entitlements não são
      necessários (sem sandbox; rede cliente é livre).

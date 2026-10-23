@@ -85,9 +85,15 @@ fn run() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    /// Fundo transparente fora do quadrado arredondado: o primeiro e o último pixel têm alfa 0
+    /// (o `qlmanage` gerava fundo branco opaco e a Dock mostrava um quadrado branco).
     #[test]
-    fn o_icone_embutido_decodifica_em_256_por_256() {
+    fn o_icone_embutido_decodifica_em_256_por_256_com_cantos_transparentes() {
         let icon = eframe::icon_data::from_png_bytes(super::ICON_PNG).unwrap();
         assert_eq!((icon.width, icon.height), (256, 256));
+        let alpha = |i: usize| icon.rgba[i * 4 + 3];
+        assert_eq!(alpha(0), 0, "canto superior esquerdo opaco");
+        assert_eq!(alpha(256 * 256 - 1), 0, "canto inferior direito opaco");
+        assert_eq!(alpha(128 * 256 + 128), 255, "centro transparente");
     }
 }

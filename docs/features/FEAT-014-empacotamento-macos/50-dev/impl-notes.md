@@ -42,15 +42,23 @@ _Atualizado em 23/10/2026._
 
 ## Riscos e lições a conferir
 
-- `qlmanage -t -s N` grava `<nome>.svg.png` na pasta de saída e, para SVG quadrado, dá N×N; conferir
-  que não acrescenta fundo preto (no teste de 23/10 o fundo ficou transparente fora do quadrado
-  arredondado).
+- `qlmanage -t -s N` renderiza SVG sobre fundo branco opaco (conferido pelo pixel do canto): não serve
+  para ícone; o `render-icon.js` (AppKit) respeita o alfa.
 - `codesign --deep` com ad hoc é aceito; `--options runtime` exige identidade real (ad hoc com
   hardened runtime bloqueia JIT, inofensivo aqui, mas fica fora para não confundir).
 - O `hdiutil create` com `-srcfolder` copia o link `Applications`; conferir que o link relativo
   sobrevive (`ln -s /Applications`).
 
 ## Log
+
+### 23/10/2026 — Conferência do Jean: fundo branco no ícone da Dock
+
+- Com o ícone embutido a Dock passou a mostrar o balão, mas num quadrado branco: o `qlmanage` renderiza
+  o SVG sobre fundo branco opaco (pixel do canto `(255,255,255,255)`), e o `.icns` tinha o mesmo
+  problema. Renderizador trocado por `packaging/render-icon.js` (NSImage → NSBitmapImageRep com alfa,
+  via `osascript -l JavaScript`; canto `(0,0,0,0)`, gradientes preservados). Usado pelo `xtask bundle`
+  e pela receita do `icon-256.png`. A lição de "fundo transparente" anotada em Riscos estava errada: o
+  visualizador mostrava branco e eu li como transparente; a conferência certa é o pixel do canto.
 
 ### 23/10/2026 — Conferência do Jean: ícone na Dock e ⌘M
 
