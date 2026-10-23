@@ -141,19 +141,30 @@ pub fn complete(analysis: &Analysis, cursor: usize, catalog: &CatalogView) -> Op
         };
     let prefix = text.get(replace.clone()).unwrap_or_default();
     let refs = table_refs(&toks, catalog.current_schema);
-    let mut needs: Vec<Need> = refs
-        .iter()
-        .filter(|r| {
-            !catalog
-                .columns
-                .contains_key(&(r.schema.clone(), r.table.clone()))
-        })
-        .map(|r| Need::Columns {
-            schema: r.schema.clone(),
-            table: r.table.clone(),
-        })
-        .collect();
-    needs.dedup();
+    // Só de tabela que o catálogo conhece: `from cl|` em digitação ou `from xyz x` inexistente
+    // não pedem colunas ao servidor a cada tecla (a resposta vazia ficaria cacheada). Schema ainda
+    // não carregado vira pedido do schema; as colunas vêm na tecla seguinte à resposta.
+    let mut needs: Vec<Need> = Vec::new();
+    for r in &refs {
+        if catalog
+            .columns
+            .contains_key(&(r.schema.clone(), r.table.clone()))
+        {
+            continue;
+        }
+        let need = match catalog.objects.get(&r.schema) {
+            Some((tables, _)) if tables.iter().any(|t| t.name == r.table) => Need::Columns {
+                schema: r.schema.clone(),
+                table: r.table.clone(),
+            },
+            Some(_) => continue,
+            None if catalog.schemas.iter().any(|s| s.name == r.schema) => {
+                Need::Schema(r.schema.clone())
+            }
+            None => continue,
+        };
+        push_need(&mut needs, need);
+    }
 
     let mut items: Vec<Item> = Vec::new();
     let last = before.last().map(|t| t.token);
@@ -162,7 +173,8 @@ pub fn complete(analysis: &Analysis, cursor: usize, catalog: &CatalogView) -> Op
         let Some(Token::Word(q)) = before.iter().rev().nth(1).map(|t| t.token) else {
             return None;
         };
-        let qualifier = q.value.as_str();
+        let qualifier = &plain(q);
+        let qualifier = qualifier.as_str();
         let by_alias = refs.iter().find(|r| {
             r.alias
                 .as_deref()
@@ -176,7 +188,7 @@ pub fn complete(analysis: &Analysis, cursor: usize, catalog: &CatalogView) -> Op
         } else if catalog.schemas.iter().any(|s| s.name == qualifier) {
             match catalog.objects.get(qualifier) {
                 Some((tables, _)) => push_tables(&mut items, tables, false),
-                None => needs.push(Need::Schema(qualifier.to_owned())),
+                None => push_need(&mut needs, Need::Schema(qualifier.to_owned())),
             }
         } else if let Some(r) = by_table {
             push_columns(&mut items, catalog, &r.schema, &r.table);
@@ -187,10 +199,13 @@ pub fn complete(analysis: &Analysis, cursor: usize, catalog: &CatalogView) -> Op
                 .columns
                 .contains_key(&(schema.to_owned(), qualifier.to_owned()))
             {
-                needs.push(Need::Columns {
-                    schema: schema.to_owned(),
-                    table: qualifier.to_owned(),
-                });
+                push_need(
+                    &mut needs,
+                    Need::Columns {
+                        schema: schema.to_owned(),
+                        table: qualifier.to_owned(),
+                    },
+                );
             }
             push_columns(&mut items, catalog, schema, qualifier);
         } else {
@@ -354,13 +369,11 @@ fn table_refs(toks: &[Tok], current_schema: Option<&str>) -> Vec<TableRef> {
         }
         while let Some(first) = word(i) {
             let (schema, table, next) = match (toks.get(i + 1).map(|t| t.token), word(i + 2)) {
-                (Some(Token::Period), Some(second)) => {
-                    (first.value.clone(), second.value.clone(), i + 3)
-                }
+                (Some(Token::Period), Some(second)) => (plain(first), plain(second), i + 3),
                 // `schema.` ainda sem a tabela (está sendo digitada): não é referência.
                 (Some(Token::Period), None) => break,
                 _ => match current_schema {
-                    Some(s) => (s.to_owned(), first.value.clone(), i + 1),
+                    Some(s) => (s.to_owned(), plain(first), i + 1),
                     None => break,
                 },
             };
@@ -388,6 +401,24 @@ fn table_refs(toks: &[Tok], current_schema: Option<&str>) -> Vec<TableRef> {
         }
     }
     refs
+}
+
+/// Um pedido por tabela ou schema, mesmo citado duas vezes (dois `load_*` no mesmo frame seriam
+/// duas tarefas no engine antes de o cache valer).
+fn push_need(needs: &mut Vec<Need>, need: Need) {
+    if !needs.contains(&need) {
+        needs.push(need);
+    }
+}
+
+/// O nome como o servidor o vê: sem aspas, o PostgreSQL dobra para minúsculas (`Clientes` é
+/// `clientes`); entre aspas, como está.
+fn plain(word: &sqlparser::tokenizer::Word) -> String {
+    if word.quote_style.is_none() {
+        word.value.to_lowercase()
+    } else {
+        word.value.clone()
+    }
 }
 
 /// A keyword na caixa do prefixo: `sel` → `select`, `SEL` → `SELECT`; prefixo vazio → minúsculas.
@@ -528,6 +559,25 @@ mod tests {
         // `contém` depois de `começa com`: "ped" acha pedido antes de v_pedido.
         let c = at("select * from ped|", &f.view()).unwrap();
         assert_eq!(labels(&c), ["pedido", "v_pedido"]);
+        // O prefixo em digitação não vira pedido de colunas ao servidor; a tabela completa sim.
+        assert!(c.needs.is_empty());
+        let c = at("select * from \"Loja\" |", &f.view()).unwrap();
+        assert_eq!(
+            c.needs,
+            [Need::Columns {
+                schema: "public".into(),
+                table: "Loja".into()
+            }]
+        );
+        // Schema conhecido sem objetos carregados: pede o schema, uma vez só (também quando o `.`
+        // do cursor é do mesmo schema).
+        let c = at("select * from app.x a, app.y b where |", &f.view()).unwrap();
+        assert_eq!(c.needs, [Need::Schema("app".into())]);
+        let c = at("select * from app.x a where app.|", &f.view()).unwrap();
+        assert_eq!(c.needs, [Need::Schema("app".into())]);
+        // Schema desconhecido: nada a pedir.
+        let c = at("select * from nada.x a where |", &f.view()).unwrap();
+        assert!(c.needs.is_empty());
         let c = at("delete from |", &f.view()).unwrap();
         assert!(labels(&c).contains(&"clientes"));
         let c = at("insert into |", &f.view()).unwrap();
@@ -564,6 +614,16 @@ mod tests {
         assert_eq!(c.needs, [Need::Schema("app".into())]);
         // Qualificador desconhecido: nada.
         assert!(at("select x.| from clientes c", &f.view()).is_none());
+        // Sem aspas o servidor dobra para minúsculas: `Clientes` e `PUBLIC` valem.
+        let c = at("select c.| from CLIENTES c", &f.view()).unwrap();
+        assert_eq!(labels(&c), ["id", "nome", "\"order\""]);
+        let c = at("select Clientes.| from Clientes", &f.view()).unwrap();
+        assert_eq!(labels(&c), ["id", "nome", "\"order\""]);
+        let c = at("select * from PUBLIC.|", &f.view()).unwrap();
+        assert_eq!(labels(&c)[0], "clientes");
+        // Com aspas, como está: `"Clientes"` não é `clientes` (nada a listar nem a pedir).
+        let c = at("select c.| from \"Clientes\" c", &f.view()).unwrap();
+        assert!(c.items.is_empty() && c.needs.is_empty());
         // Schema qualificado no FROM resolve o alias.
         let c = at("select l.| from public.\"Loja\" l", &f.view()).unwrap();
         assert!(c.items.is_empty());
@@ -602,8 +662,13 @@ mod tests {
         assert!(labels(&c).contains(&"\"order\""));
         // Duas tabelas com `id`: uma vez só; e as colunas da tabela do FROM que ainda não chegaram
         // viram pedido.
-        let c = at("select id| from clientes c, pedido p, \"Loja\"", &f.view()).unwrap();
+        let c = at(
+            "select id| from clientes c, pedido p, \"Loja\", xyz",
+            &f.view(),
+        )
+        .unwrap();
         assert_eq!(labels(&c).iter().filter(|l| **l == "id").count(), 1);
+        // `xyz` não existe no schema carregado: não vira pedido.
         assert_eq!(
             c.needs,
             [Need::Columns {
