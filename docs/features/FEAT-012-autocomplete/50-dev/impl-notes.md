@@ -8,8 +8,10 @@ _Atualizado em 23/10/2026._
 
 - **Feito:** docs (`a810dc7`); passo 1, cache de tokenização (`sql::Analysis`; `split`/`highlight`/
   `statement_at` por cima das mesmas partes; `QueryTab.analysis` refeita só quando o texto muda; teste
-  comparando com as funções livres) na árvore, aguardando reviewer e "pode commitar".
-- **Falta:** `sql::complete` + keywords; popup na UI; testes; docs.
+  comparando com as funções livres) commitado em `31b3eb8`; passo 2, `sql::complete` (`CatalogView`,
+  `Completion { replace, items, needs }`, `Item`, `ItemKind`, `Need`, `ident`; 5 testes) na árvore,
+  aguardando reviewer e "pode commitar".
+- **Falta:** popup na UI (passo 3); testes; docs.
 - **Depende de:** FEAT-010 (editor, `statement_at`, tokenizador) e FEAT-004/009 (catálogo na UI).
 - **Para retomar:** este arquivo, o brief, `crates/sql/src/{split,highlight}.rs` e
   `crates/ui-egui/src/editor.rs` (atalhos consumidos antes do `TextEdit`, cursor lido do estado).
@@ -41,6 +43,24 @@ _Atualizado em 23/10/2026._
 - `egui_kittest`: texto por `Event::Text`, popup por `click_accesskit()` (lições da FEAT-010).
 
 ## Log
+
+### 23/10/2026 — Passo 2: `sql::complete`
+
+- `complete(&Analysis, cursor, &CatalogView) -> Option<Completion>`: a visão emprestada do catálogo tem a
+  forma dos mapas do `Workspace` (`objects` por schema, `columns` por `(schema, tabela)`), nada é clonado
+  por tecla. `Completion.needs` diz à UI o que pedir ao engine (`Need::Columns` das tabelas do statement
+  sem colunas na visão; `Need::Schema` de um `schema.` ainda sem objetos).
+- Contexto: tokens do statement sob o cursor (só os dele: `select c.` depois de um `;` não vê o `FROM` do
+  statement anterior); prefixo = palavra sem aspas que contém o cursor; `q.` resolve alias → schema → tabela
+  do statement sem alias → tabela do schema atual; `FROM`/`JOIN`/`INTO`/`UPDATE`/`TABLE` → tabelas, views e
+  schemas; resto → colunas das tabelas do statement, aliases, keywords, tabelas e funções do schema atual.
+  `table_refs` lê `[schema.]tabela [AS] [alias]` com vírgulas depois de `FROM`/`JOIN`/`UPDATE`/`INTO`;
+  keyword no lugar do alias não é alias; `schema.` sem tabela ainda não é referência.
+- Ordem: começa com o prefixo antes de contém (caixa ignorada), estável dentro do grupo, rótulo repetido
+  sai uma vez, no máximo `MAX_ITEMS` (50). Keyword na caixa do prefixo. `ident` põe aspas quando o nome não
+  é `[a-z_][a-z0-9_$]*` ou é keyword (`order` → `"order"`).
+- A lista de keywords é a `KEYWORDS` do `highlight.rs` (não há `keywords.rs` separado): uma lista só para
+  pintar e sugerir.
 
 ### 23/10/2026 — Passo 1: `Analysis`
 

@@ -73,7 +73,7 @@ pub(crate) fn spans_of(
 
 /// Palavras que o editor pinta como keyword: as reservadas do PostgreSQL mais as de DDL e DML
 /// que aparecem em todo statement. Tipos (`integer`, `text`) ficam de fora de propósito.
-const KEYWORDS: &[&str] = &[
+pub(crate) const KEYWORDS: &[&str] = &[
     "ABORT",
     "ADD",
     "AFTER",
@@ -241,11 +241,11 @@ const KEYWORDS: &[&str] = &[
     "AVG",
 ];
 
-fn is_keyword(word: &str) -> bool {
+pub(crate) fn is_keyword(word: &str) -> bool {
     KEYWORDS.iter().any(|k| k.eq_ignore_ascii_case(word))
 }
 
-fn kind_of(token: &Token) -> Option<Kind> {
+pub(crate) fn kind_of(token: &Token) -> Option<Kind> {
     Some(match token {
         Token::Word(w) => {
             // Lista própria: a do sqlparser cobre todos os dialetos e pintaria `id`, `name` ou

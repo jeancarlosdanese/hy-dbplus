@@ -1,8 +1,8 @@
 //! SQL do editor (FEAT-010): divisão do buffer em statements com posição ([`split`]), o statement
 //! sob o cursor ([`statement_at`]), coloração por token ([`highlight`]) e formatação
 //! ([`beautify`]); [`Analysis`] guarda tokens, statements e spans de um texto de uma vez, para a
-//! aba reaproveitar entre frames (FEAT-012). O motor de autocomplete (contexto do cursor ×
-//! catálogo) é o M6.
+//! aba reaproveitar entre frames, e [`complete`] é o motor do autocomplete, contexto do cursor ×
+//! catálogo (FEAT-012).
 //!
 //! Camada 2: depende do `catalog` (autocomplete) e, aqui, do tokenizador do `sqlparser` (dialeto
 //! PostgreSQL) e do `sqlformat`. Tudo puro e sem recursão: o buffer é entrada não confiável e
@@ -10,11 +10,13 @@
 //! sem cor no highlight e faz o Beautify devolver a entrada intacta).
 
 pub mod analysis;
+pub mod complete;
 pub mod format;
 pub mod highlight;
 pub mod split;
 
 pub use analysis::Analysis;
+pub use complete::{CatalogView, Completion, Item, ItemKind, MAX_ITEMS, Need, complete, ident};
 pub use format::beautify;
 pub use highlight::{Kind, Span, highlight};
 pub use split::{Statement, split, statement_at};
