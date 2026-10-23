@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 
 use hy_dbplus_engine::{
     ChangeSet, Column, ConnectionId, ConnectionStore, DatabaseInfo, Driver, Event, Function,
-    Outcome, Page, PostgresDriver, QueryTabId, RowUpdate, Schema, SecretStore, Sessions, Table,
-    TableStats, TableStructure, TextRows, preview_sql,
+    Outcome, Page, PostgresDriver, QueryStore, QueryTabId, RowUpdate, Schema, SecretStore,
+    Sessions, Table, TableStats, TableStructure, TextRows, preview_sql,
 };
 
 use crate::connections::{ConnectionForm, Connections};
@@ -24,6 +24,8 @@ pub type PgApp = App<PostgresDriver>;
 pub struct Deps<D: Driver> {
     pub store: ConnectionStore,
     pub secrets: Box<dyn SecretStore>,
+    /// As queries das abas SQL em arquivo (FEAT-011).
+    pub queries: QueryStore,
     pub sessions: Sessions<D>,
     pub events: Receiver<Event>,
 }
@@ -164,6 +166,11 @@ pub struct QueryTab {
     pub results: Vec<QueryResult>,
     pub active_result: usize,
     pub notice: Option<String>,
+    /// O texto como está no arquivo (FEAT-011): só grava de novo quando o buffer mudou.
+    pub saved: String,
+    /// O texto cuja gravação falhou: o varrimento por frame não tenta de novo até ele mudar (sem
+    /// isso, uma falha persistente refaria a escrita e reescreveria o aviso a cada repaint).
+    pub save_failed: Option<String>,
 }
 
 pub const DEFAULT_LIMIT: Option<usize> = Some(100);
@@ -181,6 +188,17 @@ impl QueryTab {
             results: Vec::new(),
             active_result: 0,
             notice: None,
+            saved: String::new(),
+            save_failed: None,
+        }
+    }
+
+    /// Uma aba que volta do arquivo ao abrir o banco: o texto, sem resultados.
+    pub fn restored(id: QueryTabId, sql: String) -> Self {
+        Self {
+            saved: sql.clone(),
+            buffer: sql,
+            ..Self::new(id)
         }
     }
 
@@ -212,6 +230,9 @@ pub struct Workspace {
     /// Um `BEGIN` do editor sem `COMMIT`/`ROLLBACK`: a transação é da conexão do banco, não da
     /// aba; todas as abas SQL avisam e o Commit do grid espera.
     pub open_transaction: bool,
+    /// O último número de aba SQL deste banco (`SQL Query n`, arquivo `n.sql`): a numeração é por
+    /// banco, para a aba e o arquivo casarem (FEAT-011).
+    pub next_query_id: QueryTabId,
     /// Um erro dentro da transação aberta (qualquer um, inclusive cancel): o servidor a marca como
     /// abortada e o `COMMIT` vai desfazer tudo. Volta a `false` quando a transação acaba.
     pub transaction_aborted: bool,
@@ -270,16 +291,10 @@ impl Workspace {
         self.tabs.iter().any(Tab::busy)
     }
 
-    /// Fechar o banco perderia algo: pendência de edição, célula aberta ou texto numa aba SQL.
+    /// Fechar o banco perderia algo: pendência de edição ou célula aberta numa aba de tabela. O texto
+    /// das abas SQL não conta: é salvo em arquivo antes de o banco fechar (FEAT-011).
     pub fn would_lose_work(&self) -> bool {
-        self.tabs.iter().any(Tab::would_lose_work)
-    }
-
-    /// O que se perderia é só texto de aba SQL: nenhuma aba de tabela com pendência ou célula aberta
-    /// (a caixa de confirmação escolhe o texto por isso).
-    pub fn loses_only_sql_text(&self) -> bool {
-        !self
-            .tabs
+        self.tabs
             .iter()
             .any(|t| t.table().is_some() && t.would_lose_work())
     }
@@ -639,8 +654,6 @@ pub struct App<D: Driver> {
     pub(crate) conn_state: HashMap<ConnectionId, ConnState>,
     /// O que está esperando confirmação para fechar com edição pendente.
     pub(crate) confirm_close: Option<CloseTarget>,
-    /// Numeração das abas "SQL Query N" (global, para o id ser único por app).
-    pub(crate) next_query_id: QueryTabId,
     pub(crate) palette: Option<Palette>,
     /// Painel direito visível (botão na barra superior; abre sozinho na primeira seleção).
     pub(crate) side_panel_open: bool,
@@ -674,7 +687,6 @@ where
             focus: None,
             conn_state: HashMap::new(),
             confirm_close: None,
-            next_query_id: 0,
             palette: None,
             side_panel_open: false,
             panel_mode: PanelMode::default(),
@@ -748,6 +760,24 @@ where
                     if let Some(schema) = current_schema {
                         ws.loading = true;
                         self.deps.sessions.load_schema(&id, &database, &schema);
+                    }
+                    // As abas SQL salvas voltam com o texto e o mesmo número, sem resultados; a
+                    // primeira fica ativa (ainda não há aba de tabela).
+                    match self.deps.queries.list(&id, &database) {
+                        Ok(saved) => {
+                            for q in saved {
+                                ws.next_query_id = ws.next_query_id.max(q.id);
+                                ws.tabs.push(Tab::Query(QueryTab::restored(q.id, q.sql)));
+                            }
+                            if !ws.tabs.is_empty() {
+                                ws.active_tab = Some(0);
+                            }
+                        }
+                        Err(e) => {
+                            if let Some(state) = self.conn_state.get_mut(&id) {
+                                state.error = Some(format!("queries salvas: {e}"));
+                            }
+                        }
                     }
                     self.workspaces.insert(key.clone(), ws);
                     self.rail.push(key.clone());
@@ -1021,6 +1051,17 @@ where
 
     /// Tira um banco da faixa e do mapa; se era o ativo, o último da faixa assume.
     pub(crate) fn forget_database(&mut self, key: &DbKey) {
+        // Fechado pelo engine (conexão caída inclusive): o texto das abas SQL não se perde. Conexão
+        // que saiu da lista não: o diretório dela acabou de ser apagado e voltaria como lixo órfão.
+        if self.deps.store.get(&key.0).is_some()
+            && let Err(e) = self.save_workspace_queries(key)
+        {
+            // A aba (e o aviso dela) some com o workspace: o erro vai para onde ainda há tela.
+            if let Some(state) = self.conn_state.get_mut(&key.0) {
+                state.error = Some(e.clone());
+            }
+            self.notice = Some(e);
+        }
         self.workspaces.remove(key);
         self.rail.retain(|k| k != key);
         if matches!(&self.confirm_close, Some(CloseTarget::Database(k) | CloseTarget::Tab(k, _)) if k == key)
@@ -1037,8 +1078,7 @@ where
 
     /// Conexão fechada: todos os bancos dela saem; sem banco em foco, volta à lista.
     fn forget_connection(&mut self, id: &ConnectionId) {
-        let keys: Vec<DbKey> = self.rail.iter().filter(|k| &k.0 == id).cloned().collect();
-        for key in keys {
+        for key in self.workspace_keys_of(id) {
             self.forget_database(&key);
         }
         self.conn_state.remove(id);
@@ -1090,8 +1130,116 @@ where
     }
 
     /// × na faixa: fecha o banco no engine; `DatabaseClosed` o tira da faixa.
+    /// Fecha o banco depois de salvar as abas SQL (falha ao salvar vira aviso na aba e o banco fecha
+    /// mesmo assim: quem chama já descartou ou já tratou o erro).
     pub(crate) fn close_database(&mut self, key: &DbKey) {
+        let _ = self.save_workspace_queries(key);
         self.deps.sessions.close_database(&key.0, &key.1);
+    }
+
+    /// Grava o texto da aba SQL `index` se mudou desde o último salvamento (texto vazio apaga o
+    /// arquivo). Falha vai ao aviso da aba e não trava nada.
+    pub(crate) fn save_query_tab(&mut self, key: &DbKey, index: usize) -> Result<(), String> {
+        let Some(q) = self
+            .workspaces
+            .get_mut(key)
+            .and_then(|ws| ws.tabs.get_mut(index))
+            .and_then(Tab::query_mut)
+        else {
+            return Ok(());
+        };
+        if q.buffer == q.saved {
+            return Ok(());
+        }
+        match self.deps.queries.save(&key.0, &key.1, q.id, &q.buffer) {
+            Ok(()) => {
+                q.saved = q.buffer.clone();
+                q.save_failed = None;
+                Ok(())
+            }
+            Err(e) => {
+                let message = format!("não foi possível salvar a query {}: {e}", q.title);
+                q.notice = Some(message.clone());
+                q.save_failed = Some(q.buffer.clone());
+                Err(message)
+            }
+        }
+    }
+
+    /// A cada frame: toda aba SQL cujo texto mudou e cujo editor não tem o foco é salva. Cobre
+    /// perder o foco por Esc ou clique, trocar de aba, trocar de banco na faixa e voltar à lista de
+    /// conexões (o `TextEdit` de uma aba que não está na tela não é desenhado, então ninguém leria
+    /// o `lost_focus` dele). O custo por frame é a comparação do texto; a escrita só sai quando mudou.
+    pub(crate) fn autosave_unfocused_queries(&mut self, ctx: &egui::Context) {
+        let pending: Vec<(DbKey, usize)> = self
+            .workspaces
+            .iter()
+            .flat_map(|(key, ws)| {
+                ws.tabs.iter().enumerate().filter_map(move |(index, tab)| {
+                    let q = tab.query()?;
+                    let dirty = q.buffer != q.saved && q.save_failed.as_ref() != Some(&q.buffer);
+                    if !dirty {
+                        return None;
+                    }
+                    let focused = ctx.memory(|m| m.has_focus(crate::editor::editor_id(key, q.id)));
+                    (!focused).then(|| (key.clone(), index))
+                })
+            })
+            .collect();
+        for (key, index) in pending {
+            let _ = self.save_query_tab(&key, index);
+        }
+    }
+
+    /// Todas as abas SQL do banco: antes de fechar o banco, desconectar ou sair. Devolve o primeiro
+    /// erro (a aba dele ficou com o aviso).
+    fn save_workspace_queries(&mut self, key: &DbKey) -> Result<(), String> {
+        let count = self.workspaces.get(key).map_or(0, |ws| ws.tabs.len());
+        let mut first_error = None;
+        for index in 0..count {
+            if let Err(e) = self.save_query_tab(key, index) {
+                first_error.get_or_insert(e);
+            }
+        }
+        first_error.map_or(Ok(()), Err)
+    }
+
+    /// Todas as abas SQL de todos os bancos abertos (sair do app).
+    pub(crate) fn save_all_queries(&mut self) -> Result<(), String> {
+        let keys: Vec<DbKey> = self.workspaces.keys().cloned().collect();
+        let mut first_error = None;
+        for key in &keys {
+            if let Err(e) = self.save_workspace_queries(key) {
+                first_error.get_or_insert(e);
+            }
+        }
+        first_error.map_or(Ok(()), Err)
+    }
+
+    /// "Descartar e fechar" de uma aba SQL: apaga o arquivo dela e esvazia o buffer, para o
+    /// fechamento não salvar de novo. Falha ao apagar deixa `saved` como estava: o arquivo ficou.
+    fn discard_query_tab(&mut self, key: &DbKey, index: usize) {
+        let Some(q) = self
+            .workspaces
+            .get_mut(key)
+            .and_then(|ws| ws.tabs.get_mut(index))
+            .and_then(Tab::query_mut)
+        else {
+            return;
+        };
+        q.buffer.clear();
+        match self.deps.queries.remove(&key.0, &key.1, q.id) {
+            Ok(()) => q.saved.clear(),
+            Err(e) => {
+                if let Some(state) = self.conn_state.get_mut(&key.0) {
+                    state.error = Some(format!("não foi possível apagar a query salva: {e}"));
+                }
+            }
+        }
+    }
+
+    fn workspace_keys_of(&self, id: &ConnectionId) -> Vec<DbKey> {
+        self.rail.iter().filter(|k| &k.0 == id).cloned().collect()
     }
 
     /// Abre a tabela numa aba nova (ou só foca a aba dela, se já está aberta) e pede a primeira
@@ -1218,8 +1366,8 @@ where
         let Some(ws) = self.workspaces.get_mut(key) else {
             return;
         };
-        self.next_query_id += 1;
-        ws.tabs.push(Tab::Query(QueryTab::new(self.next_query_id)));
+        ws.next_query_id += 1;
+        ws.tabs.push(Tab::Query(QueryTab::new(ws.next_query_id)));
         ws.active_tab = Some(ws.tabs.len() - 1);
     }
 
@@ -1352,25 +1500,34 @@ where
         // Pendência de edição, célula aberta com texto ou buffer de SQL: trabalho a perder.
         if tab.would_lose_work() {
             self.confirm_close = Some(CloseTarget::Tab(key.clone(), index));
-        } else if let Some(ws) = self.workspaces.get_mut(key) {
-            ws.close_tab(index);
+        } else {
+            // Aba SQL vazia: o arquivo (se havia) some junto.
+            let _ = self.save_query_tab(key, index);
+            if let Some(ws) = self.workspaces.get_mut(key) {
+                ws.close_tab(index);
+            }
         }
     }
 
-    /// × na faixa: fecha na hora, ou pede confirmação se alguma aba tem pendência.
+    /// × na faixa: fecha na hora (salvando as abas SQL), ou pede confirmação se alguma aba de
+    /// tabela tem pendência.
     pub(crate) fn request_close_database(&mut self, key: &DbKey) {
         if self.busy(key) {
             return;
         }
-        // Pendência de edição ou texto numa aba SQL: a mesma régua de fechar a aba.
         if self
             .workspaces
             .get(key)
             .is_some_and(Workspace::would_lose_work)
         {
             self.confirm_close = Some(CloseTarget::Database(key.clone()));
+        } else if let Err(e) = self.save_workspace_queries(key) {
+            // Não fecha sem o texto salvo: a aba fica na tela com o aviso.
+            if let Some(state) = self.conn_state.get_mut(&key.0) {
+                state.error = Some(format!("o banco continua aberto: {e}"));
+            }
         } else {
-            self.close_database(key);
+            self.deps.sessions.close_database(&key.0, &key.1);
         }
     }
 
@@ -1385,21 +1542,43 @@ where
             .any(|(k, ws)| &k.0 == id && ws.would_lose_work());
         if loses {
             self.confirm_close = Some(CloseTarget::Connection(id.clone()));
-        } else {
-            self.deps.sessions.disconnect(id);
+            return;
+        }
+        let mut first_error = None;
+        for key in self.workspace_keys_of(id) {
+            if let Err(e) = self.save_workspace_queries(&key) {
+                first_error.get_or_insert(e);
+            }
+        }
+        match first_error {
+            // Não desconecta sem o texto salvo: a aba fica na tela com o aviso.
+            Some(e) => {
+                if let Some(state) = self.conn_state.get_mut(id) {
+                    state.error = Some(format!("a conexão continua aberta: {e}"));
+                }
+            }
+            None => self.deps.sessions.disconnect(id),
         }
     }
 
-    /// "Descartar e fechar" na confirmação.
+    /// "Descartar e fechar" na confirmação. Descartar uma aba SQL apaga o arquivo dela; descartar o
+    /// banco ou a conexão (a caixa só aparece por pendência em aba de tabela) descarta só a edição:
+    /// as queries salvas ficam, como no fechamento sem pendência.
     pub(crate) fn confirm_close_now(&mut self) {
         match self.confirm_close.take() {
             Some(CloseTarget::Database(key)) => self.close_database(&key),
             Some(CloseTarget::Tab(key, index)) => {
+                self.discard_query_tab(&key, index);
                 if let Some(ws) = self.workspaces.get_mut(&key) {
                     ws.close_tab(index);
                 }
             }
-            Some(CloseTarget::Connection(id)) => self.deps.sessions.disconnect(&id),
+            Some(CloseTarget::Connection(id)) => {
+                for key in self.workspace_keys_of(&id) {
+                    let _ = self.save_workspace_queries(&key);
+                }
+                self.deps.sessions.disconnect(&id);
+            }
             None => {}
         }
     }
@@ -1654,6 +1833,7 @@ where
     /// vem sem margem nem fundo; cada tela abre seus painéis.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         self.drain_events();
+        self.autosave_unfocused_queries(ui.ctx());
         match self.view.clone() {
             View::Connections => crate::connections::show(self, ui),
             View::Workspace => crate::workspace::show(self, ui),
@@ -1669,6 +1849,14 @@ where
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.ui(ui);
     }
+
+    /// Sair do app grava o texto de todas as abas SQL abertas (FEAT-011).
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if let Err(e) = self.save_all_queries() {
+            // Sem tela nesta altura: o stderr é o que resta.
+            eprintln!("hy-dbplus: {e}");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1677,16 +1865,20 @@ pub(crate) mod tests {
 
     /// O aviso "transação aberta" segue BEGIN/START TRANSACTION e COMMIT/ROLLBACK/END, em qualquer
     /// caixa e com espaço antes; o resto não muda o estado.
-    /// A caixa de fechar fala só de "texto no editor SQL" quando nenhuma aba de tabela perderia algo:
-    /// célula aberta numa aba de tabela conta como pendência (7ª revisão de 22/10/2026).
+    /// Fechar o banco só perde trabalho de aba de tabela (pendência ou célula aberta); texto de aba
+    /// SQL é salvo em arquivo e não conta (FEAT-011; 7ª revisão da FEAT-010).
     #[test]
-    fn caixa_de_fechar_distingue_texto_sql_de_pendencia_na_tabela() {
+    fn fechar_o_banco_so_perde_trabalho_de_aba_de_tabela() {
         let mut ws = Workspace::default();
-        assert!(ws.loses_only_sql_text());
+        assert!(!ws.would_lose_work());
         let mut q = QueryTab::new(1);
         q.buffer = "select 1".into();
         ws.tabs.push(Tab::Query(q));
-        assert!(ws.loses_only_sql_text());
+        assert!(!ws.would_lose_work(), "texto SQL é salvo, não perdido");
+        assert!(
+            ws.tabs[0].would_lose_work(),
+            "fechar a aba em si ainda pergunta"
+        );
         let mut tab = DataTab::new("public", "a");
         tab.editing = Some(CellEdit {
             row: 0,
@@ -1697,7 +1889,6 @@ pub(crate) mod tests {
         });
         ws.tabs.push(Tab::Table(Box::new(tab)));
         assert!(ws.would_lose_work());
-        assert!(!ws.loses_only_sql_text());
     }
 
     #[test]
@@ -1759,11 +1950,13 @@ pub(crate) mod tests {
         let path = std::env::temp_dir()
             .join(format!("hy-dbplus-ui-{}", uuid_like()))
             .join("connections.toml");
+        let queries = QueryStore::new(path.with_file_name("queries"));
         let store = ConnectionStore::load(path).unwrap();
         let (sessions, events) = Sessions::new(driver, rt.handle().clone(), || {});
         Deps {
             store,
             secrets: Box::new(MemorySecrets::default()),
+            queries,
             sessions,
             events,
         }

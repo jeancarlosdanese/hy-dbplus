@@ -10,9 +10,12 @@ cache das queries (22/10).
 
 ## Objetivo
 
-Cada aba SQL de um banco vira um arquivo de texto, salvo ao perder o foco (e ao fechar aba, banco,
-conexão ou o app), restaurado quando o banco é aberto de novo. Só o texto: resultados ficam em memória.
-"Descartar e fechar" apaga o arquivo, para o cache não acumular lixo. Nada de segredo no arquivo.
+Cada aba SQL de um banco vira um arquivo de texto, salvo sempre que o texto mudou e o editor não tem o
+foco (Esc, clique fora, troca de aba ou de banco) e ao fechar banco, conexão ou o app, restaurado quando o
+banco é aberto de novo. Só o texto: resultados ficam em memória.
+"Descartar e fechar" apaga o arquivo, para o cache não acumular lixo. O store não acrescenta nada ao
+texto (nem host, nem a senha da conexão); o que o usuário digitar fica no arquivo como está, inclusive
+uma senha dentro de um `CREATE ROLE`, por isso o arquivo é `0600`.
 
 ## Escopo (Must)
 
@@ -32,7 +35,8 @@ conexão ou o app), restaurado quando o banco é aberto de novo. Só o texto: re
 3. **Salvar** (`ui-egui`): quando o `TextEdit` da aba perde o foco e o texto mudou desde o último salvamento
    (`QueryTab.saved: String`); ao fechar a aba (×/⌘W sem confirmação, texto vazio → arquivo apagado); ao
    fechar o banco pela faixa e ao desconectar (todas as abas SQL do banco, antes de sumir); ao sair do app
-   (`eframe::App::on_exit`); "Descartar e fechar" (aba, banco ou conexão) apaga os arquivos daquelas abas.
+   (`eframe::App::on_exit`); "Descartar e fechar" de uma aba SQL apaga o arquivo dela. O "Descartar" do
+   banco ou da conexão só existe por pendência em aba de tabela e não toca nas queries salvas (revisão).
    Falha ao salvar vai ao aviso da aba ("não foi possível salvar: <erro>") e não trava nada.
 4. **Lista de conexões**: remover a conexão apaga o diretório dela (`remove_connection`), com a confirmação
    que já existe para remover.

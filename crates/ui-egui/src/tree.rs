@@ -2313,24 +2313,9 @@ mod tests {
             "nada foi ao servidor"
         );
 
-        // Fechar o banco com texto no editor pede confirmação (mesma régua de fechar a aba); Cancelar
-        // mantém. O × da faixa é o primeiro ×.
-        harness.get_all_by_label("×").next().unwrap().click();
-        harness.step();
-        harness.step();
-        harness.get_by_label("Fechar o banco?");
-        harness.get_by_label_contains("tem texto no editor SQL");
-        // Dois "Cancelar" (barra do editor e caixa): o da caixa é o último nó.
-        harness
-            .get_all_by_label("Cancelar")
-            .last()
-            .unwrap()
-            .click_accesskit();
-        harness.step();
-        harness.step();
-        assert_eq!(harness.state().rail.len(), 1);
-
-        // Fechar a aba com texto pede confirmação; "Descartar e fechar" fecha.
+        // Fechar o banco com texto no editor não pergunta: o texto é salvo em arquivo (FEAT-011,
+        // teste `queries_salvas_voltam_ao_abrir_o_banco`). Fechar a aba com texto pede confirmação;
+        // "Descartar e fechar" fecha.
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::W);
         harness.step();
         harness.step();
@@ -2407,5 +2392,249 @@ mod tests {
         app.select_row(&key, 0, egui::Modifiers::COMMAND);
         assert_eq!(selected(&app), [0]);
         assert!(app.side_panel_open);
+    }
+
+    /// FEAT-011: o texto da aba SQL vai para `<queries>/<conexão>/<banco>/<n>.sql` ao perder o foco;
+    /// fechar o banco com texto não pergunta e salva; abrir o banco de novo traz a aba com o texto e o
+    /// mesmo número, sem resultados; a numeração segue dali; "Descartar e fechar" apaga o arquivo.
+    #[test]
+    fn queries_salvas_voltam_ao_abrir_o_banco() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let driver = FakeDriver::default();
+        let mut app = App::with_deps(deps(driver, &rt));
+        let c = Connection::new("pg-localhost", Tag::Local, ConnectionConfig::default());
+        app.deps.store.upsert(c.clone());
+        crate::connections::connect(&mut app, &c);
+        let id = c.id.clone();
+        let file = app.deps.queries.dir().join(&id).join("loja").join("1.sql");
+        let mut harness = wide_harness(app);
+        wait_for(&mut harness, "Connected", |app| app.view == View::Workspace);
+        let open_loja = |harness: &mut Harness<'_, App<FakeDriver>>| {
+            harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::K);
+            harness.step();
+            harness.get_by_label("loja").click();
+            wait_for(harness, "SchemaLoaded", |app| {
+                app.workspace_of(&id)
+                    .is_some_and(|ws| ws.objects.contains_key("public"))
+            });
+        };
+        open_loja(&mut harness);
+        let query = |app: &App<FakeDriver>| app.workspace_of(&id).unwrap().query().cloned();
+
+        let type_sql = |harness: &mut Harness<'_, App<FakeDriver>>, text: &str| {
+            harness
+                .get_by_role(egui::accesskit::Role::MultilineTextInput)
+                .focus();
+            harness.step();
+            harness
+                .input_mut()
+                .events
+                .push(egui::Event::Text(text.into()));
+            harness.step();
+        };
+        // Digita na aba 1 e abre outra com ⌘T: a troca de aba salva a 1 (o editor dela some da
+        // tela, então é o varrimento por frame que grava).
+        harness.get_by_label("+ SQL").click_accesskit();
+        harness.step();
+        type_sql(&mut harness, "select 1");
+        assert!(!file.exists(), "salvou com o editor em foco");
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
+        harness.step();
+        harness.step();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "select 1");
+        // Digita na aba 2 e tira o foco (Esc): salva também.
+        let file2 = file.with_file_name("2.sql");
+        type_sql(&mut harness, "select 2");
+        assert!(!file2.exists());
+        harness.key_press(egui::Key::Escape);
+        harness.step();
+        harness.step();
+        assert_eq!(std::fs::read_to_string(&file2).unwrap(), "select 2");
+        assert_eq!(query(harness.state()).unwrap().saved, "select 2");
+
+        // × do banco com texto: fecha sem perguntar; os arquivos ficam.
+        harness.get_all_by_label("×").next().unwrap().click();
+        wait_for(&mut harness, "DatabaseClosed", |app| app.rail.is_empty());
+        assert!(harness.query_by_label("Fechar o banco?").is_none());
+        assert!(file.exists() && file2.exists());
+
+        // Abrir de novo: as abas voltam na ordem, a primeira ativa, com o texto e sem resultados;
+        // ⌘T continua a numeração.
+        open_loja(&mut harness);
+        harness.step();
+        let q = query(harness.state()).unwrap();
+        assert_eq!(
+            (q.title.as_str(), q.buffer.as_str()),
+            ("SQL Query 1", "select 1")
+        );
+        assert!(q.results.is_empty());
+        harness.get_by_label("SQL Query 2");
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
+        harness.step();
+        harness.step();
+        assert_eq!(
+            query(harness.state()).map(|q| q.title),
+            Some("SQL Query 3".into())
+        );
+        // ⌘W na aba vazia fecha direto e não deixa arquivo; a da esquerda (2) assume; na aba com
+        // texto pergunta, e "Descartar e fechar" apaga o arquivo.
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::W);
+        harness.step();
+        harness.step();
+        assert!(!file.with_file_name("3.sql").exists());
+        assert_eq!(
+            query(harness.state()).map(|q| q.title),
+            Some("SQL Query 2".into())
+        );
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::W);
+        harness.step();
+        harness.step();
+        harness.get_by_label("Fechar a aba?");
+        harness.get_by_label("Descartar e fechar").click_accesskit();
+        harness.step();
+        harness.step();
+        assert!(!file2.exists(), "Descartar não apagou o arquivo");
+        assert!(file.exists(), "apagou o arquivo da outra aba");
+        assert_eq!(harness.state().workspace_of(&id).unwrap().tabs.len(), 1);
+        // A numeração não volta atrás dentro do banco aberto.
+        harness.get_by_label("+ SQL").click_accesskit();
+        harness.step();
+        harness.step();
+        assert_eq!(
+            query(harness.state()).map(|q| q.title),
+            Some("SQL Query 4".into())
+        );
+    }
+
+    /// FEAT-011: o `Disconnected` de uma conexão que ainda está na lista salva o texto das abas SQL
+    /// (conexão caída); o de uma conexão removida não (o diretório dela acabou de ser apagado e
+    /// voltaria como lixo órfão).
+    #[test]
+    fn desconectar_salva_as_queries_so_de_conexao_que_ainda_existe() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut app = App::with_deps(deps(FakeDriver::default(), &rt));
+        let c = Connection::new("pg-localhost", Tag::Local, ConnectionConfig::default());
+        app.deps.store.upsert(c.clone());
+        let id = c.id.clone();
+        let dir = app.deps.queries.dir().join(&id);
+        let open_with_text = |app: &mut App<FakeDriver>| {
+            let key = (id.clone(), "loja".to_owned());
+            let mut ws = crate::app::Workspace::default();
+            let mut q = crate::app::QueryTab::new(1);
+            q.buffer = "select 1".into();
+            ws.tabs.push(crate::app::Tab::Query(q));
+            ws.next_query_id = 1;
+            app.workspaces.insert(key.clone(), ws);
+            app.rail.push(key);
+        };
+        open_with_text(&mut app);
+        app.apply_event(hy_dbplus_engine::Event::Disconnected {
+            connection: id.clone(),
+        });
+        assert_eq!(
+            std::fs::read_to_string(dir.join("loja").join("1.sql")).unwrap(),
+            "select 1"
+        );
+        assert!(app.workspaces.is_empty());
+
+        // Removida da lista: o diretório some e o Disconnected não o recria.
+        open_with_text(&mut app);
+        app.deps.store.remove(&id);
+        app.deps.queries.remove_connection(&id).unwrap();
+        app.apply_event(hy_dbplus_engine::Event::Disconnected {
+            connection: id.clone(),
+        });
+        assert!(!dir.exists(), "recriou o diretório da conexão removida");
+    }
+
+    /// FEAT-011: "Descartar e fechar" do banco ou da conexão (a caixa só aparece por pendência em aba
+    /// de tabela) não apaga as queries salvas; só o descarte da própria aba SQL apaga. E uma falha
+    /// persistente ao salvar não é tentada de novo a cada frame nem sobrescreve outro aviso.
+    #[test]
+    fn descartar_banco_ou_conexao_mantem_as_queries_e_falha_nao_repete_a_cada_frame() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut app = App::with_deps(deps(FakeDriver::default(), &rt));
+        let c = Connection::new("pg-localhost", Tag::Local, ConnectionConfig::default());
+        app.deps.store.upsert(c.clone());
+        let id = c.id.clone();
+        let key = (id.clone(), "loja".to_owned());
+        let file = app.deps.queries.dir().join(&id).join("loja").join("1.sql");
+        let open_with_text = |app: &mut App<FakeDriver>| {
+            let mut ws = crate::app::Workspace::default();
+            let mut q = crate::app::QueryTab::new(1);
+            q.buffer = "select 1".into();
+            ws.tabs.push(crate::app::Tab::Query(q));
+            ws.active_tab = Some(0);
+            ws.next_query_id = 1;
+            app.workspaces.insert(key.clone(), ws);
+            app.rail.push(key.clone());
+        };
+        open_with_text(&mut app);
+        app.confirm_close = Some(crate::app::CloseTarget::Database(key.clone()));
+        app.confirm_close_now();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "select 1");
+        app.workspaces.remove(&key);
+        app.rail.clear();
+        open_with_text(&mut app);
+        app.confirm_close = Some(crate::app::CloseTarget::Connection(id.clone()));
+        app.confirm_close_now();
+        assert!(file.exists(), "descartar a conexão apagou a query salva");
+        app.workspaces.remove(&key);
+        app.rail.clear();
+        // Descartar a própria aba apaga.
+        open_with_text(&mut app);
+        app.confirm_close = Some(crate::app::CloseTarget::Tab(key.clone(), 0));
+        app.confirm_close_now();
+        assert!(!file.exists());
+        app.workspaces.remove(&key);
+        app.rail.clear();
+
+        // Falha persistente: o diretório da conexão virou arquivo. O varrimento tenta uma vez, põe o
+        // aviso, e não insiste enquanto o texto não mudar (outro aviso sobrevive).
+        std::fs::remove_dir_all(app.deps.queries.dir().join(&id)).unwrap();
+        std::fs::write(app.deps.queries.dir().join(&id), "x").unwrap();
+        open_with_text(&mut app);
+        let ctx = egui::Context::default();
+        app.autosave_unfocused_queries(&ctx);
+        let q = app.workspaces[&key].tabs[0].query().unwrap();
+        assert!(
+            q.notice
+                .as_deref()
+                .is_some_and(|n| n.contains("não foi possível salvar")),
+            "{:?}",
+            q.notice
+        );
+        app.workspaces
+            .get_mut(&key)
+            .unwrap()
+            .query_mut()
+            .unwrap()
+            .notice = Some("outro aviso".into());
+        app.autosave_unfocused_queries(&ctx);
+        assert_eq!(
+            app.workspaces[&key].tabs[0]
+                .query()
+                .unwrap()
+                .notice
+                .as_deref(),
+            Some("outro aviso"),
+            "tentou de novo com o mesmo texto"
+        );
+        // Texto mudou: tenta de novo (e falha de novo, com o aviso).
+        app.workspaces
+            .get_mut(&key)
+            .unwrap()
+            .query_mut()
+            .unwrap()
+            .buffer = "select 2".into();
+        app.autosave_unfocused_queries(&ctx);
+        assert!(
+            app.workspaces[&key].tabs[0]
+                .query()
+                .unwrap()
+                .notice
+                .as_deref()
+                .is_some_and(|n| n.contains("não foi possível salvar"))
+        );
     }
 }

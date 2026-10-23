@@ -4,7 +4,9 @@
 use std::process::ExitCode;
 
 use eframe::egui;
-use hy_dbplus_engine::{ConnectionStore, KeyringSecrets, MemorySecrets, PgSessions, SecretStore};
+use hy_dbplus_engine::{
+    ConnectionStore, KeyringSecrets, MemorySecrets, PgSessions, QueryStore, SecretStore,
+};
 use hy_dbplus_ui_egui::{Deps, PgApp};
 
 /// Bundle id (docs/BRIEF.md decisão 2): janela no Wayland e nome do app para o sistema.
@@ -28,6 +30,7 @@ fn run() -> Result<(), String> {
         .map_err(|e| format!("runtime: {e}"))?;
     let path = ConnectionStore::default_path().map_err(|e| e.to_string())?;
     let store = ConnectionStore::load(&path).map_err(|e| e.to_string())?;
+    let queries = QueryStore::new(QueryStore::default_dir().map_err(|e| e.to_string())?);
     // HY_DBPLUS_SECRETS=memory: sem chaveiro (desenvolvimento e CI); senha vale só na sessão.
     let secrets: Box<dyn SecretStore> =
         if std::env::var_os("HY_DBPLUS_SECRETS").is_some_and(|v| v == "memory") {
@@ -61,6 +64,7 @@ fn run() -> Result<(), String> {
                 Deps {
                     store,
                     secrets,
+                    queries,
                     sessions,
                     events,
                 },

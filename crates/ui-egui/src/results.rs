@@ -23,7 +23,7 @@ where
     };
     let mut focus: Option<usize> = None;
     let mut select: Option<(usize, usize)> = None;
-    egui::Panel::bottom(egui::Id::new(("query-results", &q.id)))
+    egui::Panel::bottom(egui::Id::new(("query-results", key, q.id)))
         .resizable(true)
         .default_size(260.0)
         .min_size(80.0)

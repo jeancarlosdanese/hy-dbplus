@@ -93,7 +93,7 @@ num banco de desenvolvimento local. Servem como especificação visual e funcion
 - Resultado em sub-abas `Query N` abaixo do editor: grid só leitura, `OK, N linhas afetadas` ou o erro;
   ⌘-clique numa linha mostra o JSON no painel direito.
 - **Autocomplete** de palavras-chave, tabelas, colunas e aliases (M6, FEAT-012); histórico persistido (M7).
-- **Queries salvas** (FEAT-011): cada aba SQL num arquivo em `~/.config/hy-dbplus/queries/<conexão>/<banco>/<n>.sql`, salvo ao perder o foco e ao fechar, restaurado ao abrir o banco; "Descartar e fechar" apaga.
+- **Queries salvas** (FEAT-011): cada aba SQL num arquivo em `~/.config/hy-dbplus/queries/<conexão>/<banco>/<n>.sql`, salvo ao perder o foco e ao fechar (fechar o banco ou desconectar com texto não pergunta: salva), restaurado ao abrir o banco com o mesmo número; "Descartar e fechar" de uma aba apaga.
 
 ## 4. Escopo do MVP (v0.1)
 

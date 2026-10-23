@@ -4,24 +4,24 @@
 
 ## `engine::queries`
 
-- [ ] `save` grava `<dir>/queries/<conexão>/<banco>/<n>.sql` com `0600` (diretórios `0700`) e escrita atômica;
+- [x] `save` grava `<dir>/queries/<conexão>/<banco>/<n>.sql` com `0600` (diretórios `0700`) e escrita atômica;
       texto vazio apaga; `list` devolve em ordem de `n`; `remove` e `remove_connection` apagam.
-- [ ] Nome de banco com `/`, `..` ou espaço vira caminho seguro dentro do diretório.
-- [ ] Erro de leitura ou escrita vira `EngineError::Io` com o caminho, sem segredo.
+- [x] Nome de banco com `/`, `..` ou espaço vira caminho seguro dentro do diretório.
+- [x] Erro de leitura ou escrita vira `EngineError::Io` com o caminho, sem segredo.
 
 ## `ui-egui`
 
-- [ ] Ao abrir um banco com queries salvas, as abas SQL voltam com o texto, na ordem e com o número original;
+- [x] Ao abrir um banco com queries salvas, as abas SQL voltam com o texto, na ordem e com o número original;
       sem aba de tabela, a primeira fica ativa.
-- [ ] Digitar e tirar o foco do editor salva; o aviso da aba mostra falha ao salvar.
-- [ ] Fechar aba, banco ou conexão salva o texto antes; "Descartar e fechar" apaga o arquivo; texto vazio não
-      deixa arquivo.
-- [ ] Remover a conexão da lista apaga o diretório dela.
-- [ ] Teste `egui_kittest` cobre salvar ao perder o foco, restaurar ao reabrir o banco e apagar ao descartar.
+- [x] Digitar e tirar o foco do editor salva; o aviso da aba mostra falha ao salvar.
+- [x] Fechar aba, banco ou conexão salva o texto antes (banco e conexão não pedem mais confirmação por texto
+      SQL); "Descartar e fechar" apaga o arquivo; texto vazio não deixa arquivo.
+- [x] Remover a conexão da lista apaga o diretório dela.
+- [x] Teste `egui_kittest` cobre salvar ao perder o foco, restaurar ao reabrir o banco e apagar ao descartar.
 
 ## Portão e CI
 
-- [ ] `scripts/quality-gate.sh --full` verde; workflow verde.
+- [x] `scripts/quality-gate.sh --full` verde; [ ] workflow verde (push do Jean).
 
 ## Do Jean
 

@@ -76,9 +76,9 @@ where
         }
     });
 
-    egui::Panel::top(egui::Id::new(("query-toolbar", &q.id))).show(ui, |ui| {
+    egui::Panel::top(egui::Id::new(("query-toolbar", key, q.id))).show(ui, |ui| {
         ui.horizontal(|ui| {
-            egui::ComboBox::from_id_salt(("query-limit", q.id))
+            egui::ComboBox::from_id_salt(("query-limit", key, q.id))
                 .selected_text(limit_label(q.limit))
                 .show_ui(ui, |ui| {
                     for limit in LIMITS {
@@ -175,7 +175,7 @@ where
     let editor_id = editor_id(key, q.id);
     let mut changed = false;
     egui::CentralPanel::default_margins().show(ui, |ui| {
-        egui::Panel::bottom(egui::Id::new(("query-status", q.id))).show(ui, |ui| {
+        egui::Panel::bottom(egui::Id::new(("query-status", key, q.id))).show(ui, |ui| {
             let (line, column) = line_column(&buffer, cursor_byte);
             ui.label(
                 egui::RichText::new(format!("linha {line}, coluna {column}"))
@@ -184,7 +184,7 @@ where
             );
         });
         egui::ScrollArea::both()
-            .id_salt(("sql-scroll", q.id))
+            .id_salt(("sql-scroll", key, q.id))
             .show(ui, |ui| {
                 ui.horizontal_top(|ui| {
                     let row_height = ui.fonts_mut(|f| f.row_height(&font));

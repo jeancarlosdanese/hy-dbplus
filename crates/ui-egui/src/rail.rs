@@ -111,18 +111,11 @@ where
     let Some(target) = app.confirm_close.clone() else {
         return;
     };
-    // Aba de SQL perde o texto do editor; aba de tabela perde alterações pendentes ou a célula
-    // aberta. Banco e conexão podem perder os dois: a caixa fala só de texto quando nenhuma aba de
-    // tabela perderia algo.
-    let only_text = crate::app::Workspace::loses_only_sql_text;
+    // Aba de SQL perde o texto do editor; banco e conexão só perguntam por pendência de aba de
+    // tabela (o texto das abas SQL é salvo em arquivo antes de fechar, FEAT-011).
     let mut loses = "tem alterações pendentes";
     let (title, what) = match &target {
-        CloseTarget::Database(key) => {
-            if app.workspaces.get(key).is_some_and(only_text) {
-                loses = "tem texto no editor SQL";
-            }
-            ("Fechar o banco?", format!("O banco {}", key.1))
-        }
+        CloseTarget::Database(key) => ("Fechar o banco?", format!("O banco {}", key.1)),
         CloseTarget::Tab(key, index) => (
             "Fechar a aba?",
             app.workspaces
@@ -136,24 +129,14 @@ where
                 })
                 .unwrap_or_else(|| "A aba".to_owned()),
         ),
-        CloseTarget::Connection(id) => {
-            if app
-                .workspaces
-                .iter()
-                .filter(|(k, _)| &k.0 == id)
-                .all(|(_, ws)| only_text(ws))
-            {
-                loses = "tem texto no editor SQL";
-            }
-            (
-                "Desconectar?",
-                app.deps
-                    .store
-                    .get(id)
-                    .map(|c| format!("A conexão {}", c.name))
-                    .unwrap_or_else(|| "A conexão".to_owned()),
-            )
-        }
+        CloseTarget::Connection(id) => (
+            "Desconectar?",
+            app.deps
+                .store
+                .get(id)
+                .map(|c| format!("A conexão {}", c.name))
+                .unwrap_or_else(|| "A conexão".to_owned()),
+        ),
     };
     let mut decision: Option<bool> = None;
     let response = egui::Modal::new(egui::Id::new("confirm-close")).show(ctx, |ui| {

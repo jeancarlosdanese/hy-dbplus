@@ -64,7 +64,8 @@ leitura"). Autocomplete é o M6 (FEAT-012); histórico persistido é o M7.
      JSON no painel direito (reaproveita `record::to_json`); sem edição.
    - `StructureLoaded`, pendências e tudo da aba de tabela continuam iguais; `has_pending_changes` olha só as
      abas de tabela; execução em curso trava fechar a aba de SQL e o banco; fechar o banco ou desconectar com
-     texto numa aba SQL pede confirmação, como fechar a aba (decisão do Jean, 22/10).
+     texto numa aba SQL pede confirmação, como fechar a aba (decisão do Jean, 22/10). Superado pela FEAT-011:
+     o texto passou a ser salvo em arquivo e fechar o banco ou desconectar não pergunta mais por ele.
 5. **Testes**: `sql` puro (split com string/`$$`/comentários/aspas, cursor entre statements, highlight de
    buffer incompleto, beautify); `driver` com servidor (`execute` de SELECT com limite e truncado, de
    UPDATE com `affected`, erro de sintaxe; `cancel` de `pg_sleep(5)` volta em menos de 2 s com erro de

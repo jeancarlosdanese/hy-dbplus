@@ -1,4 +1,4 @@
-<!-- FEAT_EM_ANDAMENTO — docs criados em 22/10/2026; próximo: engine::queries (QueryStore) -->
+<!-- FEAT_EM_ANDAMENTO — implementada em 22/10/2026 (engine + UI na árvore), aguardando revisão, commits e conferência do Jean -->
 <!-- PRIO_ALTA -->
 # @file: docs/features/FEAT-011-queries-salvas/context.index.md
 
@@ -19,9 +19,11 @@
 
 ## TL;DR
 
-Cada aba SQL vira `~/.config/hy-dbplus/queries/<id da conexão>/<banco>/<n>.sql`, salvo ao perder o foco e ao
-fechar aba, banco, conexão ou app; ao abrir o banco as abas voltam com o texto e o mesmo número.
-"Descartar e fechar" apaga o arquivo. Só o texto; nada de segredo.
+Cada aba SQL vira `~/.config/hy-dbplus/queries/<id da conexão>/<banco>/<n>.sql`, salvo sempre que o texto
+mudou e o editor não tem o foco (Esc, clique fora, troca de aba ou de banco) e ao fechar banco, conexão ou
+app; ao abrir o banco as abas voltam com o texto e o mesmo número. Fechar a aba com texto pergunta, e
+"Descartar e fechar" apaga o arquivo. Só o texto digitado, como está (o store não acrescenta host nem
+senha da conexão; arquivo `0600`).
 
 ## Leia nesta ordem
 

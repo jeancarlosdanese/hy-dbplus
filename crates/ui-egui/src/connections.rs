@@ -439,7 +439,9 @@ where
                 Ok(()) => app.deps.secrets.remove(&id),
                 Err(_) => Ok(()),
             };
-            let errors: Vec<String> = [saved.err(), secret.err()]
+            // As queries salvas da conexão saem junto (FEAT-011).
+            let queries = app.deps.queries.remove_connection(&id);
+            let errors: Vec<String> = [saved.err(), secret.err(), queries.err()]
                 .into_iter()
                 .flatten()
                 .map(|e| e.to_string())
