@@ -2636,5 +2636,25 @@ mod tests {
                 .as_deref()
                 .is_some_and(|n| n.contains("não foi possível salvar"))
         );
+        // Aba restaurada, texto apagado, ⌘W: fecha direto, mas apagar o arquivo falha e o erro não
+        // pode sumir com a aba (vai ao aviso do app).
+        {
+            let q = app.workspaces.get_mut(&key).unwrap().query_mut().unwrap();
+            q.buffer.clear();
+            q.saved = "select 1".into();
+        }
+        app.notice = None;
+        app.request_close_tab(&key, 0);
+        assert!(
+            app.workspaces[&key].tabs.is_empty(),
+            "a aba vazia fecha mesmo assim"
+        );
+        assert!(
+            app.notice
+                .as_deref()
+                .is_some_and(|n| n.contains("não foi possível salvar")),
+            "{:?}",
+            app.notice
+        );
     }
 }

@@ -1501,8 +1501,14 @@ where
         if tab.would_lose_work() {
             self.confirm_close = Some(CloseTarget::Tab(key.clone(), index));
         } else {
-            // Aba SQL vazia: o arquivo (se havia) some junto.
-            let _ = self.save_query_tab(key, index);
+            // Aba SQL vazia: o arquivo (se havia) some junto. Falha ao apagar não pode ficar no aviso
+            // da aba, que fecha agora: vai para a conexão e para o aviso do app.
+            if let Err(e) = self.save_query_tab(key, index) {
+                if let Some(state) = self.conn_state.get_mut(&key.0) {
+                    state.error = Some(e.clone());
+                }
+                self.notice = Some(e);
+            }
             if let Some(ws) = self.workspaces.get_mut(key) {
                 ws.close_tab(index);
             }

@@ -11,8 +11,9 @@ _Atualizado em 22/10/2026._
   aba/banco/conexão, no `forget_database` e no `on_exit`, apagar no "Descartar", `remove_connection` ao
   remover a conexão; kittest `queries_salvas_voltam_ao_abrir_o_banco`); `main.rs` com o `QueryStore`.
   Tudo na árvore, portão `--full` verde.
-- **Em curso:** revisão da FEAT inteira; depois os commits `feat(engine)` e `feat(ui)` com o "pode commitar".
-- **Falta:** verificação do Jean (aceite "Do Jean").
+- **Commitado:** `2ff102d` engine, `62b62ae` UI (+ `main.rs`, BRIEF, docs). Na árvore: `fix(ui)` do último
+  achado baixo (erro ao apagar o arquivo de aba vazia fechada ia embora com a aba), aguardando "pode commitar".
+- **Falta:** push e verificação do Jean (aceite "Do Jean").
 - **Depende de:** FEAT-010 (abas SQL), commitada (`7e68ca4`).
 - **Para retomar:** esta pasta e o `ConnectionStore` (`crates/engine/src/store.rs`) como molde.
 
@@ -120,3 +121,9 @@ _Atualizado em 22/10/2026._
   o texto descartado sem ninguém notar).
 - [x] **Baixa.** Ids egui da toolbar, do limite, do status, do scroll e dos resultados levam a chave do banco
   (com a numeração por banco, `SQL Query 1` de dois bancos compartilhava estado). Comentário órfão removido.
+
+### 22/10/2026 — Passada de portão da UI: aplicada depois do commit
+
+- [x] **Baixa.** `request_close_tab` de aba SQL vazia descartava o `Err` do `save` (que apaga o arquivo); com
+  falha de I/O a aba fechava, o aviso dela sumia e o arquivo voltava na próxima abertura. O erro vai para a
+  conexão e para o aviso do app; a aba fecha mesmo assim. Teste.

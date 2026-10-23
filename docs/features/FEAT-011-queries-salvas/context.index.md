@@ -1,4 +1,4 @@
-<!-- FEAT_EM_ANDAMENTO — implementada em 22/10/2026 (engine + UI na árvore), aguardando revisão, commits e conferência do Jean -->
+<!-- FEAT_IMPLEMENTADA — commitada em 22/10/2026 (5125df8, 2ff102d, 62b62ae; cinco rodadas de revisão); falta push e conferência do Jean -->
 <!-- PRIO_ALTA -->
 # @file: docs/features/FEAT-011-queries-salvas/context.index.md
 
