@@ -6,8 +6,12 @@
 
 _Atualizado em 23/10/2026._
 
-- **Feito:** nada além destes docs.
-- **Falta:** `catalog::generate`; menu na árvore e `App::generate_sql` com pedido pendente; testes; docs.
+- **Feito:** docs (`a810dc7`); `catalog::generate` (`Template`, `template_sql`, `example_value`; 4 testes +
+  teste cruzado com `statement_at` na crate `sql`); UI (menu de contexto na árvore, `generate_sql`,
+  `pending_sql`, conclusão em `ColumnsLoaded`/`StructureLoaded`, `insert_sql` com cursor e foco; kittest
+  `menu_da_tabela_gera_sql_na_aba_sql_sem_executar`). Portão `--full` verde; duas rodadas de reviewer
+  aplicadas; na árvore aguardando "pode commitar" (dois commits: catalog, ui).
+- **Falta:** push e conferência do Jean (aceite "Do Jean").
 - **Depende de:** FEAT-009 (colunas e estrutura no catálogo, `table_ddl`), FEAT-010 (abas SQL) e
   FEAT-011 (autosave), todas commitadas.
 - **Para retomar:** este arquivo, o brief, `crates/catalog/src/{edit,data,ddl}.rs` como molde de montagem
@@ -23,15 +27,27 @@ _Atualizado em 23/10/2026._
   buffer com uma linha em branco antes, nunca no cursor: inserir no meio de um statement em edição faria
   o Run Current rodar uma mistura.
 - **[2026-10-23] Colunas sob demanda** pelo mesmo `load_columns` da árvore, com um pedido pendente por
-  banco (`Workspace.pending_sql: Option<PendingSql { schema, table, template, tab }>`); pedido novo
-  substitui o anterior. CREATE usa `load_structure`; o `StructureLoaded` hoje só alimenta a aba Data da
+  banco (`Workspace.pending_sql: Option<PendingSql { schema, table, item }>`); pedido novo substitui o
+  anterior. O destino (aba SQL) é escolhido na inserção, não no pedido: se o usuário trocou de aba entre o
+  clique e o evento, o texto vai para a aba SQL ativa naquele momento. CREATE usa `load_structure`; o `StructureLoaded` hoje só alimenta a aba Data da
   tabela (`app.rs:854`), passa a conferir o pendente também.
-- **[2026-10-23] Valores de exemplo por tipo** (`data_type` do `format_type`): `character`, `text`,
-  `varchar` → `''`; `integer`, `bigint`, `smallint`, `numeric`, `real`, `double`, `serial` → `0`;
-  `boolean` → `false`; `date`, `time`, `timestamp` → `now()`; `uuid` → `gen_random_uuid()`; `json`,
-  `jsonb` → `'{}'`; resto → `NULL`. Comparação pelo começo do tipo, em minúsculas.
+- **[2026-10-23] Valores de exemplo por tipo** (`data_type` do `format_type`, em minúsculas): tipo sem
+  typmod casa por igualdade (`text`, `citext`, `name` → `''`; `integer`, `bigint`, `smallint`, `real`,
+  `double precision`, `money` → `0`; `boolean` → `false`; `date` → `now()`; `uuid` → `gen_random_uuid()`;
+  `json`, `jsonb` → `'{}'`; `bytea` → `'\x'`); prefixo só nos que levam typmod ou qualificador
+  (`character…`, `varchar…`, `numeric…`, `decimal…`, `time…`/`timestamp…` → `now()`); array → `'{}'`;
+  resto → `NULL` (`daterange`, `jsonpath`, `interval`, `"char"`: a 1ª revisão pegou `date` engolindo
+  `daterange`).
 - **[2026-10-23] Lista do menu fechada com o Jean** (23/10): SELECT, SELECT count, INSERT, UPDATE, DELETE,
   TRUNCATE, DROP CASCADE, CREATE; sem `SELECT … WHERE pk`, sem `COPY`.
+
+- **[2026-10-23] Aspas sempre** (`quote_ident`), como `page_sql`, `changes_sql` e o DDL: "aspas só quando
+  precisa" exigiria a lista de palavras reservadas, que é da crate `sql` (camada acima). O brief foi
+  ajustado.
+- **[2026-10-23] `Template` sem `Create`**: o `CREATE` é o `table_ddl` da estrutura; a UI o trata como
+  item à parte do menu em vez de um modelo que `template_sql` não conseguiria montar só com colunas.
+- **[2026-10-23] Coluna gerada fica fora** do `INSERT` e do `UPDATE` (o servidor recusa); identidade
+  `BY DEFAULT` entra como `DEFAULT`.
 
 ## Plano
 
@@ -52,6 +68,43 @@ _Atualizado em 23/10/2026._
   então os dois precisam andar juntos no mesmo frame.
 
 ## Log
+
+### 23/10/2026 — Revisão do `catalog::generate` (`process:reviewer`): aplicada
+
+- [x] **Média.** O aviso `-- sem chave primária` na primeira linha ficava fora do statement (o `split` trata
+  comentário como espaço): com o cursor nele, o Run Current rodaria o statement anterior do buffer. O aviso
+  passou para dentro (linha acima do `WHERE`/`SET`), e a crate `sql` ganhou um teste que passa cada modelo por
+  `split`/`statement_at` com o cursor no começo do texto.
+- [x] **Baixa.** `example_value` por prefixo pegava `daterange`/`datemultirange` (`now()`) e `jsonpath` (`'{}'`),
+  inválidos: igualdade nos tipos sem typmod; prefixo só em `character`, `varchar`, `numeric`, `decimal`,
+  `time`. Teste.
+- [x] **Baixa.** Brief com a assinatura real de `template_sql` e `Create` fora do `Template`.
+
+### 23/10/2026 — UI e revisão dela (`process:reviewer`): aplicada
+
+- `SqlItem`/`PendingSql`/`Workspace.pending_sql`; `generate_sql` monta na hora com colunas (ou estrutura
+  cacheada na aba Data) ou pede ao engine; `complete_pending_sql` no `ColumnsLoaded`/`StructureLoaded` da
+  tabela certa; `StructureFailed`/`CatalogFailed` descartam. `insert_sql`: `query_target` (aba SQL ativa →
+  última) ou `open_query_tab`; fim do buffer, linha em branco, `QueryTab.pending_cursor` que o editor aplica
+  ao estado do `TextEdit` com `request_focus`. `Tab::Query` foi para `Box` (a enum passou do limite do clippy).
+- kittest: INSERT com colunas sob demanda numa aba nova (cursor 0, foco no editor, estado do widget), DELETE
+  no fim da mesma aba com o `statement_at` apontando para ele, CREATE pela estrutura, view só com os itens de
+  view e `DROP VIEW`, falha da estrutura descarta com aviso na tela, nada executado (`FakeDriver.executes`).
+- [x] **Média (reviewer).** O aviso da falha ia para `App.notice`, que só a tela de conexões desenha: no
+  workspace o CREATE sumia em silêncio. Agora vai para o `notice` da aba SQL de destino (toolbar) ou, sem
+  aba, para a faixa da conexão; o teste confere o texto na tela.
+- [x] **Baixa (reviewer).** `insert_sql` repetia `open_query_tab`; docs desatualizados (campos do
+  `PendingSql`, regra do `example_value`, marcador do índice, aceite com "aspas só onde precisa").
+- Lições: `click_secondary()` do kittest abre o `context_menu` e os itens respondem a `click_accesskit()`;
+  Esc entre um menu e outro (o editor com foco engole o clique seguinte); `queries` do driver falso conta
+  catálogo também, por isso o contador `executes` à parte; `App.notice` não aparece no workspace.
+
+### 23/10/2026 — `catalog::generate`
+
+- `Template` (7 modelos, `label`, `applies_to` por tipo de objeto, `needs_columns`), `template_sql`,
+  `example_value`. Formato de várias linhas como o Beautify deixa (`SELECT` com uma coluna por linha, `SET`
+  alinhado). Testes: cada modelo, view/materializada/estrangeira no `DROP`, identidade e gerada, `DEFAULT`,
+  chave composta, só chave, sem chave, sem colunas, aspas dobradas.
 
 ### 23/10/2026 — Criação
 

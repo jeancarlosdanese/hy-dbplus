@@ -11,7 +11,8 @@ use std::time::{Duration, Instant};
 use hy_dbplus_engine::{
     ChangeSet, Column, ConnectionId, ConnectionStore, DatabaseInfo, Driver, Event, Function,
     Outcome, Page, PostgresDriver, QueryStore, QueryTabId, RowUpdate, Schema, SecretStore,
-    Sessions, Table, TableStats, TableStructure, TextRows, preview_sql,
+    Sessions, Table, TableStats, TableStructure, Template, TextRows, preview_sql, table_ddl,
+    template_sql,
 };
 
 use crate::connections::{ConnectionForm, Connections};
@@ -81,9 +82,9 @@ pub enum CloseTarget {
 /// Uma aba do banco: de tabela (Data/Structure/Index) ou de SQL (FEAT-010).
 #[derive(Debug, Clone)]
 pub enum Tab {
-    /// Em `Box`: a aba de tabela é bem maior que a de SQL (clippy `large_enum_variant`).
+    /// Em `Box` as duas: a enum fica pequena (clippy `large_enum_variant`).
     Table(Box<DataTab>),
-    Query(QueryTab),
+    Query(Box<QueryTab>),
 }
 
 impl Tab {
@@ -103,14 +104,14 @@ impl Tab {
 
     pub fn query(&self) -> Option<&QueryTab> {
         match self {
-            Tab::Query(q) => Some(q),
+            Tab::Query(q) => Some(q.as_ref()),
             Tab::Table(_) => None,
         }
     }
 
     pub fn query_mut(&mut self) -> Option<&mut QueryTab> {
         match self {
-            Tab::Query(q) => Some(q),
+            Tab::Query(q) => Some(q.as_mut()),
             Tab::Table(_) => None,
         }
     }
@@ -171,9 +172,27 @@ pub struct QueryTab {
     /// O texto cuja gravação falhou: o varrimento por frame não tenta de novo até ele mudar (sem
     /// isso, uma falha persistente refaria a escrita e reescreveria o aviso a cada repaint).
     pub save_failed: Option<String>,
+    /// Cursor a aplicar no `TextEdit` no próximo frame (FEAT-013: o SQL gerado entra no fim do
+    /// buffer e o cursor vai para ele); o editor consome, grava no estado do widget e pede o foco.
+    pub pending_cursor: Option<usize>,
 }
 
 pub const DEFAULT_LIMIT: Option<usize> = Some(100);
+
+/// A aba SQL que recebe o SQL gerado (FEAT-013): a ativa, se é SQL, senão a última SQL do banco.
+fn query_target(ws: &Workspace) -> Option<usize> {
+    ws.active_tab
+        .filter(|&i| ws.tabs.get(i).is_some_and(|t| t.query().is_some()))
+        .or_else(|| ws.tabs.iter().rposition(|t| t.query().is_some()))
+}
+
+/// A tabela ou view do catálogo já carregado na árvore.
+fn find_table(ws: &Workspace, schema: &str, table: &str) -> Option<Table> {
+    ws.objects
+        .get(schema)
+        .and_then(|(tables, _)| tables.iter().find(|t| t.name == table))
+        .cloned()
+}
 
 impl QueryTab {
     pub fn new(id: QueryTabId) -> Self {
@@ -190,6 +209,7 @@ impl QueryTab {
             notice: None,
             saved: String::new(),
             save_failed: None,
+            pending_cursor: None,
         }
     }
 
@@ -209,6 +229,22 @@ impl QueryTab {
             .nth(self.cursor)
             .map_or(self.buffer.len(), |(b, _)| b)
     }
+}
+
+/// Um item do menu de contexto da tabela (FEAT-013): um modelo do catálogo ou o `CREATE` (DDL).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SqlItem {
+    Template(Template),
+    Create,
+}
+
+/// SQL gerado pelo menu da árvore esperando o catálogo: as colunas (`ColumnsLoaded`) ou a
+/// estrutura (`StructureLoaded`) da tabela. Um por banco; pedido novo substitui o anterior.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingSql {
+    pub schema: String,
+    pub table: String,
+    pub item: SqlItem,
 }
 
 /// Um banco aberto (conexão + banco) e o catálogo que a UI já recebeu (tela 3.3).
@@ -236,6 +272,8 @@ pub struct Workspace {
     /// Um erro dentro da transação aberta (qualquer um, inclusive cancel): o servidor a marca como
     /// abortada e o `COMMIT` vai desfazer tudo. Volta a `false` quando a transação acaba.
     pub transaction_aborted: bool,
+    /// SQL do menu da árvore (FEAT-013) esperando as colunas ou a estrutura chegarem.
+    pub pending_sql: Option<PendingSql>,
 }
 
 impl Workspace {
@@ -767,7 +805,8 @@ where
                         Ok(saved) => {
                             for q in saved {
                                 ws.next_query_id = ws.next_query_id.max(q.id);
-                                ws.tabs.push(Tab::Query(QueryTab::restored(q.id, q.sql)));
+                                ws.tabs
+                                    .push(Tab::Query(Box::new(QueryTab::restored(q.id, q.sql))));
                             }
                             if !ws.tabs.is_empty() {
                                 ws.active_tab = Some(0);
@@ -805,9 +844,11 @@ where
                 columns,
                 ..
             } => {
-                if let Some(ws) = self.workspaces.get_mut(&(id, database)) {
-                    ws.columns.insert((schema, table), columns);
+                let key = (id, database);
+                if let Some(ws) = self.workspaces.get_mut(&key) {
+                    ws.columns.insert((schema.clone(), table.clone()), columns);
                 }
+                self.complete_pending_sql(&key, &schema, &table, None);
             }
             Event::StatsLoaded {
                 database,
@@ -858,11 +899,13 @@ where
                 structure,
                 ..
             } => {
+                let structure = Arc::new(structure);
                 if let Some(tab) = self.data_tab_mut(&id, &database, &schema, &table) {
-                    tab.structure = Some(Arc::new(structure));
+                    tab.structure = Some(Arc::clone(&structure));
                     tab.structure_requested = false;
                     tab.structure_error = None;
                 }
+                self.complete_pending_sql(&(id, database), &schema, &table, Some(&structure));
             }
             Event::StructureFailed {
                 database,
@@ -877,6 +920,7 @@ where
                     tab.structure_requested = false;
                     tab.structure_error = Some(error.to_string());
                 }
+                self.discard_pending_sql(&(id, database), &schema, &table, &error.to_string());
             }
             Event::SqlStarted { database, tab, .. } => {
                 if let Some(q) = self.query_tab_mut(&id, &database, tab) {
@@ -1014,6 +1058,8 @@ where
                 if let Some(ws) = self.workspaces.get_mut(&(id.clone(), database.clone())) {
                     ws.loading = false;
                     ws.error = Some(error.to_string());
+                    // O SQL do menu que esperava as colunas não vem mais; o erro já está na árvore.
+                    ws.pending_sql = None;
                 } else if let Some(state) = self.conn_state.get_mut(&id) {
                     // Dois ⌘K seguidos: o erro do primeiro ainda aparece, mesmo que `opening` já
                     // seja o segundo.
@@ -1367,8 +1413,159 @@ where
             return;
         };
         ws.next_query_id += 1;
-        ws.tabs.push(Tab::Query(QueryTab::new(ws.next_query_id)));
+        ws.tabs
+            .push(Tab::Query(Box::new(QueryTab::new(ws.next_query_id))));
         ws.active_tab = Some(ws.tabs.len() - 1);
+    }
+
+    /// Menu de contexto da tabela (FEAT-013): monta o modelo e o põe na aba SQL, ou pede ao engine
+    /// o que falta (colunas ou estrutura) e completa quando o evento chegar. Nada roda.
+    pub(crate) fn generate_sql(&mut self, key: &DbKey, schema: &str, table: &str, item: SqlItem) {
+        enum Action {
+            Insert(String),
+            Columns,
+            Structure,
+        }
+        let Some(ws) = self.workspaces.get_mut(key) else {
+            return;
+        };
+        let Some(t) = find_table(ws, schema, table) else {
+            return;
+        };
+        let action = match item {
+            SqlItem::Template(template) if !template.needs_columns() => {
+                Action::Insert(template_sql(template, &t, &[]))
+            }
+            SqlItem::Template(template) => {
+                match ws.columns.get(&(schema.to_owned(), table.to_owned())) {
+                    Some(columns) => Action::Insert(template_sql(template, &t, columns)),
+                    None => Action::Columns,
+                }
+            }
+            SqlItem::Create => {
+                // A estrutura já cacheada na aba Data da tabela serve na hora.
+                let cached = ws
+                    .tabs
+                    .iter()
+                    .filter_map(Tab::table)
+                    .find(|d| d.schema == schema && d.table == table)
+                    .and_then(|d| d.structure.clone());
+                match cached {
+                    Some(structure) => Action::Insert(table_ddl(&structure)),
+                    None => Action::Structure,
+                }
+            }
+        };
+        let pending = PendingSql {
+            schema: schema.to_owned(),
+            table: table.to_owned(),
+            item,
+        };
+        match action {
+            Action::Insert(sql) => self.insert_sql(key, &sql),
+            Action::Columns => {
+                ws.pending_sql = Some(pending);
+                self.deps
+                    .sessions
+                    .load_columns(&key.0, &key.1, schema, table);
+            }
+            Action::Structure => {
+                ws.pending_sql = Some(pending);
+                self.deps
+                    .sessions
+                    .load_structure(&key.0, &key.1, schema, table);
+            }
+        }
+    }
+
+    /// `ColumnsLoaded` ou `StructureLoaded` da tabela que o pedido pendente espera: monta e insere.
+    /// Evento de outra tabela, ou do tipo que o pedido não espera, não mexe nele.
+    fn complete_pending_sql(
+        &mut self,
+        key: &DbKey,
+        schema: &str,
+        table: &str,
+        structure: Option<&TableStructure>,
+    ) {
+        let Some(ws) = self.workspaces.get_mut(key) else {
+            return;
+        };
+        let Some(pending) = ws
+            .pending_sql
+            .as_ref()
+            .filter(|p| p.schema == schema && p.table == table)
+        else {
+            return;
+        };
+        let sql = match (pending.item, structure) {
+            (SqlItem::Create, Some(structure)) => table_ddl(structure),
+            (SqlItem::Template(template), None) => {
+                let Some(columns) = ws.columns.get(&(schema.to_owned(), table.to_owned())) else {
+                    return;
+                };
+                let Some(t) = find_table(ws, schema, table) else {
+                    ws.pending_sql = None;
+                    return;
+                };
+                template_sql(template, &t, columns)
+            }
+            _ => return,
+        };
+        ws.pending_sql = None;
+        self.insert_sql(key, &sql);
+    }
+
+    /// Falha do catálogo para a tabela do pedido pendente: descarta e avisa na aba SQL que receberia
+    /// o texto (ou na faixa da conexão, se o banco não tem aba SQL): é onde o usuário está olhando.
+    fn discard_pending_sql(&mut self, key: &DbKey, schema: &str, table: &str, error: &str) {
+        let Some(ws) = self.workspaces.get_mut(key) else {
+            return;
+        };
+        if !ws
+            .pending_sql
+            .as_ref()
+            .is_some_and(|p| p.schema == schema && p.table == table)
+        {
+            return;
+        }
+        ws.pending_sql = None;
+        let message = format!("{schema}.{table}: {error}");
+        match query_target(ws).and_then(|i| ws.tabs.get_mut(i).and_then(Tab::query_mut)) {
+            Some(q) => q.notice = Some(message),
+            None => {
+                if let Some(state) = self.conn_state.get_mut(&key.0) {
+                    state.error = Some(message);
+                }
+            }
+        }
+    }
+
+    /// Põe o SQL no fim da aba SQL ativa (ou da última do banco, ou de uma nova), separado por uma
+    /// linha em branco, com o cursor no começo dele: Run Current roda exatamente ele.
+    fn insert_sql(&mut self, key: &DbKey, sql: &str) {
+        if self.workspaces.get(key).and_then(query_target).is_none() {
+            self.open_query_tab(key);
+        }
+        let Some(ws) = self.workspaces.get_mut(key) else {
+            return;
+        };
+        let Some(index) = query_target(ws) else {
+            return;
+        };
+        ws.active_tab = Some(index);
+        let Some(q) = ws.tabs.get_mut(index).and_then(Tab::query_mut) else {
+            return;
+        };
+        let mut buffer = q.buffer.trim_end().to_owned();
+        if !buffer.is_empty() {
+            buffer.push_str("\n\n");
+        }
+        let start = buffer.chars().count();
+        buffer.push_str(sql);
+        buffer.push('\n');
+        q.buffer = buffer;
+        q.cursor = start;
+        q.pending_cursor = Some(start);
     }
 
     /// Run Current (⌘↩): o statement sob o cursor.
@@ -1879,7 +2076,7 @@ pub(crate) mod tests {
         assert!(!ws.would_lose_work());
         let mut q = QueryTab::new(1);
         q.buffer = "select 1".into();
-        ws.tabs.push(Tab::Query(q));
+        ws.tabs.push(Tab::Query(Box::new(q)));
         assert!(!ws.would_lose_work(), "texto SQL é salvo, não perdido");
         assert!(
             ws.tabs[0].would_lose_work(),

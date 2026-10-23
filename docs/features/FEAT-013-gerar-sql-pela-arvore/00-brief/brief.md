@@ -20,33 +20,38 @@ statement gerado: **Run Current ⌘↩** roda exatamente ele. Nada é executado 
 
 ## Escopo (Must)
 
-1. **`catalog`** (camada 1, puro, testado): `generate.rs` com `Template` e `template_sql(template,
-   schema, table, kind, columns) -> String`. Modelos para tabela (e tabela estrangeira):
+1. **`catalog`** (camada 1, puro, testado): `generate.rs` com `Template` (sete modelos; o `CREATE` é item
+   da UI, pelo `table_ddl`) e `template_sql(template, &Table, &[Column]) -> String`. Modelos para tabela
+   (e tabela estrangeira):
    - **SELECT**: `SELECT col1, col2, … FROM schema.tabela LIMIT 100;` (colunas na ordem da tabela, uma
      linha por bloco de colunas como o Beautify deixaria).
    - **SELECT count**: `SELECT count(*) FROM schema.tabela;`
-   - **INSERT**: todas as colunas menos identidade `ALWAYS`; valor de exemplo por tipo (`''` para texto,
-     `0` para número, `false` para booleano, `now()` para data e hora, `gen_random_uuid()` para uuid,
-     `'{}'` para json, `NULL` para o resto); coluna com `default` recebe `DEFAULT`.
-   - **UPDATE**: `SET` com as colunas que não são chave, mesmo valor de exemplo, `WHERE` pela chave
-     primária (`id = 0`); sem chave primária, `WHERE` pela primeira coluna e o comentário
-     `-- sem chave primária: confira o WHERE`.
+   - **INSERT**: todas as colunas menos identidade `ALWAYS` e geradas; valor de exemplo por tipo (`''`
+     para texto, `0` para número, `false` para booleano, `now()` para data e hora, `gen_random_uuid()`
+     para uuid, `'{}'` para json e array, `'\x'` para bytea, `NULL` para o resto); coluna com `default`
+     ou identidade `BY DEFAULT` recebe `DEFAULT`; sem coluna gravável, `DEFAULT VALUES`.
+   - **UPDATE**: `SET` com as colunas graváveis que não são chave (só chave: a própria chave), mesmo
+     valor de exemplo, `WHERE` pela chave primária (`id = 0`, `AND` na composta); sem chave primária,
+     `WHERE` pela primeira coluna e o comentário `-- sem chave primária: confira o WHERE`; sem coluna
+     nenhuma, `WHERE false` e aviso. Todo aviso fica dentro do statement (linha acima do `WHERE` ou do
+     `SET`), nunca na primeira linha: fora do statement, o Run Current com o cursor nele rodaria outro.
    - **DELETE**: `WHERE` pela chave primária, mesma regra sem chave.
    - **TRUNCATE**: `TRUNCATE TABLE schema.tabela;`
    - **DROP CASCADE**: `DROP TABLE schema.tabela CASCADE;`
    - **CREATE TABLE**: o DDL da aba Structure (`table_ddl`, FEAT-009), que precisa da estrutura.
    View e view materializada: SELECT, SELECT count, CREATE (DDL com `pg_get_viewdef`) e `DROP VIEW …
-   CASCADE` / `DROP MATERIALIZED VIEW … CASCADE`. Identificadores sempre por `quote_ident` (aspas só
-   quando precisa, como o resto do catálogo). Todo modelo termina em `;`.
+   CASCADE` / `DROP MATERIALIZED VIEW … CASCADE`; tabela estrangeira, `DROP FOREIGN TABLE`. Identificadores
+   sempre entre aspas por `quote_ident`, como o resto do catálogo e o DDL. Todo modelo termina em `;`.
 2. **`ui-egui`**:
    - A linha da tabela ou view na árvore (`tree.rs`) ganha `context_menu` com os itens acima, por tipo
      de objeto, na ordem: SELECT, SELECT count, INSERT, UPDATE, DELETE, separador, TRUNCATE, DROP …
      CASCADE, separador, CREATE.
-   - `App::generate_sql(key, schema, table, template)`: se as colunas da tabela já estão no
+   - `App::generate_sql(key, schema, table, item: SqlItem)` (`Template(..)` ou `Create`): se as colunas da tabela já estão no
      `Workspace.columns`, monta e insere; senão guarda o pedido em `Workspace.pending_sql` e chama
      `load_columns`; o `ColumnsLoaded` da tabela completa o pedido. CREATE pede `load_structure` e o
      `StructureLoaded` completa (o engine tem cache: a segunda vez é imediata). `CatalogFailed` ou
-     `StructureFailed` da tabela descartam o pedido e avisam na aba.
+     `StructureFailed` da tabela descartam o pedido e avisam na toolbar da aba SQL de destino (ou na faixa da
+     conexão quando o banco não tem aba SQL).
    - Destino: a aba ativa se é SQL; senão a última aba SQL do banco; senão `open_query_tab`. O texto
      entra no fim do buffer, separado por uma linha em branco quando o buffer não está vazio, com o
      cursor no começo do statement novo; a aba fica ativa e o editor recebe o foco. O autosave da
@@ -55,7 +60,8 @@ statement gerado: **Run Current ⌘↩** roda exatamente ele. Nada é executado 
    aspas, view); UI com `egui_kittest`: botão direito numa tabela com colunas carregadas, INSERT vai
    para uma aba nova com o cursor no statement; tabela sem colunas carregadas pede ao engine e insere
    quando `ColumnsLoaded` chega; segundo modelo entra no fim da mesma aba com linha em branco; CREATE
-   espera o `StructureLoaded`; nada é executado (contador de queries do driver falso não muda).
+   espera o `StructureLoaded`; nada é executado (o driver falso conta os `execute` à parte, porque o menu
+   dispara queries de catálogo).
 
 ## Won't
 

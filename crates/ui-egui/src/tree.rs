@@ -2,9 +2,9 @@
 //! tabela expansível até as colunas `nome  tipo`, chave primária com ícone, busca e o seletor de
 //! schema no rodapé do painel.
 
-use hy_dbplus_engine::{Driver, TableKind};
+use hy_dbplus_engine::{Driver, TableKind, Template};
 
-use crate::app::{App, DbKey};
+use crate::app::{App, DbKey, SqlItem};
 use crate::theme;
 
 pub fn show<D>(app: &mut App<D>, ui: &mut egui::Ui, key: &DbKey)
@@ -139,6 +139,7 @@ where
             .collect();
         let mut to_load: Vec<String> = Vec::new();
         let mut to_open: Option<String> = None;
+        let mut to_generate: Option<(String, SqlItem)> = None;
         egui::ScrollArea::vertical().show(ui, |ui| {
             egui::CollapsingHeader::new(format!("Functions ({})", functions.len()))
                 .default_open(false)
@@ -182,12 +183,33 @@ where
                                     .data()
                                     .is_some_and(|d| d.schema == schema && d.table == t.name);
                                 // Abre numa aba nova ou foca a da tabela: nada trava a troca.
-                                if ui
-                                    .selectable_label(selected, format!("{icon} {}", t.name))
-                                    .clicked()
-                                {
+                                let response =
+                                    ui.selectable_label(selected, format!("{icon} {}", t.name));
+                                if response.clicked() {
                                     to_open = Some(t.name.clone());
                                 }
+                                // Botão direito: modelos de SQL para a aba SQL (FEAT-013). Nada roda.
+                                response.context_menu(|ui| {
+                                    for template in
+                                        Template::ALL.into_iter().filter(|x| x.applies_to(t.kind))
+                                    {
+                                        let destructive = template == Template::Truncate
+                                            || (template == Template::Drop && t.kind.is_view());
+                                        if destructive {
+                                            ui.separator();
+                                        }
+                                        if ui.button(template.label()).clicked() {
+                                            to_generate =
+                                                Some((t.name.clone(), SqlItem::Template(template)));
+                                            ui.close();
+                                        }
+                                    }
+                                    ui.separator();
+                                    if ui.button("CREATE").clicked() {
+                                        to_generate = Some((t.name.clone(), SqlItem::Create));
+                                        ui.close();
+                                    }
+                                });
                             })
                             .response;
                         state.show_body_indented(&header, ui, |ui| match ws.columns.get(&key) {
@@ -231,6 +253,9 @@ where
         if let Some(table) = to_open {
             app.open_table(key, &schema, &table);
         }
+        if let Some((table, item)) = to_generate {
+            app.generate_sql(key, &schema, &table, item);
+        }
     });
 }
 
@@ -258,9 +283,12 @@ mod tests {
         batches: Arc<Mutex<Vec<Vec<BatchStatement>>>>,
         /// Ligado, a query de cabeçalho da estrutura falha (FEAT-009, "Tentar de novo").
         fail_structure: Arc<std::sync::atomic::AtomicBool>,
+        /// Só os `execute` do editor (`queries` conta tudo, catálogo inclusive).
+        executes: Arc<AtomicUsize>,
     }
     struct FakeConn {
         queries: Arc<AtomicUsize>,
+        executes: Arc<AtomicUsize>,
         batches: Arc<Mutex<Vec<Vec<BatchStatement>>>>,
         fail_structure: Arc<std::sync::atomic::AtomicBool>,
         cancel_flag: Arc<std::sync::atomic::AtomicBool>,
@@ -313,6 +341,7 @@ mod tests {
         /// afetadas, "erro" é erro do servidor, "sleep" espera até 2 s ou o cancel.
         async fn execute(&self, sql: &str, limit: Option<usize>) -> Result<Outcome, DriverError> {
             self.queries.fetch_add(1, Ordering::SeqCst);
+            self.executes.fetch_add(1, Ordering::SeqCst);
             if sql.contains("erro") {
                 return Err(DriverError::Db("syntax error at or near \"erro\"".into()));
             }
@@ -526,6 +555,7 @@ mod tests {
             }
             Ok(FakeConn {
                 queries: Arc::clone(&self.queries),
+                executes: Arc::clone(&self.executes),
                 batches: Arc::clone(&self.batches),
                 fail_structure: Arc::clone(&self.fail_structure),
                 cancel_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -2528,7 +2558,7 @@ mod tests {
             let mut ws = crate::app::Workspace::default();
             let mut q = crate::app::QueryTab::new(1);
             q.buffer = "select 1".into();
-            ws.tabs.push(crate::app::Tab::Query(q));
+            ws.tabs.push(crate::app::Tab::Query(Box::new(q)));
             ws.next_query_id = 1;
             app.workspaces.insert(key.clone(), ws);
             app.rail.push(key);
@@ -2569,7 +2599,7 @@ mod tests {
             let mut ws = crate::app::Workspace::default();
             let mut q = crate::app::QueryTab::new(1);
             q.buffer = "select 1".into();
-            ws.tabs.push(crate::app::Tab::Query(q));
+            ws.tabs.push(crate::app::Tab::Query(Box::new(q)));
             ws.active_tab = Some(0);
             ws.next_query_id = 1;
             app.workspaces.insert(key.clone(), ws);
@@ -2666,5 +2696,154 @@ mod tests {
             "{:?}",
             app.notice
         );
+    }
+
+    /// FEAT-013: botão direito na tabela gera SQL na aba SQL (nova, ou no fim da ativa, com linha em
+    /// branco e o cursor no statement novo), pedindo colunas e estrutura ao engine quando faltam;
+    /// view só tem os itens de view; nada roda; falha do catálogo descarta o pedido com aviso.
+    #[test]
+    fn menu_da_tabela_gera_sql_na_aba_sql_sem_executar() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let driver = FakeDriver::default();
+        let executes = Arc::clone(&driver.executes);
+        let fail_structure = Arc::clone(&driver.fail_structure);
+        let mut app = App::with_deps(deps(driver, &rt));
+        let c = Connection::new("pg-localhost", Tag::Local, ConnectionConfig::default());
+        app.deps.store.upsert(c.clone());
+        crate::connections::connect(&mut app, &c);
+        let id = c.id.clone();
+        let key = (id.clone(), "loja".to_owned());
+        let mut harness = wide_harness(app);
+        wait_for(&mut harness, "Connected", |app| app.view == View::Workspace);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::K);
+        harness.step();
+        harness.get_by_label("loja").click();
+        wait_for(&mut harness, "SchemaLoaded", |app| {
+            app.workspace_of(&id)
+                .is_some_and(|ws| ws.objects.contains_key("public"))
+        });
+        let query = |app: &App<FakeDriver>| app.workspace_of(&id).unwrap().query().cloned();
+        // INSERT numa tabela sem colunas carregadas: o pedido fica pendente, as colunas chegam e
+        // o SQL entra numa aba SQL nova, ativa, com o cursor no começo e o editor com o foco.
+        harness.get_by_label("▦ pedido").click_secondary();
+        harness.step();
+        harness.get_by_label("INSERT").click_accesskit();
+        harness.step();
+        wait_for(&mut harness, "INSERT gerado", |app| {
+            query(app).is_some_and(|q| q.buffer.contains("INSERT INTO"))
+        });
+        let q = query(harness.state()).unwrap();
+        assert_eq!(
+            q.buffer,
+            "INSERT INTO \"public\".\"pedido\" (\"id\", \"cliente\", \"status\")\nVALUES (0, '', '');\n"
+        );
+        assert_eq!((q.title.as_str(), q.cursor), ("SQL Query 1", 0));
+        assert!(harness.state().workspaces[&key].pending_sql.is_none());
+        harness.step();
+        let editor = crate::editor::editor_id(&key, q.id);
+        assert_eq!(harness.ctx.memory(|m| m.focused()), Some(editor));
+        assert_eq!(
+            egui::TextEdit::load_state(&harness.ctx, editor)
+                .and_then(|s| s.cursor.char_range())
+                .map(|r| r.primary.index.0),
+            Some(0)
+        );
+        // Tira o foco do editor (senão o atalho ⌘K abaixo e o clique iriam ao TextEdit).
+        harness.key_press(egui::Key::Escape);
+        harness.step();
+
+        // DELETE com as colunas já carregadas: na mesma aba, no fim, linha em branco antes, cursor no
+        // DELETE, que é o statement sob o cursor (Run Current rodaria só ele).
+        harness.get_by_label("▦ pedido").click_secondary();
+        harness.step();
+        harness.get_by_label("DELETE").click_accesskit();
+        harness.step();
+        harness.step();
+        let q = query(harness.state()).unwrap();
+        let delete = "DELETE FROM \"public\".\"pedido\"\nWHERE \"id\" = 0;";
+        assert_eq!(
+            q.buffer,
+            format!(
+                "INSERT INTO \"public\".\"pedido\" (\"id\", \"cliente\", \"status\")\nVALUES (0, '', '');\n\n{delete}\n"
+            )
+        );
+        assert_eq!(
+            q.buffer.chars().take(q.cursor).collect::<String>(),
+            "INSERT INTO \"public\".\"pedido\" (\"id\", \"cliente\", \"status\")\nVALUES (0, '', '');\n\n"
+        );
+        assert_eq!(
+            hy_dbplus_sql::statement_at(&q.buffer, q.cursor_byte()).map(|s| s.sql),
+            Some(delete.trim_end_matches(';').to_owned())
+        );
+        assert_eq!(harness.state().workspaces[&key].tabs.len(), 1);
+        harness.key_press(egui::Key::Escape);
+        harness.step();
+
+        // CREATE espera a estrutura (StructureLoaded completa o pedido).
+        harness.get_by_label("▦ pedido").click_secondary();
+        harness.step();
+        harness.get_by_label("CREATE").click_accesskit();
+        harness.step();
+        wait_for(&mut harness, "CREATE gerado", |app| {
+            query(app).is_some_and(|q| q.buffer.contains("CREATE TABLE"))
+        });
+        assert!(
+            query(harness.state())
+                .unwrap()
+                .buffer
+                .contains("\n\nCREATE TABLE \"public\".\"pedido\" (")
+        );
+        harness.key_press(egui::Key::Escape);
+        harness.step();
+
+        // View: sem INSERT/UPDATE/DELETE/TRUNCATE; DROP é de view. Falha da estrutura no CREATE da
+        // view descarta o pedido e avisa.
+        harness.get_by_label("◫ v_pedido").click_secondary();
+        harness.step();
+        assert!(harness.query_by_label("INSERT").is_none());
+        assert!(harness.query_by_label("TRUNCATE").is_none());
+        harness.get_by_label("DROP … CASCADE").click_accesskit();
+        harness.step();
+        harness.step();
+        assert!(
+            query(harness.state())
+                .unwrap()
+                .buffer
+                .ends_with("\n\nDROP VIEW \"public\".\"v_pedido\" CASCADE;\n")
+        );
+        harness.key_press(egui::Key::Escape);
+        harness.step();
+        fail_structure.store(true, Ordering::SeqCst);
+        harness.get_by_label("◫ v_pedido").click_secondary();
+        harness.step();
+        harness.get_by_label("CREATE").click_accesskit();
+        harness.step();
+        wait_for(&mut harness, "StructureFailed", |app| {
+            app.workspaces[&key].pending_sql.is_none()
+        });
+        harness.step();
+        // O aviso vai para a aba SQL que receberia o texto, e aparece na toolbar dela.
+        assert!(
+            query(harness.state())
+                .unwrap()
+                .notice
+                .as_deref()
+                .is_some_and(|n| n.contains("public.v_pedido") && n.contains("permission denied")),
+            "{:?}",
+            query(harness.state()).unwrap().notice
+        );
+        harness.get_by_label_contains("permission denied");
+        assert!(
+            !query(harness.state())
+                .unwrap()
+                .buffer
+                .contains("CREATE VIEW")
+        );
+
+        // Nada rodou pelo menu: a aba não tem resultado nem execução; o que o driver viu a mais foram
+        // as queries de catálogo (colunas e estrutura), não `execute`.
+        let q = query(harness.state()).unwrap();
+        assert!(q.results.is_empty() && !q.running);
+        assert_eq!(executes.load(Ordering::SeqCst), 0);
     }
 }

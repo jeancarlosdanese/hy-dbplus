@@ -26,6 +26,7 @@ struct Header {
     running: bool,
     started: Option<std::time::Instant>,
     notice: Option<String>,
+    pending_cursor: Option<usize>,
 }
 
 fn limit_label(limit: Option<usize>) -> String {
@@ -51,9 +52,15 @@ where
         running: q.running,
         started: q.started,
         notice: q.notice.clone(),
+        pending_cursor: q.pending_cursor,
     }) else {
         return;
     };
+    if q.pending_cursor.is_some()
+        && let Some(tab) = app.workspaces.get_mut(key).and_then(|ws| ws.query_mut())
+    {
+        tab.pending_cursor = None;
+    }
     let mut run_current = false;
     let mut run_all = false;
     let mut beautify = false;
@@ -210,6 +217,19 @@ where
                         let job = layout(text.as_str(), &font, &colors, current.clone());
                         ui.fonts_mut(|f| f.layout_job(job))
                     };
+                    // SQL gerado (FEAT-013): o cursor vai para o statement novo e o editor pega
+                    // o foco; o estado do widget é a fonte do cursor, então é ele que muda.
+                    if let Some(at) = q.pending_cursor {
+                        let mut state =
+                            egui::TextEdit::load_state(ui.ctx(), editor_id).unwrap_or_default();
+                        state
+                            .cursor
+                            .set_char_range(Some(egui::text::CCursorRange::one(
+                                egui::text::CCursor::new(at),
+                            )));
+                        state.store(ui.ctx(), editor_id);
+                        ui.memory_mut(|m| m.request_focus(editor_id));
+                    }
                     let response = ui.add(
                         egui::TextEdit::multiline(&mut buffer)
                             .id(editor_id)

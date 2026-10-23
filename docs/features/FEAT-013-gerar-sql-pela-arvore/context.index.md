@@ -1,4 +1,4 @@
-<!-- FEAT_EM_ANDAMENTO — docs criados em 23/10/2026; código não iniciado -->
+<!-- FEAT_IMPLEMENTADA — na árvore em 23/10/2026 (docs a810dc7; catalog e ui aguardando commit); falta push e conferência do Jean -->
 <!-- PRIO_ALTA -->
 # @file: docs/features/FEAT-013-gerar-sql-pela-arvore/context.index.md
 
@@ -37,7 +37,9 @@ CASCADE e CREATE, montados pelo `catalog` com as colunas e a chave primária, en
 ```
 crates/catalog/src/generate.rs    Template, template_sql, valores de exemplo por tipo
 crates/ui-egui/src/tree.rs        context_menu na linha da tabela/view
-crates/ui-egui/src/app.rs         generate_sql, Workspace.pending_sql, conclusão em ColumnsLoaded/StructureLoaded
+crates/ui-egui/src/app.rs         generate_sql, Workspace.pending_sql, conclusão em ColumnsLoaded/StructureLoaded, insert_sql
+crates/ui-egui/src/editor.rs      QueryTab.pending_cursor aplicado ao TextEdit com foco
+crates/sql/src/lib.rs             teste: cada modelo é um statement só a partir do cursor
 ```
 
 ## Workflow Claude Code
