@@ -51,6 +51,8 @@ num banco de desenvolvimento local. Servem como especificação visual e funcion
 - Árvore com grupos **Functions** e **Tables**; views com ícone distinto.
 - Seletor de **schema** no rodapé do painel esquerdo (`public`).
 - Cada tabela expande até suas **colunas com tipo**; PK com ícone de chave.
+- Botão direito numa tabela ou view: modelos de SQL (SELECT, count, INSERT, UPDATE, DELETE, TRUNCATE, DROP
+  CASCADE, CREATE) que entram na aba SQL com o cursor em cima, sem executar (FEAT-013).
 
 ### 3.4 Aba Data
 - Grid com cabeçalho por coluna, número da linha, valores monoespaçados.
@@ -182,7 +184,7 @@ portão de qualidade têm um dono só: o [CLAUDE.md](../CLAUDE.md) da raiz. Este
 | **M3** | Aba Data: grid virtualizado, paginação, ordenação, painel lateral | Abre uma tabela, vê as linhas, os tamanhos e o comentário |
 | **M4** | Abas Structure e Index somente leitura, DDL | Estrutura e índices de uma tabela batem com o TablePlus |
 | **M5** | Editor SQL: abas, highlight, Run Current, limite, Beautify, resultado | Executa as queries da tela 3.7 e vê o resultado |
-| **M6** | Autocomplete por schema | Digita `select * from` e o prefixo de uma tabela e recebe o nome; `alias.` lista as colunas |
+| **M6** | Gerar SQL pela árvore (FEAT-013) e autocomplete por schema (FEAT-012) | Botão direito numa tabela gera o INSERT; digita `select * from` e o prefixo de uma tabela e recebe o nome; `alias.` lista as colunas |
 | **M7** | Filtros, navegação por FK, histórico de queries, busca na árvore | Fluxo diário completo sem sair do app |
 | **M8** | CLI + MCP opt-in, empacotamento macOS (`.app`), README | Um agente lista tabelas e roda uma query via MCP |
 
