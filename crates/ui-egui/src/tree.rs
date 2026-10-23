@@ -2190,7 +2190,9 @@ mod tests {
             query(app).is_some_and(|q| !q.running)
         });
         harness.get_by_label("Execução cancelada");
-        // "transação aberta" por banco: BEGIN sem fim acende o aviso; COMMIT apaga.
+        // "transação aberta" por banco: BEGIN sem fim acende o aviso; COMMIT apaga. Cada bloco zera
+        // `results` antes do ⌘↩: a espera "um resultado e parado" só vale com o resultado novo (com o
+        // da execução anterior ainda lá, ela voltava antes de o driver responder sob carga).
         {
             let q = harness
                 .state_mut()
@@ -2200,6 +2202,7 @@ mod tests {
                 .unwrap();
             q.buffer = "begin".into();
             q.cursor = 5;
+            q.results.clear();
         }
         harness.step();
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Enter);
@@ -2218,6 +2221,7 @@ mod tests {
                 .unwrap();
             q.buffer = "select erro".into();
             q.cursor = 11;
+            q.results.clear();
         }
         harness.step();
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Enter);
@@ -2240,6 +2244,7 @@ mod tests {
                     .unwrap();
                 q.buffer = sql.into();
                 q.cursor = sql.len();
+                q.results.clear();
             }
             harness.step();
             harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Enter);
@@ -2259,6 +2264,7 @@ mod tests {
                 .unwrap();
             q.buffer = "commit".into();
             q.cursor = 6;
+            q.results.clear();
         }
         harness.step();
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Enter);
