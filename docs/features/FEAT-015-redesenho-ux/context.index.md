@@ -1,4 +1,4 @@
-<!-- FEAT_PLANEJADA — protótipo de todas as telas pronto, aguardando a aprovação visual do Jean -->
+<!-- FEAT_EM_ANDAMENTO — fase A (fundação) em execução -->
 # @file: docs/features/FEAT-015-redesenho-ux/context.index.md
 
 # FEAT-015: redesenho de UX de todas as telas
@@ -10,8 +10,11 @@
 
 ## Status da implementação
 
-Etapa 3 do modelo: protótipo navegável das 17 telas, em tema claro e escuro e em português e inglês, pronto em
-17/11/2026. Nenhum código de produção foi tocado. Falta a aprovação visual do Jean; só depois dela entram o aceite
-em cenários e o plano por fases.
+Protótipo, aceite e plano aprovados pelo Jean em 17/11/2026. **Fase A (fundação) implementada** e sem commit:
+tokens novos em `crates/ui-egui/src/theme.rs`, fontes e ícones em `fonts.rs`, componentes em `widgets.rs`, textos
+em `i18n.rs`, preferência de idioma em `crates/engine/src/preferences.rs` e o seletor PT | EN nas conexões e na
+barra superior. As telas ainda usam o desenho antigo, só com a paleta e as fontes novas; elas mudam nas fases B a
+E. Próximo: revisão da fase A, "pode commitar" e o detalhamento da fase B (conexões).
 
-**Cabe ao mantenedor:** abrir o protótipo, aprovar ou pedir ajustes, e responder à decisão aberta do brief.
+**Cabe ao mantenedor:** conferência visual no app ao fim de cada fase (nesta: nitidez da Inter, cores nos dois
+temas e o seletor PT | EN).
