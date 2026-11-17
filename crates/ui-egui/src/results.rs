@@ -84,67 +84,74 @@ where
                         let modifiers = ui.input(|i| i.modifiers);
                         let selected = r.selected_row;
                         let result_index = q.active_result;
-                        {
-                            let ui = &mut *ui;
-                            let mut builder = TableBuilder::new(ui)
-                                .striped(true)
-                                .resizable(true)
-                                .sense(egui::Sense::click())
-                                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                                .column(TableColumn::exact(44.0));
-                            for _ in &rows.columns {
-                                builder = builder
-                                    .column(TableColumn::initial(140.0).at_least(60.0).clip(true));
-                            }
-                            builder
-                                .header(ROW_HEIGHT + 4.0, |mut row| {
-                                    row.col(|ui| header(ui, "#", &tokens));
-                                    for name in &rows.columns {
-                                        row.col(|ui| header(ui, name, &tokens));
-                                    }
-                                })
-                                .body(|body| {
-                                    body.rows(ROW_HEIGHT, rows.rows.len(), |mut row| {
-                                        let index = row.index();
-                                        row.set_selected(selected == Some(index));
-                                        // O número da linha é um botão (como no grid de dados):
-                                        // alvo do ⌘-clique também por acessibilidade.
-                                        row.col(|ui| {
-                                            if ui
-                                                .selectable_label(
-                                                    selected == Some(index),
-                                                    egui::RichText::new((index + 1).to_string())
+                        // Barra horizontal por fora da tabela, como no grid da aba Data: a Table do
+                        // egui_extras só rola na vertical.
+                        egui::ScrollArea::horizontal()
+                            .id_salt(("results-hscroll", key, q.id, result_index))
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                let mut builder = TableBuilder::new(ui)
+                                    .striped(true)
+                                    .resizable(true)
+                                    .sense(egui::Sense::click())
+                                    .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                                    .column(TableColumn::exact(44.0));
+                                for _ in &rows.columns {
+                                    builder = builder.column(
+                                        TableColumn::initial(140.0).at_least(60.0).clip(true),
+                                    );
+                                }
+                                builder
+                                    .header(ROW_HEIGHT + 4.0, |mut row| {
+                                        row.col(|ui| header(ui, "#", &tokens));
+                                        for name in &rows.columns {
+                                            row.col(|ui| header(ui, name, &tokens));
+                                        }
+                                    })
+                                    .body(|body| {
+                                        body.rows(ROW_HEIGHT, rows.rows.len(), |mut row| {
+                                            let index = row.index();
+                                            row.set_selected(selected == Some(index));
+                                            // O número da linha é um botão (como no grid de dados):
+                                            // alvo do ⌘-clique também por acessibilidade.
+                                            row.col(|ui| {
+                                                if ui
+                                                    .selectable_label(
+                                                        selected == Some(index),
+                                                        egui::RichText::new(
+                                                            (index + 1).to_string(),
+                                                        )
                                                         .small(),
-                                                )
-                                                .clicked()
-                                                && modifiers.command
-                                            {
+                                                    )
+                                                    .clicked()
+                                                    && modifiers.command
+                                                {
+                                                    select = Some((result_index, index));
+                                                }
+                                            });
+                                            if let Some(cells) = rows.rows.get(index) {
+                                                for value in cells {
+                                                    row.col(|ui| match value {
+                                                        Some(v) => cell(ui, v),
+                                                        None => {
+                                                            ui.add(
+                                                                egui::Label::new(
+                                                                    egui::RichText::new("NULL")
+                                                                        .italics()
+                                                                        .color(tokens.text_muted),
+                                                                )
+                                                                .selectable(false),
+                                                            );
+                                                        }
+                                                    });
+                                                }
+                                            }
+                                            if row.response().clicked() && modifiers.command {
                                                 select = Some((result_index, index));
                                             }
                                         });
-                                        if let Some(cells) = rows.rows.get(index) {
-                                            for value in cells {
-                                                row.col(|ui| match value {
-                                                    Some(v) => cell(ui, v),
-                                                    None => {
-                                                        ui.add(
-                                                            egui::Label::new(
-                                                                egui::RichText::new("NULL")
-                                                                    .italics()
-                                                                    .color(tokens.text_muted),
-                                                            )
-                                                            .selectable(false),
-                                                        );
-                                                    }
-                                                });
-                                            }
-                                        }
-                                        if row.response().clicked() && modifiers.command {
-                                            select = Some((result_index, index));
-                                        }
                                     });
-                                });
-                        }
+                            });
                     }
                 },
             }

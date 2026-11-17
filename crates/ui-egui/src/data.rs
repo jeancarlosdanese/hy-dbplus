@@ -315,6 +315,13 @@ where
         // Lidos antes de o TableBuilder tomar o `ui`: ⌘ alterna e ⇧ estende a seleção; Esc cancela a célula.
         let modifiers = ui.input(|i| i.modifiers);
         let escape = ui.input(|i| i.key_pressed(egui::Key::Escape));
+        // A Table do egui_extras só rola na vertical: com muitas colunas as da direita ficavam fora
+        // da tela sem jeito de alcançar. O ScrollArea horizontal por fora dá a barra de baixo; a
+        // rolagem vertical continua dentro da tabela (mesmo arranjo da demo oficial do egui).
+        egui::ScrollArea::horizontal()
+            .id_salt(("data-grid-hscroll", key, &tab.schema, &tab.table))
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
         let mut builder = TableBuilder::new(ui)
             .striped(true)
             .resizable(true)
@@ -452,6 +459,7 @@ where
                         select = Some((index, modifiers));
                     }
                 });
+            });
             });
     });
 

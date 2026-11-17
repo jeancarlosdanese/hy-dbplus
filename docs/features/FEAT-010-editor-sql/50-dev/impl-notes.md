@@ -243,3 +243,9 @@ Cada um com "pode commitar"; os sensíveis com o revisor rodado depois do commit
 - [x] **Baixa.** `AND NO CHAIN` contava como `AND CHAIN`: só a sequência `AND CHAIN` conta. Teste.
 - [x] **Baixa.** Caixa de fechar banco/conexão dizia "tem texto no editor SQL" com uma célula aberta numa
   aba de tabela: `only_text` olha `would_lose_work` das abas de tabela.
+- [x] Rolagem horizontal no grid de resultados (17/11/2026, branch `fix/rolagem-horizontal-no-grid`): mesmo
+  conserto do grid da aba Data (FEAT-005): `ScrollArea::horizontal()` por fora da `Table`, que só rola na
+  vertical. Coberto pelo teste do grid da aba Data; o id do `ScrollArea` leva a aba e o índice do resultado.
+  Revisor (17/11/2026, uma passada, sem achado alto nem médio). **Baixa, registrada sem conserto:** o id do
+  `ScrollArea` não muda por execução; depois de rolar um resultado largo para a direita, o resultado da
+  execução seguinte na mesma posição nasce rolado. Conserto possível: pôr no id algo que mude a cada execução.
