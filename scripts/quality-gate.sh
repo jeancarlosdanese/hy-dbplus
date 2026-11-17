@@ -1,21 +1,26 @@
 #!/usr/bin/env bash
 # @file: scripts/quality-gate.sh
-# Portão de qualidade do hy-dbplus: um script, três chamadores (hook Stop do
-# plugin process@hyberica, .githooks/pre-commit e GitHub Actions).
+# Portão de qualidade do hy-dbplus: um script, quatro chamadores (hook Stop do
+# plugin process@hyberica, .githooks/pre-commit com o pre-merge-commit, o
+# executor da entrega do plugin pela chave "gate" do .claude/process.json, e
+# o GitHub Actions).
 # Adaptado do portão do HyVox (FEAT-219) para um workspace Rust que nasce sem
 # passivo: não há linha de base nem catraca; tudo é estrito desde o primeiro
 # commit. Regras de "never panic" (unwrap, expect, indexação, unsafe) são lints
 # do Clippy declarados em [workspace.lints] do Cargo.toml e reprovam aqui.
 #
 # Uso:
-#   scripts/quality-gate.sh --fast       # fmt + clippy + coerência dos CLAUDE.md (hook Stop)
+#   scripts/quality-gate.sh --fast       # fmt + clippy + layers + coerência dos CLAUDE.md (hook Stop
+#                                        #   e pre-commit em branch)
 #   scripts/quality-gate.sh --full       # --fast + testes + cargo-deny (licenças, bans,
-#                                        #   fontes) + gitleaks no stage (pre-commit)
+#                                        #   fontes) + gitleaks no stage (pre-commit na
+#                                        #   main e no merge para ela)
 #   scripts/quality-gate.sh --full --all --base <ref>
-#                                        # CI: --full + advisories (vulnerabilidade publicada
-#                                        #   hoje não trava commit local, mas aparece no push)
-#                                        #   e gitleaks nos commits desde <ref>; <ref> vazio
-#                                        #   ou igual ao HEAD = histórico inteiro
+#                                        # entrega e CI: --full + advisories (vulnerabilidade
+#                                        #   publicada hoje não trava commit, mas trava a
+#                                        #   entrega e aparece no push) e gitleaks nos
+#                                        #   commits desde <ref>; <ref> vazio ou igual ao
+#                                        #   HEAD = histórico inteiro
 #
 # Saída: 0 = verde; 1 = vermelho, com a lista do que falhou no stderr.
 #
@@ -135,7 +140,7 @@ fi
 # Mudou o portão (scripts ou pre-commit): sintaxe dos shells e os testes de
 # scripts/quality_*_test.py. O workflow só o GitHub valida, no primeiro push.
 if printf '%s\n' "$CHANGED" | grep -qE '^(scripts/quality-gate.*\.sh|\.githooks/.*)$'; then
-  for f in scripts/quality-gate.sh scripts/quality-gate-tools.sh .githooks/pre-commit; do
+  for f in scripts/quality-gate.sh scripts/quality-gate-tools.sh .githooks/pre-commit .githooks/pre-merge-commit; do
     [ -f "$f" ] && run "bash -n $f" bash -n "$f"
   done
 fi
@@ -152,8 +157,9 @@ fi
 run "coerência dos CLAUDE.md" python3 scripts/quality_claude_docs.py
 
 # --- segredos (só no --full) --------------------------------------------------
-# No stage (pre-commit), nos commits do push (CI com base) ou no histórico
-# inteiro (CI sem base: primeiro push, disparo manual, execução semanal).
+# No stage (pre-commit), nos commits desde a base (entrega: os da branch; CI:
+# os do push) ou no histórico inteiro (sem base: primeiro push, disparo
+# manual, execução semanal, branch sem commit).
 if [ "$MODE" = "full" ] && tool gitleaks; then
   out="$ROOT/tmp/quality-gate-gitleaks.txt"
   mkdir -p "$ROOT/tmp"

@@ -4,13 +4,14 @@
 
 ## Estado atual
 
-_Atualizado em 21/10/2026._
+_Atualizado em 17/11/2026._
 
 - **Feito:** todos os arquivos do processo e do portão (lista em `10-prd/acceptance.md`); portão verde em
   `--fast`; verificador dos CLAUDE.md verde; testes do verificador passando.
+- **Feito depois:** migração para o modelo de branch e entrega do plugin 0.16.1 (17/11/2026, ver Log).
 - **Em curso:** nada.
-- **Falta:** os passos do Jean (sessão nova, `hooksPath`, ferramentas, primeiro commit, repositório e push) e a
-  verificação real depois do M0.
+- **Falta:** decisão do Jean sobre o marcador `FEAT_IMPLEMENTADA` (FEAT-010 a 014), que o `feat_lint.py` do
+  plugin não aceita.
 - **Depende de:** Jean.
 - **Para retomar:** esta pasta e o `CLAUDE.md` da raiz.
 
@@ -24,6 +25,10 @@ _Atualizado em 21/10/2026._
 - **[2026-10-21]** cargo-deny em vez de cargo-audit: cobre advisories, licenças, bans e fontes num só binário
   com um só `deny.toml`. Advisories só no CI (`--all`), como o govulncheck no HyVox: vulnerabilidade publicada
   hoje não trava o commit de quem não mexeu nela.
+- **[2026-11-17]** Advisories também na entrega: a chave `gate` do `process.json` roda `--full --all` antes do
+  merge na `main` (modelo do plugin 0.9.0 em diante). Muda a decisão de 21/10 ("só no CI"): commit continua
+  sem advisories, mas a entrega falha fechando com advisory publicado no dia ou sem rede. O `gate` repete só
+  o job `gate` do CI (macOS); o build de Linux e Windows continua só no CI, depois do push.
 - **[2026-10-21]** gitleaks por `go install`, como no HyVox: o Go está na máquina e no CI. Trocar por download
   do binário se o Go sair da máquina.
 - **[2026-10-21]** `--locked` em clippy, test e build: `Cargo.lock` é parte do código; atualização de
@@ -85,3 +90,12 @@ _Atualizado em 21/10/2026._
   num `git commit -a` ou com caminhos a variável é absoluta e o `git add` do repositório temporário
   reescreveria o índice do commit em curso do repositório real. Os subprocessos do teste rodam sem `GIT_*`,
   com teste de regressão que aponta `GIT_INDEX_FILE` para outro repositório e confere que ele não muda.
+- [x] Migração para o modelo de branch e entrega do plugin 0.16.1 (17/11/2026, branch `chore/process-0-16-1`):
+  `.githooks/pre-commit` do template novo (`--fast` em branch, `--full` na `main` e no merge; revisor e versão
+  só na `main`), `.githooks/pre-merge-commit` novo (merge sem conflito não passa pelo pre-commit),
+  `.claude/process.json` com `main` e `gate` (o conjunto do job `gate` do CI, macOS: `--full --all` desde o ponto
+  em que a branch saiu da `main`, rodado pelo executor do plugin na entrega), `pre-merge-commit` no check de
+  sintaxe do portão, e a seção Processo do `CLAUDE.md` reescrita a partir de `templates/CLAUDE-processo.md` do
+  kit, com o bloco FEATs. Sem `version` nem `bump` até o M8. Uma primeira versão desta migração, escrita em
+  04/11 para a 0.7.0, ficou sem commit e foi refeita. Pendente de decisão do Jean: o marcador `FEAT_IMPLEMENTADA` (FEAT-010 a 014) não
+  está entre os que o `feat_lint.py` do plugin aceita.

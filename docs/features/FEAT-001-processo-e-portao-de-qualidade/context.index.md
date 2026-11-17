@@ -30,7 +30,7 @@ kit e o CI no GitHub Actions. Sem linha de base: o projeto é estrito desde o pr
 1. 00-brief/brief.md          → problema, objetivo, escopo
 2. 10-prd/acceptance.md       → o que precisa ser verdade, e o que é do Jean
 3. 50-dev/impl-notes.md       → estado atual, decisões e log
-4. CLAUDE.md (raiz)           → seção Processo (dona das regras de commit e revisão)
+4. CLAUDE.md (raiz)           → seção Processo (dona das regras de commit e entrega)
 5. README do kit (github.com/jeancarlosdanese/hyberica-claude-kit) → como o plugin funciona
 ```
 
@@ -38,8 +38,9 @@ kit e o CI no GitHub Actions. Sem linha de base: o projeto é estrito desde o pr
 
 ```
 .claude/settings.json                 marketplace hyberica + plugin ligado + allow de cargo
-.claude/process.json                  o que é protegido e sensível neste projeto
+.claude/process.json                  branch principal, portão da entrega (gate), o que é protegido e sensível
 .githooks/pre-commit                  cópia de templates/githooks/pre-commit do kit (não editar aqui)
+.githooks/pre-merge-commit            cópia do kit: merge sem conflito chama o pre-commit (não editar aqui)
 scripts/quality-gate.sh               o portão (--fast, --full, --all --base)
 scripts/quality-gate-tools.sh         instala cargo-deny e gitleaks em tmp/tools/bin
 scripts/quality_claude_docs.py        verificador de coerência dos CLAUDE.md (cópia do kit, raízes Rust) + _test.py
@@ -54,7 +55,7 @@ deny.toml                             licenças permitidas, crates proibidas, fo
 ```
 1. Ler este arquivo, o brief, o acceptance e o "Estado atual" do impl-notes.
 2. Defeito no plugin ou no pre-commit: descrever e parar; o conserto é no kit, nunca aqui.
-3. Mudança no portão ou no process.json é arquivo protegido: caixa de aprovação, e dizer antes o que ela faz.
+3. Mudança no portão ou no process.json: em branch; o arquivo conta como sensível e o revisor confere antes do merge.
 4. Commit só com o "pode commitar" do Jean; push, hooksPath, ferramentas e repositório no GitHub são dele.
 5. Registrar no impl-notes.md (log + Estado atual) a cada passo.
 ```

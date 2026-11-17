@@ -8,11 +8,16 @@
 #     plugin 0.4.0): segunda camada da trava. Aqui o indice ja
 #     tem o que vai no commit, inclusive stage parcial e o que o mesmo comando criou
 #     antes do "git add". Confere revisor e versao com o bash_guard.py do plugin em
-#     uso, cuja pasta o hook SessionStart grava em .git/claude-plugin-root.
-#   - Portao de qualidade do projeto, se existir (scripts/quality-gate.sh --full).
+#     uso, cuja pasta o hook SessionStart grava em .git/claude-plugin-root. Em branch
+#     que nao e a principal este hook nao cobra revisor nem versao (o "pode commitar"
+#     e conferido antes, pelo bash_guard.py, em qualquer branch desde a 0.8.0); no
+#     merge na principal ele confere a branch mesclada.
+#   - Portao de qualidade do projeto, se existir (scripts/quality-gate.sh): --fast em
+#     branch, --full na principal e no merge para ela (a entrega e o portao completo).
 #
 # Commit seu pelo terminal nao passa pela trava, so pelo portao. Commit pelo "!" dentro
-# do Claude Code conta como do Claude (o claude e ancestral): pede revisor se sensivel.
+# do Claude Code conta como do Claude (o claude e ancestral): pede revisor para codigo.
+# O pre-merge-commit (merge sem conflito) chama este mesmo script.
 #
 # Ativar (Jean, uma vez por clone):
 #   git config core.hooksPath .githooks
@@ -20,6 +25,19 @@
 set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+# Branch principal: "main" no .claude/process.json (padrao main). Lido com o bash, sem
+# ferramenta do PATH.
+MAIN="main"
+if [ -f "$REPO_ROOT/.claude/process.json" ] && \
+   [[ "$(<"$REPO_ROOT/.claude/process.json")" =~ \"main\"[[:space:]]*:[[:space:]]*\"([^\"]+)\" ]]; then
+  MAIN="${BASH_REMATCH[1]}"
+fi
+BRANCH="$(git symbolic-ref --short -q HEAD || true)"
+MODE="--full"
+if [ -n "$BRANCH" ] && [ "$BRANCH" != "$MAIN" ]; then
+  MODE="--fast"
+fi
 
 # Um processo do Claude Code acima deste: binario nativo (claude, inclusive o do Claude
 # Desktop, cujo caminho tem espaco: por isso o comm, que traz o caminho inteiro no macOS
@@ -68,8 +86,8 @@ if [ -e "$GATE" ]; then
     echo "pre-commit: $GATE existe mas não é executável; o portão não rodou. chmod +x nele (Jean)." >&2
     exit 1
   fi
-  if ! "$GATE" --full; then
-    echo "pre-commit: portão de qualidade vermelho. Corrija antes de commitar." >&2
+  if ! "$GATE" "$MODE"; then
+    echo "pre-commit: portão de qualidade vermelho ($MODE). Corrija antes de commitar." >&2
     exit 1
   fi
 fi
