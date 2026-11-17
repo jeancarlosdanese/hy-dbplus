@@ -116,17 +116,19 @@ where
     D::Conn: 'static,
 {
     let tokens = theme::current(ui.ctx());
+    let tr = app.tr();
     egui::Panel::top("connections-top").show(ui, |ui| {
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Conexões").size(18.0).strong());
+            ui.label(egui::RichText::new(tr.connections()).size(18.0).strong());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("＋ Nova").clicked() {
+                if ui.button(tr.new_connection()).clicked() {
                     app.form = Some(ConnectionForm::new());
                 }
+                app.language_switch(ui);
                 ui.add(
                     egui::TextEdit::singleline(&mut app.connections.search)
-                        .hint_text("Buscar")
+                        .hint_text(tr.search())
                         .desired_width(220.0),
                 );
             });
@@ -136,8 +138,8 @@ where
     if let Some(notice) = app.notice.clone() {
         egui::Panel::bottom("connections-notice").show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.colored_label(theme::error_color(), notice);
-                if ui.small_button("fechar").clicked() {
+                ui.colored_label(theme::error_color(ui.ctx()), notice);
+                if ui.small_button(tr.close()).clicked() {
                     app.notice = None;
                 }
             });
@@ -159,15 +161,12 @@ where
             .collect();
         if app.deps.store.list().is_empty() {
             ui.centered_and_justified(|ui| {
-                ui.label(
-                    egui::RichText::new("Nenhuma conexão ainda. Crie a primeira em ＋ Nova.")
-                        .color(tokens.text_muted),
-                );
+                ui.label(egui::RichText::new(tr.no_connections()).color(tokens.text_muted));
             });
             return;
         }
         if visible.is_empty() {
-            ui.label(egui::RichText::new("Nada com esse nome.").color(tokens.text_muted));
+            ui.label(egui::RichText::new(tr.no_match()).color(tokens.text_muted));
             return;
         }
         egui::ScrollArea::vertical().show(ui, |ui| {
@@ -218,7 +217,11 @@ where
                     );
                     match &status {
                         Status::Failed(e) => {
-                            ui.label(egui::RichText::new(e).small().color(theme::error_color()));
+                            ui.label(
+                                egui::RichText::new(e)
+                                    .small()
+                                    .color(theme::error_color(ui.ctx())),
+                            );
                         }
                         Status::Connecting => {
                             ui.label(
@@ -350,7 +353,7 @@ where
                     ui.end_row();
                 });
             if let Some(e) = &form.error {
-                ui.colored_label(theme::error_color(), e);
+                ui.colored_label(theme::error_color(ui.ctx()), e);
             }
             ui.add_space(8.0);
             ui.horizontal(|ui| {

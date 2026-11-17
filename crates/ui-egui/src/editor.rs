@@ -201,7 +201,7 @@ where
                 ui.label(
                     egui::RichText::new("transação abortada")
                         .small()
-                        .color(theme::error_color()),
+                        .color(theme::error_color(ui.ctx())),
                 )
                 .on_hover_text(
                     "Um statement falhou dentro da transação: o servidor desfaz tudo no COMMIT. \
@@ -211,7 +211,7 @@ where
                 ui.label(
                     egui::RichText::new("transação aberta")
                         .small()
-                        .color(theme::error_color()),
+                        .color(theme::error_color(ui.ctx())),
                 )
                 .on_hover_text("O último BEGIN ainda não teve COMMIT nem ROLLBACK");
             }

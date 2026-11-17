@@ -125,7 +125,7 @@ where
             ui.label(
                 egui::RichText::new("marcada para apagar")
                     .small()
-                    .color(theme::error_color()),
+                    .color(theme::error_color(ui.ctx())),
             );
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

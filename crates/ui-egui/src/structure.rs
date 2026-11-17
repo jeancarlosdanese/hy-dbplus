@@ -63,7 +63,7 @@ pub fn structure_status(
     let tokens = theme::current(ui.ctx());
     if let Some(error) = error {
         ui.horizontal(|ui| {
-            ui.colored_label(theme::error_color(), error);
+            ui.colored_label(theme::error_color(ui.ctx()), error);
             if ui.small_button("Tentar de novo").clicked() {
                 *retry = true;
             }

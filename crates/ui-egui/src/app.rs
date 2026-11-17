@@ -10,13 +10,14 @@ use std::time::{Duration, Instant};
 
 use hy_dbplus_engine::{
     ChangeSet, Column, ConnectionId, ConnectionStore, DatabaseInfo, Driver, Event, Function,
-    Outcome, Page, PostgresDriver, QueryStore, QueryTabId, RowUpdate, Schema, SecretStore,
-    Sessions, Table, TableStats, TableStructure, Template, TextRows, preview_sql, table_ddl,
-    template_sql,
+    Language, Outcome, Page, PostgresDriver, PreferenceStore, QueryStore, QueryTabId, RowUpdate,
+    Schema, SecretStore, Sessions, Table, TableStats, TableStructure, Template, TextRows,
+    preview_sql, table_ddl, template_sql,
 };
 
 use crate::connections::{ConnectionForm, Connections};
-use crate::theme;
+use crate::i18n::{self, Tr};
+use crate::{fonts, theme, widgets};
 
 /// O app com o driver PostgreSQL, como o binário o cria.
 pub type PgApp = App<PostgresDriver>;
@@ -27,6 +28,8 @@ pub struct Deps<D: Driver> {
     pub secrets: Box<dyn SecretStore>,
     /// As queries das abas SQL em arquivo (FEAT-011).
     pub queries: QueryStore,
+    /// As preferências (idioma da interface; FEAT-015).
+    pub preferences: PreferenceStore,
     pub sessions: Sessions<D>,
     pub events: Receiver<Event>,
 }
@@ -756,6 +759,8 @@ pub struct App<D: Driver> {
     pub(crate) form: Option<ConnectionForm>,
     /// Último erro de arquivo ou chaveiro, mostrado no rodapé até o próximo sucesso.
     pub(crate) notice: Option<String>,
+    /// O idioma da interface (FEAT-015).
+    pub(crate) lang: Language,
 }
 
 impl<D> App<D>
@@ -763,13 +768,20 @@ where
     D: Driver + 'static,
     D::Conn: 'static,
 {
-    /// Cria o app e aplica o tema ao contexto do egui.
+    /// Cria o app, aplica o tema e as fontes ao contexto do egui e escolhe o idioma: o guardado
+    /// nas preferências ou, sem ele, o do sistema.
     pub fn new(cc: &eframe::CreationContext<'_>, deps: Deps<D>) -> Self {
         theme::apply(&cc.egui_ctx);
-        Self::with_deps(deps)
+        fonts::install(&cc.egui_ctx);
+        let lang = i18n::resolve(deps.preferences.language(), i18n::system_language);
+        let mut app = Self::with_deps(deps);
+        app.lang = lang;
+        app
     }
 
-    /// Sem o `CreationContext`: para testes e para o `egui_kittest`.
+    /// Sem o `CreationContext`: para testes e para o `egui_kittest`. O idioma fica fixo em
+    /// português, para os testes não dependerem da máquina; nem as preferências nem o sistema
+    /// são lidos.
     pub fn with_deps(deps: Deps<D>) -> Self {
         Self {
             deps,
@@ -788,6 +800,40 @@ where
             connections: Connections::default(),
             form: None,
             notice: None,
+            lang: Language::PtBr,
+        }
+    }
+
+    /// Os textos no idioma atual.
+    pub(crate) fn tr(&self) -> Tr {
+        Tr(self.lang)
+    }
+
+    /// O seletor PT | EN (tela de conexões e barra superior): troca o idioma no mesmo frame
+    /// seguinte e guarda a escolha.
+    pub(crate) fn language_switch(&mut self, ui: &mut egui::Ui) {
+        let mut lang = self.lang;
+        let hint = self.tr().language_hint();
+        ui.scope(|ui| {
+            let changed = widgets::segmented(
+                ui,
+                &mut lang,
+                &[(Language::PtBr, "PT"), (Language::En, "EN")],
+            );
+            if changed {
+                self.set_language(lang);
+            }
+        })
+        .response
+        .on_hover_text(hint);
+    }
+
+    /// Troca o idioma na hora e guarda a escolha. Erro ao gravar vira aviso; a troca vale na
+    /// sessão mesmo assim.
+    pub(crate) fn set_language(&mut self, lang: Language) {
+        self.lang = lang;
+        if self.deps.preferences.set_language(lang).is_err() {
+            self.notice = Some(self.tr().language_save_failed().to_owned());
         }
     }
 
@@ -2232,12 +2278,14 @@ pub(crate) mod tests {
             .join(format!("hy-dbplus-ui-{}", uuid_like()))
             .join("connections.toml");
         let queries = QueryStore::new(path.with_file_name("queries"));
+        let preferences = PreferenceStore::load(path.with_file_name("preferences.toml"));
         let store = ConnectionStore::load(path).unwrap();
         let (sessions, events) = Sessions::new(driver, rt.handle().clone(), || {});
         Deps {
             store,
             secrets: Box::new(MemorySecrets::default()),
             queries,
+            preferences,
             sessions,
             events,
         }
@@ -2321,5 +2369,49 @@ pub(crate) mod tests {
             db.into(),
             password.into(),
         )
+    }
+
+    #[test]
+    fn o_harness_fixa_portugues_e_o_seletor_troca_e_guarda_o_idioma() {
+        use egui_kittest::Harness;
+        use egui_kittest::kittest::Queryable;
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let app = App::with_deps(deps(PostgresDriver::default(), &rt));
+        let prefs = app.deps.preferences.path().to_path_buf();
+        assert_eq!(app.lang, Language::PtBr);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1400.0, 800.0))
+            .build_ui_state(|ui, app: &mut App<PostgresDriver>| app.ui(ui), app);
+        harness.run();
+        harness.get_by_label("EN").click();
+        harness.run();
+        assert_eq!(harness.state().lang, Language::En);
+        assert_eq!(PreferenceStore::load(&prefs).language(), Some(Language::En));
+        harness.get_by_label("PT").click();
+        harness.run();
+        assert_eq!(harness.state().lang, Language::PtBr);
+        assert_eq!(
+            PreferenceStore::load(&prefs).language(),
+            Some(Language::PtBr)
+        );
+        let _ = std::fs::remove_dir_all(prefs.parent().unwrap());
+    }
+
+    #[test]
+    fn falha_ao_guardar_o_idioma_avisa_e_a_troca_vale_na_sessao() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut d = deps(PostgresDriver::default(), &rt);
+        // O caminho das preferências é um diretório: a gravação falha.
+        let blocked = d.preferences.path().to_path_buf();
+        std::fs::create_dir_all(&blocked).unwrap();
+        d.preferences = PreferenceStore::load(&blocked);
+        let mut app = App::with_deps(d);
+        app.set_language(Language::En);
+        assert_eq!(app.lang, Language::En);
+        assert_eq!(
+            app.notice.as_deref(),
+            Some(Tr(Language::En).language_save_failed())
+        );
+        let _ = std::fs::remove_dir_all(blocked.parent().unwrap());
     }
 }

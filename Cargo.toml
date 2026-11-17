@@ -60,6 +60,11 @@ uuid = { version = "1", features = ["v4"] }
 # egui_kittest 0.36 (MIT OR Apache-2.0): harness sem janela para testar a interação (FEAT-004);
 # sem wgpu nem snapshot. Só dev-dependency.
 egui_kittest = { version = "0.36", default-features = false }
+# egui-phosphor 0.14 (MIT OR Apache-2.0): ícones Phosphor para o egui 0.36 (FEAT-015). Com `subset`, a
+# fonte é cortada em tempo de compilação (const fn, sem build script) e só os ícones usados vão ao binário.
+egui-phosphor = { version = "0.14", default-features = false, features = ["subset"] }
+# sys-locale 0.3 (MIT OR Apache-2.0): idioma do sistema (FEAT-015). App aberto pelo Finder não recebe LANG.
+sys-locale = "0.3"
 
 # Never panic (CLAUDE.md): toda resposta do banco, arquivo e tecla é entrada não
 # confiável. Em teste o clippy.toml libera unwrap, expect, panic e indexação.

@@ -287,7 +287,7 @@ where
         if let Some(error) = &tab.error {
             // O grid já carregado fica; o erro (página ou stats) vai numa faixa em cima dele.
             ui.horizontal(|ui| {
-                ui.colored_label(theme::error_color(), error);
+                ui.colored_label(theme::error_color(ui.ctx()), error);
                 if ui
                     .add_enabled(!locked, egui::Button::new("Tentar de novo").small())
                     .on_disabled_hover_text(LOCK_HINT)
@@ -395,7 +395,7 @@ where
                                 let number = (tab.page.offset + index as u64 + 1).to_string();
                                 let mut text = egui::RichText::new(number).small();
                                 if deleted {
-                                    text = text.strikethrough().color(theme::error_color());
+                                    text = text.strikethrough().color(theme::error_color(ui.ctx()));
                                 }
                                 if ui
                                     .selectable_label(tab.selected_rows.contains(&index), text)
@@ -447,7 +447,7 @@ where
                                             .color(tokens.text_muted),
                                     };
                                     if deleted {
-                                        text = text.strikethrough().color(theme::error_color());
+                                        text = text.strikethrough().color(theme::error_color(ui.ctx()));
                                     }
                                     // Sem seleção de texto na célula: o Label selecionável consome o clique e ele
                                     // não chega à linha (só o número selecionava). Copiar é pelo painel.

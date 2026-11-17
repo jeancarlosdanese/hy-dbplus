@@ -6,7 +6,8 @@
 use hy_dbplus_engine::Driver;
 
 use crate::app::{App, Status, View};
-use crate::{commit, data, editor, palette, rail, record, structure, tabs, theme, tree};
+use crate::widgets::{self, BannerKind};
+use crate::{commit, data, editor, i18n, palette, rail, record, structure, tabs, theme, tree};
 
 pub fn show<D>(app: &mut App<D>, ui: &mut egui::Ui)
 where
@@ -14,6 +15,7 @@ where
     D::Conn: 'static,
 {
     let tokens = theme::current(ui.ctx());
+    let tr = app.tr();
     let Some(id) = app.focus.clone() else {
         app.view = View::Connections;
         return;
@@ -35,7 +37,7 @@ where
         .frame(egui::Frame::new().fill(color).inner_margin(8.0))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                if ui.button("← Conexões").clicked() {
+                if ui.button(tr.back_to_connections()).clicked() {
                     app.view = View::Connections;
                 }
                 let mut title = format!(
@@ -54,24 +56,33 @@ where
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
-                        .add_enabled(!app.connection_busy(&id), egui::Button::new("Desconectar"))
-                        .on_disabled_hover_text("Aguarde a execução terminar")
+                        .add_enabled(
+                            !app.connection_busy(&id),
+                            egui::Button::new(tr.disconnect()),
+                        )
+                        .on_disabled_hover_text(tr.wait_for_run())
                         .clicked()
                     {
                         app.request_disconnect(&id);
                     }
-                    if ui.button("Banco ⌘K").clicked() {
+                    let palette_label = format!(
+                        "{} {}",
+                        tr.database(),
+                        i18n::shortcut_label(ui.ctx(), &palette::shortcut())
+                    );
+                    if ui.button(palette_label).clicked() {
                         palette::toggle(app);
                     }
+                    app.language_switch(ui);
                     let panel_label = if app.side_panel_open {
-                        "Painel ▸"
+                        tr.panel_hide()
                     } else {
-                        "◂ Painel"
+                        tr.panel_show()
                     };
 
                     if ui
                         .button(panel_label)
-                        .on_hover_text("Mostrar ou esconder o painel direito")
+                        .on_hover_text(tr.panel_hint())
                         .clicked()
                     {
                         app.side_panel_open = !app.side_panel_open;
@@ -82,6 +93,24 @@ where
     // Com um banco ativo a árvore ocupa o painel esquerdo: o "Abrindo…" e o erro do ⌘K vão numa
     // faixa abaixo da barra, senão o usuário escolhe um banco e nada acontece (achado do revisor).
     let state = app.conn_state.get(&id).cloned().unwrap_or_default();
+    // Erro de arquivo ou chaveiro (ex.: idioma que não foi guardado): a tela de conexões mostra no
+    // rodapé; aqui ele aparece logo abaixo da barra, senão some até o usuário voltar à lista. O
+    // mesmo erro já guardado no estado da conexão (fechar aba ou banco) aparece só uma vez, lá.
+    if let Some(notice) = app
+        .notice
+        .clone()
+        .filter(|n| state.error.as_ref() != Some(n))
+    {
+        let mut dismiss = false;
+        egui::Panel::top("workspace-app-notice").show(ui, |ui| {
+            ui.add_space(theme::space::XS);
+            dismiss = widgets::banner(ui, BannerKind::Error, &notice, Some(tr.close()));
+            ui.add_space(theme::space::XS);
+        });
+        if dismiss {
+            app.notice = None;
+        }
+    }
     if active.is_some() && (state.opening.is_some() || state.error.is_some()) {
         let mut dismiss = false;
         egui::Panel::top("workspace-notice").show(ui, |ui| {
@@ -92,15 +121,19 @@ where
                     );
                 }
                 if let Some(error) = &state.error {
-                    ui.colored_label(theme::error_color(), error);
+                    ui.colored_label(theme::error_color(ui.ctx()), error);
                     if ui.small_button("OK").clicked() {
                         dismiss = true;
                     }
                 }
             });
         });
-        if dismiss && let Some(state) = app.conn_state.get_mut(&id) {
-            state.error = None;
+        if dismiss && let Some(conn) = app.conn_state.get_mut(&id) {
+            // O mesmo erro no aviso do app sai junto, senão volta na lista de conexões.
+            if app.notice.is_some() && app.notice == conn.error {
+                app.notice = None;
+            }
+            conn.error = None;
         }
     }
     rail::show(app, ui);
@@ -125,9 +158,14 @@ where
                     );
                 }
                 if let Some(error) = &state.error {
-                    ui.colored_label(theme::error_color(), error);
+                    ui.colored_label(theme::error_color(ui.ctx()), error);
                 }
-                if ui.button("Escolher banco (⌘K)").clicked() {
+                let choose = format!(
+                    "{} ({})",
+                    tr.choose_database(),
+                    i18n::shortcut_label(ui.ctx(), &palette::shortcut())
+                );
+                if ui.button(choose).clicked() {
                     palette::toggle(app);
                 }
             }

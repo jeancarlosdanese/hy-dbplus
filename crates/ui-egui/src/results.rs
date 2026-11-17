@@ -42,7 +42,7 @@ where
                 for (i, r) in q.results.iter().enumerate() {
                     let mut text = egui::RichText::new(format!("Query {}", r.index + 1));
                     if r.result.is_err() {
-                        text = text.color(theme::error_color());
+                        text = text.color(theme::error_color(ui.ctx()));
                     }
                     if ui.selectable_label(q.active_result == i, text).clicked() {
                         focus = Some(i);
@@ -56,7 +56,7 @@ where
             let ms = r.elapsed.as_millis();
             match &r.result {
                 Err(error) => {
-                    ui.colored_label(theme::error_color(), error);
+                    ui.colored_label(theme::error_color(ui.ctx()), error);
                     ui.add(
                         egui::Label::new(
                             egui::RichText::new(&r.sql)

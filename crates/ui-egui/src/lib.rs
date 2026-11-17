@@ -8,7 +8,9 @@ mod commit;
 mod connections;
 mod data;
 mod editor;
+mod fonts;
 mod grid;
+mod i18n;
 mod index;
 mod palette;
 mod rail;
@@ -18,6 +20,7 @@ mod structure;
 mod tabs;
 pub mod theme;
 mod tree;
+mod widgets;
 mod workspace;
 
 pub use app::{App, Deps, PgApp};

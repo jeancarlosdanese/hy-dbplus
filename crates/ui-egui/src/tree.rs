@@ -102,7 +102,7 @@ where
         );
         ui.add_space(4.0);
         if let Some(error) = ws.error.clone() {
-            ui.colored_label(theme::error_color(), error);
+            ui.colored_label(theme::error_color(ui.ctx()), error);
             if ui.small_button("Tentar de novo").clicked()
                 && let Some(schema) = ws.current_schema.clone()
             {
@@ -3311,5 +3311,58 @@ mod tests {
                     .any(|c| matches!(c, egui::ViewportCommand::Minimized(true)))
             });
         assert!(minimized, "⌘M sem comando de minimizar");
+    }
+
+    #[test]
+    fn o_seletor_da_barra_superior_troca_o_idioma() {
+        let (app, _rt, _key) = connected_app();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1400.0, 800.0))
+            .build_ui_state(|ui, app: &mut App<FakeDriver>| app.ui(ui), app);
+        harness.run();
+        assert_eq!(harness.state().view, View::Workspace);
+        harness.get_by_label("EN").click();
+        harness.run();
+        assert_eq!(harness.state().lang, hy_dbplus_engine::Language::En);
+    }
+
+    #[test]
+    fn falha_ao_guardar_o_idioma_no_workspace_aparece_na_tela() {
+        let (mut app, _rt, _key) = connected_app();
+        // O caminho das preferências é um diretório: a gravação falha.
+        let blocked = app.deps.preferences.path().to_path_buf();
+        std::fs::create_dir_all(&blocked).unwrap();
+        app.deps.preferences = hy_dbplus_engine::PreferenceStore::load(&blocked);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1400.0, 800.0))
+            .build_ui_state(|ui, app: &mut App<FakeDriver>| app.ui(ui), app);
+        harness.run();
+        harness.get_by_label("EN").click();
+        harness.run();
+        let message = crate::i18n::Tr(hy_dbplus_engine::Language::En).language_save_failed();
+        harness.get_by_label(message);
+        harness.get_by_label("Close").click();
+        harness.run();
+        assert!(harness.query_by_label(message).is_none());
+        assert_eq!(harness.state().view, View::Workspace);
+        let _ = std::fs::remove_dir_all(blocked.parent().unwrap());
+    }
+
+    #[test]
+    fn erro_guardado_na_conexao_e_no_aviso_do_app_aparece_uma_vez() {
+        let (mut app, _rt, key) = connected_app();
+        let message = "/tmp/x/1.sql: Is a directory";
+        app.notice = Some(message.to_owned());
+        app.conn_state.entry(key.0.clone()).or_default().error = Some(message.to_owned());
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1400.0, 800.0))
+            .build_ui_state(|ui, app: &mut App<FakeDriver>| app.ui(ui), app);
+        harness.run();
+        assert_eq!(harness.get_all_by_label(message).count(), 1);
+        // O OK da faixa da conexão limpa os dois: o erro não volta na lista de conexões.
+        harness.get_by_label("OK").click_accesskit();
+        harness.run();
+        assert!(harness.query_by_label(message).is_none());
+        assert_eq!(harness.state().notice, None);
     }
 }

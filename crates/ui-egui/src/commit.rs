@@ -43,7 +43,7 @@ where
                     let failed = dialog.failed == Some(i + 1);
                     let mut text = egui::RichText::new(format!("{statement};")).monospace();
                     if failed {
-                        text = text.color(theme::error_color());
+                        text = text.color(theme::error_color(ui.ctx()));
                     }
                     ui.add(egui::Label::new(text).wrap());
                     ui.add_space(4.0);
@@ -51,7 +51,10 @@ where
             });
         if let Some(error) = &dialog.error {
             ui.separator();
-            ui.add(egui::Label::new(egui::RichText::new(error).color(theme::error_color())).wrap());
+            ui.add(
+                egui::Label::new(egui::RichText::new(error).color(theme::error_color(ui.ctx())))
+                    .wrap(),
+            );
         }
         ui.separator();
         ui.horizontal(|ui| {
