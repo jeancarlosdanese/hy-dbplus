@@ -10,11 +10,11 @@
 
 ## Status da implementação
 
-Protótipo, aceite e plano aprovados pelo Jean em 17/11/2026. **Fase A (fundação) implementada** e sem commit:
-tokens novos em `crates/ui-egui/src/theme.rs`, fontes e ícones em `fonts.rs`, componentes em `widgets.rs`, textos
-em `i18n.rs`, preferência de idioma em `crates/engine/src/preferences.rs` e o seletor PT | EN nas conexões e na
-barra superior. As telas ainda usam o desenho antigo, só com a paleta e as fontes novas; elas mudam nas fases B a
-E. Próximo: revisão da fase A, "pode commitar" e o detalhamento da fase B (conexões).
+Protótipo, aceite e plano aprovados pelo Jean em 17/11/2026. Fase A (fundação) commitada em e461e98 e 14d7c47.
+**Fase B (conexões) implementada** e sem commit: lista, teclado, estado vazio, formulário com erro por campo e
+"Testar conexão" (engine `Sessions::test_connection`), remover em diálogo. As telas do workspace, dados e editor
+ainda têm o desenho antigo com a paleta nova. Próximo: revisão da fase B, "pode commitar" e o detalhamento da fase
+C (workspace).
 
-**Cabe ao mantenedor:** conferência visual no app ao fim de cada fase (nesta: nitidez da Inter, cores nos dois
-temas e o seletor PT | EN).
+**Cabe ao mantenedor:** conferência visual no app ao fim de cada fase (nesta: telas 1 a 4 nos dois temas e
+idiomas, e o "Testar conexão" num servidor real).

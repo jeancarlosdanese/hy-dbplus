@@ -3,7 +3,8 @@
 # Notas de implementação: FEAT-015
 
 > Protótipo aprovado pelo Jean em 17/11/2026 ("pode seguir"), como desenhado: ambiente em etiqueta e faixa fina.
-> Aceite e plano aprovados no mesmo dia ("pode seguir"). Fase A implementada, aguardando revisão e o "pode commitar".
+> Aceite e plano aprovados no mesmo dia ("pode seguir"). Fase A commitada (e461e98). Fase B implementada, sem
+> commit.
 
 ## Decisões de implementação
 
@@ -55,9 +56,32 @@ conferência visual no fim de cada fase.
 
 ### Fase B: conexões
 
-Objetivo: tela de conexões, formulário, remover, com teclado e Testar conexão (telas 1 a 4).
+Objetivo: tela de conexões, formulário, remover, com teclado e Testar conexão (telas 1 a 4). Critérios: AC-008
+(diálogos), AC-009 (Enter e erro no campo), AC-010 (Testar conexão), AC-011 (teclado na lista), e os textos dessas
+telas nos dois idiomas. Não há passo do mantenedor além da conferência visual.
 
-- [ ] B.0 Detalhar os passos da fase.
+- [x] B.0 Detalhar os passos da fase (17/11/2026).
+- [x] B.1 Engine: `Sessions::test_connection(id, config, senha)` conecta num cliente à parte, lê a versão, fecha e
+      emite `Event::TestFinished { connection, result }` com o tempo em ms ou o erro do driver. Não toca a sessão
+      aberta, o arquivo de conexões nem o Keychain. Na edição com senha em branco, usa a do Keychain. Testes com o
+      driver falso: sucesso com tempo, erro do servidor, sessão aberta intacta, nada gravado, senha fora do erro.
+- [x] B.2 Lista (telas 1 e 2): cabeçalho com marca, título, busca com ícone, PT | EN e "Nova conexão" principal;
+      linha de 56 px com a barra do ambiente, o selo Pg, nome, etiqueta, estado (conectado, conectando, erro na
+      própria linha) e `host:porta / banco` em mono; linha inteira clicável (clique seleciona, duplo clique conecta
+      ou abre); editar e remover como ícones só na linha selecionada ou com erro; Conectar ou Abrir à direita,
+      principal na selecionada. Rodapé com os atalhos. Teclado: ↑↓ movem a seleção, Enter conecta ou abre, ⌘N
+      abre o formulário novo, ⌘E edita a selecionada. Estado vazio da tela 2. Todos os textos pelo catálogo.
+- [x] B.3 Formulário (tela 3): `widgets::dialog` de 560 px em duas colunas, rótulo acima do campo, ambiente com a
+      etiqueta, dica da senha (nova: em branco usa `trust`; edição: em branco mantém a atual), "Banco inicial".
+      Validação por campo: `ConnectionForm::build` passa a devolver o campo e a mensagem, e o erro aparece sob o
+      campo, nos dois idiomas. Enter salva quando válido; Esc e clique fora cancelam. "Testar conexão" no rodapé,
+      com o resultado ao lado ("Conectou em 84 ms" ou o erro do servidor) e o botão desligado enquanto testa.
+- [x] B.4 Remover (tela 4): `widgets::dialog` com o nome no título, o texto do que sai junto e o botão vermelho
+      "Remover conexão" com ícone.
+- [x] B.5 Ícones com nome acessível: `widgets::icon_button` publica a dica como rótulo de acessibilidade, para o
+      leitor de tela e para os testes acharem "Editar" e "Remover".
+- [x] B.6 Testes de UI dos cenários AC-008 a AC-011 e rótulos novos nos testes antigos; suíte, portão completo,
+      revisor e conferência visual das telas 1 a 4 nos dois temas e idiomas.
 
 ### Fase C: workspace
 
@@ -85,6 +109,27 @@ e a linha "Padrão visual e protótipos" do `CLAUDE.md` atualizados.
 - [ ] F.0 Detalhar os passos da fase.
 
 ## Desvios do plano
+
+- **B.3, testar na edição:** com a senha em branco, o teste usa a do Keychain; erro do chaveiro aparece como
+  resultado do teste. O resultado só vale para o pedido em curso do formulário aberto (etiqueta por pedido).
+- **B.3, onde o erro aparece:** o campo errado ganha a borda vermelha e a mensagem sob ele; a validação parou de
+  devolver texto e devolve o campo (`Field`), e a mensagem vem do catálogo.
+- **B.2 e B.3, Enter:** só vale como "conectar" ou "salvar" com o foco num campo de texto (ou em nada); num botão
+  focado, o Enter é do botão. Achado do revisor: Enter no Cancelar salvava a edição.
+- **B.2, duplo clique:** a linha inteira responde; a seleção de texto dos rótulos foi desligada dentro dela, senão
+  o rótulo pegava o clique.
+- **Conferência do Jean na fase B (17/11/2026):** a lista da árvore passava por baixo da barra "Schema" sem
+  barra de rolagem visível (a do egui é flutuante e só aparece com o ponteiro em cima). A barra passou a ficar
+  sempre visível e com espaço próprio em todo o app (`theme::scroll_style`). Na mesma captura, os símbolos ▦ ◫ ▸ ◂
+  ⇄ ▾ e o 🛢 da faixa saíam como quadrados; não era regressão da fase A (a família proporcional padrão do egui
+  também não os tem). A Hack, que já vem no binário, entrou por último na família proporcional, e a faixa usa o
+  ícone de banco do Phosphor.
+  Na segunda captura ficou claro que a lista era a da paleta "Escolher banco" (⌘K): com 60 bancos ela passava do
+  fim da janela. A lista ganhou altura máxima com rolagem, e a seleção pelas setas rola junto (as teclas passaram
+  para antes da lista). O redesenho da paleta segue na fase C. Teste com 60 bancos, provado contra a versão antiga.
+- **B.4, texto do remover:** o protótipo diz que as consultas salvas da conexão ficam no disco, mas desde a FEAT-011
+  remover a conexão apaga também as consultas dela. O texto do diálogo segue o comportamento: "A senha guardada no
+  Keychain e as consultas salvas desta conexão também são apagadas."
 
 - **A.2 e A.3, fontes:** entram Inter Regular e SemiBold (família `strong`) e JetBrains Mono Regular, sem itálico.
   Os ícones vêm da crate `egui-phosphor` 0.14 (compatível com o `egui` 0.36), com a feature `subset`: a fonte é
@@ -114,6 +159,8 @@ e a linha "Padrão visual e protótipos" do `CLAUDE.md` atualizados.
 |---|---|---|---|
 | 1ª | `git diff main` e arquivos novos | 1 médio (falha ao gravar o idioma invisível no workspace); 3 baixos (vermelho de erro no escuro, seletor sem efeito visível, comentário de `fonts::strong`) | todos corrigidos; testes novos para o aviso e para a cor de erro |
 | 2ª | delta das correções | 3 baixos (mesmo erro em duas faixas, dica da lista vazia fixa em português, "Escolher banco (⌘K)" fixo) | todos corrigidos, com teste da duplicação provado contra o código sem o filtro; sem nova passada, como a skill manda para baixo do delta; a passada da branch inteira fica para o fechamento |
+| B, 1ª | `git diff HEAD` (fase B) | 2 médios (Enter tomado antes dos widgets: Enter no Cancelar salvava e derrubava a sessão; botões cobriam o erro do teste e o da linha); 1 baixo (sem teste da senha do Keychain no teste da edição) | todos corrigidos; testes do Enter e do rodapé provados contra o código antigo; testes do Keychain (senha guardada e chaveiro falhando) |
+| B, 2ª | delta das correções | 1 baixo (nome e endereço longos passavam sob os botões) | corrigido (largura limitada e truncamento), teste provado contra o código antigo; sem nova passada |
 
 ## Testes
 
@@ -137,6 +184,21 @@ Fase A (17/11/2026), por teste:
   português. Falha ao gravar a partir do workspace aparece na tela e fecha; erro repetido aparece uma vez só (os
   dois testes falham sem o conserto).
 - Cor de erro das telas segue o tema e passa de 4,5 de contraste nos dois.
+
+Fase B (17/11/2026), por teste:
+- Engine: teste de conexão devolve versão e tempo sem abrir sessão; com erro, não expõe a senha e não derruba a
+  sessão aberta.
+- Lista: estado vazio com o botão que abre o formulário; ↓↑ movem a seleção; ⌘E edita, ⌘N abre o novo, Esc fecha;
+  Enter e duplo clique conectam e abrem o workspace; clique seleciona e mostra Editar e Remover; tela em inglês.
+- Formulário: validação por campo nos dois idiomas; Enter com porta "54321x" não salva e mostra "Use um número de
+  1 a 65535."; com a porta certa salva; clique fora fecha sem salvar.
+- Testar conexão: mostra "Conectou em … ms" e a versão, ou o erro do servidor; nada vai ao arquivo nem ao chaveiro,
+  nenhuma sessão abre e a senha não aparece; resposta de outro pedido é ignorada (falha sem a etiqueta).
+- Remover: título com o nome, Esc cancela, o botão vermelho remove.
+- Enter num botão focado é do botão (Cancelar cancela sem salvar; Remover abre a confirmação e não conecta).
+- Erro longo do teste e da linha, nome e endereço longos: nenhum texto passa sob os botões.
+- Testar na edição com a senha em branco usa a do Keychain; com o chaveiro falhando, mostra o erro e não conecta.
+- Portão completo verde.
 - Portão completo verde e `cargo deny check advisories` ok.
 
 **Não conferido:**
@@ -144,12 +206,14 @@ Fase A (17/11/2026), por teste:
   para a conferência do Jean.
 - Idioma do sistema real em outra língua (só por teste da função de locale).
 - Linux e Windows (só o rótulo de atalho por teste).
+- Fase B no app: visual das telas 1 a 4 nos dois temas e idiomas, foco do teclado com o campo de busca ativo, e o
+  "Testar conexão" contra um servidor real. Conferência do Jean.
 
 ## Segurança (fechamento)
 
 | Rota ou tela | Permissão (mesma chave nos dois lados) | Conta vinda da sessão | Verificado por |
 |---|---|---|---|
-| Testar conexão (formulário) | não se aplica: app local, sem contas | não se aplica | a preencher na fase B: senha fora de log, erro e arquivo |
+| Testar conexão (formulário) | não se aplica: app local, sem contas | não se aplica | teste da fase B: nada gravado em arquivo nem no Keychain, senha fora da tela e do erro |
 | `preferences.toml` | não se aplica | não se aplica | teste da fase A: só `language`, arquivo 0600, nenhum segredo |
 
 ## Riscos
