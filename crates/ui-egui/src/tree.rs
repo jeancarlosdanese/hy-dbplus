@@ -285,6 +285,8 @@ mod tests {
         fail_structure: Arc<std::sync::atomic::AtomicBool>,
         /// Só os `execute` do editor (`queries` conta tudo, catálogo inclusive).
         executes: Arc<AtomicUsize>,
+        /// A senha do último `connect` (teste do "Testar conexão" com a senha do chaveiro).
+        last_password: Arc<Mutex<Option<String>>>,
     }
     struct FakeConn {
         queries: Arc<AtomicUsize>,
@@ -556,8 +558,11 @@ mod tests {
         async fn connect(
             &self,
             config: &ConnectionConfig,
-            _password: &Secret,
+            password: &Secret,
         ) -> Result<FakeConn, DriverError> {
+            if let Ok(mut last) = self.last_password.lock() {
+                *last = Some(password.expose().to_owned());
+            }
             tokio::time::sleep(Duration::from_millis(5)).await;
             if config.database == "template0" {
                 return Err(DriverError::Db(
@@ -3364,5 +3369,477 @@ mod tests {
         harness.run();
         assert!(harness.query_by_label(message).is_none());
         assert_eq!(harness.state().notice, None);
+    }
+
+    // ---- Tela de conexões (FEAT-015 fase B) ----
+
+    fn connections_harness(app: App<FakeDriver>) -> Harness<'static, App<FakeDriver>> {
+        Harness::builder()
+            .with_size(egui::vec2(1400.0, 800.0))
+            .build_ui_state(|ui, app: &mut App<FakeDriver>| app.ui(ui), app)
+    }
+
+    fn app_with_connections(names: &[&str]) -> (App<FakeDriver>, tokio::runtime::Runtime) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut app = App::with_deps(deps(FakeDriver::default(), &rt));
+        for name in names {
+            app.deps.store.upsert(Connection::new(
+                *name,
+                Tag::Local,
+                ConnectionConfig::default(),
+            ));
+        }
+        (app, rt)
+    }
+
+    #[test]
+    fn lista_vazia_convida_a_criar_e_o_botao_abre_o_formulario() {
+        let (app, _rt) = app_with_connections(&[]);
+        let mut harness = connections_harness(app);
+        harness.run();
+        harness.get_by_label("Nenhuma conexão ainda");
+        // O botão do cabeçalho e o do estado vazio: o do estado vazio é o segundo.
+        harness
+            .get_all_by_label_contains("Nova conexão")
+            .last()
+            .unwrap()
+            .click();
+        harness.run();
+        assert!(harness.state().form.is_some());
+    }
+
+    #[test]
+    fn setas_selecionam_atalhos_abrem_o_formulario_e_enter_conecta() {
+        let (app, _rt) = app_with_connections(&["a", "b"]);
+        let ids: Vec<String> = app.deps.store.list().iter().map(|c| c.id.clone()).collect();
+        let mut harness = connections_harness(app);
+        harness.run();
+        harness.key_press(egui::Key::ArrowDown);
+        harness.run();
+        assert_eq!(harness.state().connections.selected.as_ref(), Some(&ids[0]));
+        harness.key_press(egui::Key::ArrowDown);
+        harness.key_press(egui::Key::ArrowDown);
+        harness.run();
+        assert_eq!(harness.state().connections.selected.as_ref(), Some(&ids[1]));
+        harness.key_press(egui::Key::ArrowUp);
+        harness.run();
+        assert_eq!(harness.state().connections.selected.as_ref(), Some(&ids[0]));
+        // ⌘E edita a selecionada; Esc fecha.
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::E);
+        harness.run();
+        assert_eq!(
+            harness.state().form.as_ref().and_then(|f| f.id.clone()),
+            Some(ids[0].clone())
+        );
+        harness.key_press(egui::Key::Escape);
+        harness.run();
+        assert!(harness.state().form.is_none());
+        // ⌘N abre o formulário novo.
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::N);
+        harness.run();
+        assert!(
+            harness
+                .state()
+                .form
+                .as_ref()
+                .is_some_and(|f| f.id.is_none())
+        );
+        harness.key_press(egui::Key::Escape);
+        harness.run();
+        // Enter conecta a selecionada e abre o workspace.
+        harness.key_press(egui::Key::Enter);
+        wait_for(&mut harness, "Connected", |app| app.view == View::Workspace);
+        assert_eq!(harness.state().focus.as_ref(), Some(&ids[0]));
+    }
+
+    #[test]
+    fn clique_seleciona_a_linha_e_mostra_editar_e_remover() {
+        let (app, _rt) = app_with_connections(&["loja-homolog"]);
+        let mut harness = connections_harness(app);
+        harness.run();
+        assert!(harness.query_by_label("Editar").is_none());
+        harness.get_by_label("loja-homolog").click();
+        harness.run();
+        assert!(harness.state().connections.selected.is_some());
+        harness.get_by_label("Editar").click();
+        harness.run();
+        assert!(
+            harness
+                .state()
+                .form
+                .as_ref()
+                .is_some_and(|f| f.id.is_some())
+        );
+    }
+
+    #[test]
+    fn duplo_clique_na_linha_conecta() {
+        let (app, _rt) = app_with_connections(&["loja"]);
+        let mut harness = connections_harness(app);
+        harness.run();
+        double_click(&mut harness, "loja");
+        wait_for(&mut harness, "Connected", |app| app.view == View::Workspace);
+    }
+
+    #[test]
+    fn enter_salva_o_formulario_e_porta_invalida_mostra_o_erro_no_campo() {
+        let (app, _rt) = app_with_connections(&[]);
+        let mut harness = connections_harness(app);
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::N);
+        harness.run();
+        if let Some(form) = harness.state_mut().form.as_mut() {
+            form.name = "nova".into();
+            form.port = "54321x".into();
+        }
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+        harness.get_by_label("Use um número de 1 a 65535.");
+        assert!(
+            harness.state().deps.store.list().is_empty(),
+            "porta inválida não salva"
+        );
+        if let Some(form) = harness.state_mut().form.as_mut() {
+            form.port = "5432".into();
+        }
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+        assert!(harness.state().form.is_none());
+        assert_eq!(harness.state().deps.store.list().len(), 1);
+    }
+
+    #[test]
+    fn formulario_fecha_por_clique_fora_sem_salvar() {
+        let (app, _rt) = app_with_connections(&[]);
+        let mut harness = connections_harness(app);
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::N);
+        harness.run();
+        if let Some(form) = harness.state_mut().form.as_mut() {
+            form.name = "nova".into();
+        }
+        let pos = egui::pos2(5.0, 795.0);
+        harness.hover_at(pos);
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        harness.run();
+        assert!(harness.state().form.is_none());
+        assert!(harness.state().deps.store.list().is_empty());
+    }
+
+    #[test]
+    fn testar_conexao_mostra_o_tempo_ou_o_erro_e_nao_salva_nada() {
+        let (app, _rt) = app_with_connections(&[]);
+        let mut harness = connections_harness(app);
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::N);
+        harness.run();
+        if let Some(form) = harness.state_mut().form.as_mut() {
+            form.name = "nova".into();
+            form.password = "segredo-123".into();
+        }
+        harness.get_by_label_contains("Testar conexão").click();
+        wait_for(&mut harness, "TestFinished", |app| {
+            app.form
+                .as_ref()
+                .is_some_and(|f| matches!(f.test, crate::connections::FormTest::Done(_)))
+        });
+        harness.get_by_label_contains("Conectou em");
+        harness.get_by_label_contains("PostgreSQL 15");
+        // Erro do servidor ao lado do botão.
+        if let Some(form) = harness.state_mut().form.as_mut() {
+            form.database = "template0".into();
+        }
+        harness.get_by_label_contains("Testar conexão").click();
+        wait_for(&mut harness, "TestFinished com erro", |app| {
+            app.form
+                .as_ref()
+                .is_some_and(|f| matches!(f.test, crate::connections::FormTest::Done(Err(_))))
+        });
+        harness.get_by_label_contains("not currently accepting connections");
+        // Nada gravado: nem conexão, nem senha; a senha não aparece na tela.
+        assert!(harness.state().deps.store.list().is_empty());
+        assert!(!harness.state().deps.store.path().exists());
+        assert!(harness.query_by_label_contains("segredo-123").is_none());
+        assert!(harness.state().status.is_empty(), "teste não abre sessão");
+    }
+
+    #[test]
+    fn resultado_de_teste_de_outro_pedido_e_ignorado() {
+        use crate::connections::{ConnectionForm, FormTest, test_finished};
+        let (mut app, _rt) = app_with_connections(&[]);
+        let ok = || {
+            Ok(hy_dbplus_engine::TestOk {
+                server_version: "15".into(),
+                elapsed_ms: 3,
+            })
+        };
+        // Sem formulário aberto: nada a fazer, sem pânico.
+        test_finished(&mut app, "connection-test-1", ok());
+        let mut form = ConnectionForm::new();
+        form.test = FormTest::Running("connection-test-2".into());
+        app.form = Some(form);
+        // A resposta do pedido anterior (formulário já fechado) não vale para o novo.
+        test_finished(&mut app, "connection-test-1", ok());
+        assert_eq!(
+            app.form.as_ref().map(|f| f.test.clone()),
+            Some(FormTest::Running("connection-test-2".into()))
+        );
+        test_finished(&mut app, "connection-test-2", ok());
+        assert!(matches!(
+            app.form.as_ref().map(|f| &f.test),
+            Some(FormTest::Done(Ok(_)))
+        ));
+    }
+
+    #[test]
+    fn remover_pede_confirmacao_com_o_nome_e_esc_cancela() {
+        let (app, _rt) = app_with_connections(&["loja-homolog"]);
+        let mut harness = connections_harness(app);
+        harness.run();
+        harness.get_by_label("loja-homolog").click();
+        harness.run();
+        harness.get_by_label("Remover").click();
+        harness.run();
+        harness.get_by_label("Remover a conexão loja-homolog?");
+        harness.key_press(egui::Key::Escape);
+        harness.run();
+        assert_eq!(harness.state().deps.store.list().len(), 1);
+        harness.get_by_label("Remover").click();
+        harness.run();
+        harness.get_by_label("Remover conexão").click();
+        harness.run();
+        assert!(harness.state().deps.store.list().is_empty());
+    }
+
+    #[test]
+    fn a_tela_de_conexoes_em_ingles() {
+        let (mut app, _rt) = app_with_connections(&["loja"]);
+        app.lang = hy_dbplus_engine::Language::En;
+        let mut harness = connections_harness(app);
+        harness.run();
+        harness.get_by_label("Connections");
+        harness.get_by_label("Connect");
+        harness.get_by_label_contains("New connection");
+        assert!(harness.query_by_label("Conectar").is_none());
+    }
+
+    /// Chaveiro que sempre falha.
+    struct BrokenSecrets;
+
+    impl hy_dbplus_engine::SecretStore for BrokenSecrets {
+        fn set(&self, _: &str, _: &Secret) -> Result<(), hy_dbplus_engine::EngineError> {
+            Err(hy_dbplus_engine::EngineError::Secret(
+                "chaveiro trancado".into(),
+            ))
+        }
+        fn get(&self, _: &str) -> Result<Option<Secret>, hy_dbplus_engine::EngineError> {
+            Err(hy_dbplus_engine::EngineError::Secret(
+                "chaveiro trancado".into(),
+            ))
+        }
+        fn remove(&self, _: &str) -> Result<(), hy_dbplus_engine::EngineError> {
+            Err(hy_dbplus_engine::EngineError::Secret(
+                "chaveiro trancado".into(),
+            ))
+        }
+    }
+
+    #[test]
+    fn testar_na_edicao_com_senha_em_branco_usa_a_do_chaveiro() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let driver = FakeDriver::default();
+        let last = Arc::clone(&driver.last_password);
+        let mut app = App::with_deps(deps(driver, &rt));
+        let c = Connection::new("loja", Tag::Local, ConnectionConfig::default());
+        app.deps.store.upsert(c.clone());
+        app.deps
+            .secrets
+            .set(&c.id, &Secret::new("guardada"))
+            .unwrap();
+        app.form = Some(crate::connections::ConnectionForm::edit(&c));
+        let mut harness = connections_harness(app);
+        harness.step();
+        let done = |app: &App<FakeDriver>| {
+            app.form
+                .as_ref()
+                .is_some_and(|f| matches!(f.test, crate::connections::FormTest::Done(_)))
+        };
+        harness.get_by_label_contains("Testar conexão").click();
+        wait_for(&mut harness, "TestFinished", done);
+        assert_eq!(last.lock().unwrap().as_deref(), Some("guardada"));
+        // Senha digitada vence a guardada.
+        if let Some(form) = harness.state_mut().form.as_mut() {
+            form.password = "digitada".into();
+        }
+        harness.get_by_label_contains("Testar conexão").click();
+        wait_for(&mut harness, "TestFinished de novo", |app| {
+            done(app) && last.lock().unwrap().as_deref() == Some("digitada")
+        });
+    }
+
+    #[test]
+    fn testar_com_o_chaveiro_falhando_mostra_o_erro_e_nao_testa_sem_senha() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let driver = FakeDriver::default();
+        let last = Arc::clone(&driver.last_password);
+        let mut d = deps(driver, &rt);
+        d.secrets = Box::new(BrokenSecrets);
+        let mut app = App::with_deps(d);
+        let c = Connection::new("loja", Tag::Local, ConnectionConfig::default());
+        app.deps.store.upsert(c.clone());
+        app.form = Some(crate::connections::ConnectionForm::edit(&c));
+        let mut harness = connections_harness(app);
+        harness.step();
+        harness.get_by_label_contains("Testar conexão").click();
+        harness.step();
+        harness.step();
+        assert!(matches!(
+            harness.state().form.as_ref().map(|f| &f.test),
+            Some(crate::connections::FormTest::Done(Err(e))) if e.contains("chaveiro trancado")
+        ));
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(
+            *last.lock().unwrap(),
+            None,
+            "não conectou com a senha vazia"
+        );
+    }
+
+    #[test]
+    fn enter_num_botao_focado_e_do_botao_e_nao_salva() {
+        let (app, _rt) = app_with_connections(&["loja"]);
+        let id = app.deps.store.list()[0].id.clone();
+        let mut harness = connections_harness(app);
+        harness.run();
+        harness.get_by_label("loja").click();
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::E);
+        harness.run();
+        if let Some(form) = harness.state_mut().form.as_mut() {
+            form.name = "renomeada".into();
+        }
+        harness.get_by_label("Cancelar").focus();
+        harness.run();
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+        assert!(harness.state().form.is_none(), "Enter no Cancelar cancela");
+        assert_eq!(harness.state().deps.store.get(&id).unwrap().name, "loja");
+        // Na lista: Enter no ícone Remover abre a confirmação, não conecta.
+        harness.get_by_label("Remover").focus();
+        harness.run();
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+        assert_eq!(
+            harness.state().connections.confirm_remove.as_ref(),
+            Some(&id)
+        );
+        assert!(harness.state().status.is_empty(), "não conectou");
+    }
+
+    #[test]
+    fn erro_longo_do_teste_e_da_linha_nao_fica_sob_os_botoes() {
+        let (mut app, _rt) = app_with_connections(&["loja"]);
+        let id = app.deps.store.list()[0].id.clone();
+        let long = "falha de autenticação: password authentication failed for user \"app_loja\" "
+            .repeat(3);
+        app.status
+            .insert(id.clone(), crate::app::Status::Failed(long.clone()));
+        let mut harness = connections_harness(app);
+        harness.run();
+        let text = harness
+            .get_by_label_contains("password authentication failed")
+            .rect();
+        let edit = harness.get_by_label("Editar").rect();
+        assert!(
+            text.right() <= edit.left() + 0.5,
+            "linha: {text:?} x {edit:?}"
+        );
+        harness.get_by_label("loja").click();
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::E);
+        harness.run();
+        if let Some(form) = harness.state_mut().form.as_mut() {
+            form.test = crate::connections::FormTest::Done(Err(long));
+        }
+        harness.run();
+        let all: Vec<_> = harness
+            .get_all_by_label_contains("password authentication failed")
+            .map(|n| n.rect())
+            .collect();
+        let footer = all.last().unwrap();
+        let cancel = harness.get_by_label("Cancelar").rect();
+        assert!(
+            footer.right() <= cancel.left() + 0.5,
+            "rodapé: {footer:?} x {cancel:?}"
+        );
+    }
+
+    #[test]
+    fn nome_e_endereco_longos_truncam_antes_dos_botoes() {
+        let (mut app, _rt) = app_with_connections(&[]);
+        let mut c = Connection::new(
+            "loja-matriz-producao-replica-leitura-relatorios-financeiros-2026-".repeat(3),
+            Tag::Local,
+            ConnectionConfig::default(),
+        );
+        c.config.host = "replica-leitura.abcdefghijkl.sa-east-1.rds.amazonaws.com".repeat(3);
+        app.deps.store.upsert(c);
+        let mut harness = connections_harness(app);
+        harness.run();
+        let connect = harness.get_by_label("Conectar").rect();
+        let name = harness.get_by_label_contains("loja-matriz").rect();
+        let host = harness.get_by_label_contains("rds.amazonaws.com").rect();
+        assert!(
+            name.right() <= connect.left() + 0.5,
+            "{name:?} x {connect:?}"
+        );
+        assert!(
+            host.right() <= connect.left() + 0.5,
+            "{host:?} x {connect:?}"
+        );
+        assert!(host.height() < 20.0, "endereço numa linha só: {host:?}");
+        let tag = harness.get_by_label("LOCAL").rect();
+        assert!(tag.right() <= connect.left() + 0.5, "{tag:?} x {connect:?}");
+    }
+
+    #[test]
+    fn paleta_com_muitos_bancos_rola_e_segue_a_selecao() {
+        let (mut app, _rt, key) = connected_app();
+        let databases: Vec<hy_dbplus_engine::DatabaseInfo> = (0..60)
+            .map(|i| hy_dbplus_engine::DatabaseInfo {
+                name: format!("banco_{i:02}"),
+            })
+            .collect();
+        app.status.insert(
+            key.0.clone(),
+            crate::app::Status::Connected {
+                server_version: "15.15".into(),
+                databases,
+            },
+        );
+        let mut harness = connections_harness(app);
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::K);
+        harness.run();
+        let screen = 800.0;
+        let first = harness.get_by_label("banco_00").rect();
+        assert!(first.bottom() < screen);
+        // A lista é maior que a tela: o último fica fora até a seleção chegar nele.
+        assert!(harness.get_by_label("banco_59").rect().top() > screen);
+        harness.key_press(egui::Key::ArrowUp);
+        harness.run();
+        let last = harness.get_by_label("banco_59").rect();
+        assert!(last.bottom() <= screen, "seleção fora da tela: {last:?}");
+        assert!(
+            harness.get_by_label("banco_00").rect().top() < first.top(),
+            "a lista rolou"
+        );
     }
 }

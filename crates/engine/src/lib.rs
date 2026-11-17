@@ -25,7 +25,7 @@ pub use hy_dbplus_driver::{
 };
 pub use secrets::{KeyringSecrets, MemorySecrets, SecretStore};
 pub use session::{
-    Event, HISTORY_LIMIT, HistoryEntry, Page, QueryTabId, Session, Sessions, preview_sql,
+    Event, HISTORY_LIMIT, HistoryEntry, Page, QueryTabId, Session, Sessions, TestOk, preview_sql,
 };
 
 /// As sessões PostgreSQL: o único driver do MVP, pronto para a UI e os apps.

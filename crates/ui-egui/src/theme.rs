@@ -237,7 +237,23 @@ pub fn apply(ctx: &egui::Context) {
         style.spacing.item_spacing = egui::vec2(space::S, space::XS + 2.0);
         style.spacing.button_padding = egui::vec2(space::S + 2.0, space::XS);
         style.spacing.interact_size.y = size::CONTROL - space::XS;
+        style.spacing.scroll = scroll_style();
     });
+}
+
+/// Barra de rolagem sempre visível e com espaço próprio: a flutuante do egui só aparece com o
+/// ponteiro em cima, e a lista parecia não ter fim (pedido do Jean, 17/11/2026).
+pub fn scroll_style() -> egui::style::ScrollStyle {
+    egui::style::ScrollStyle {
+        bar_width: 8.0,
+        // A alça na cor do texto (com transparência): com a cor de fundo dos widgets, que no tema
+        // claro é a do campo (branca), ela sumia sobre o painel.
+        foreground_color: true,
+        dormant_handle_opacity: 0.35,
+        dormant_background_opacity: 0.15,
+        active_handle_opacity: 0.8,
+        ..egui::style::ScrollStyle::solid()
+    }
 }
 
 /// Os tokens da variante que o egui está mostrando agora. Sem sinal do sistema (Linux em X11,
@@ -390,6 +406,19 @@ mod tests {
             for bg in [t.panel, t.card, t.field] {
                 assert!(contrast(error_color(&ctx), bg) >= 4.5, "{theme:?}");
             }
+        }
+    }
+
+    #[test]
+    fn a_barra_de_rolagem_fica_visivel_e_com_espaco_proprio() {
+        let ctx = egui::Context::default();
+        apply(&ctx);
+        for theme in [Theme::Light, Theme::Dark] {
+            let scroll = ctx.style_of(theme).spacing.scroll;
+            assert!(!scroll.floating, "{theme:?}");
+            assert!(scroll.dormant_handle_opacity > 0.0, "{theme:?}");
+            assert!(scroll.allocated_width() > 0.0, "{theme:?}");
+            assert!(scroll.foreground_color, "{theme:?}: alça na cor do texto");
         }
     }
 }

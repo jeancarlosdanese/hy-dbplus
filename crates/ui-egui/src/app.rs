@@ -848,6 +848,9 @@ where
     pub(crate) fn apply_event(&mut self, event: Event) {
         let id = event.connection().clone();
         match event {
+            Event::TestFinished { result, .. } => {
+                crate::connections::test_finished(self, &id, result);
+            }
             Event::Connecting { .. } => {
                 self.status.insert(id, Status::Connecting);
             }

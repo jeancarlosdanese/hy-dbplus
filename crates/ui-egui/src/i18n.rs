@@ -52,8 +52,6 @@ texts! {
     connections => "Conexões", "Connections";
     loading => "Carregando…", "Loading…";
     // Cabeçalho das conexões e barra superior.
-    new_connection => "＋ Nova", "＋ New";
-    search => "Buscar", "Search";
     back_to_connections => "← Conexões", "← Connections";
     /// O botão da paleta, seguido do atalho.
     database => "Banco", "Database";
@@ -63,6 +61,41 @@ texts! {
     choose_database => "Escolher banco", "Choose database";
     no_match => "Nada com esse nome.", "Nothing with that name.";
     wait_for_run => "Aguarde a execução terminar", "Wait for the run to finish";
+    // Tela de conexões (FEAT-015 fase B).
+    new_connection_full => "Nova conexão", "New connection";
+    search_connections => "Buscar conexão", "Search connections";
+    no_connections_title => "Nenhuma conexão ainda", "No connections yet";
+    no_connections_hint => "Cadastre o primeiro servidor PostgreSQL. A senha fica no Keychain, nunca em arquivo.",
+        "Add your first PostgreSQL server. The password is stored in the Keychain, never in a file.";
+    open => "Abrir", "Open";
+    edit => "Editar", "Edit";
+    connected => "conectado", "connected";
+    connecting => "conectando…", "connecting…";
+    hint_navigate => "navegar", "navigate";
+    hint_connect => "conectar", "connect";
+    hint_new => "nova conexão", "new connection";
+    hint_edit => "editar", "edit";
+    // Formulário de conexão.
+    edit_connection => "Editar conexão", "Edit connection";
+    form_subtitle => "A senha fica no Keychain do sistema.", "The password is stored in the system Keychain.";
+    field_name => "Nome", "Name";
+    field_environment => "Ambiente", "Environment";
+    field_port => "Porta", "Port";
+    field_user => "Usuário", "User";
+    field_password => "Senha", "Password";
+    field_database => "Banco inicial", "Initial database";
+    password_hint_new => "Em branco usa a autenticação trust.", "Leave blank for trust authentication.";
+    password_hint_edit => "Em branco mantém a senha atual.", "Leave blank to keep the current password.";
+    error_name => "Dê um nome à conexão.", "Give the connection a name.";
+    error_host => "Informe o host.", "Enter the host.";
+    error_port => "Use um número de 1 a 65535.", "Use a number from 1 to 65535.";
+    error_user => "Informe o usuário.", "Enter the user.";
+    test_connection => "Testar conexão", "Test connection";
+    testing => "Testando…", "Testing…";
+    // Remover conexão.
+    remove_connection => "Remover conexão", "Remove connection";
+    remove_connection_body => "A senha guardada no Keychain e as consultas salvas desta conexão também são apagadas.",
+        "The password stored in the Keychain and the saved queries of this connection are deleted too.";
     // Seletor de idioma.
     /// A dica do seletor PT | EN.
     language_hint => "Idioma da interface", "Interface language";
@@ -72,13 +105,20 @@ texts! {
 }
 
 impl Tr {
-    /// A lista de conexões vazia, citando o botão de criar pelo mesmo nome que ele tem na tela.
-    pub fn no_connections(self) -> String {
-        let lead = match self.0 {
-            Language::PtBr => "Nenhuma conexão ainda. Crie a primeira em",
-            Language::En => "No connections yet. Create the first one with",
-        };
-        format!("{lead} {}.", self.new_connection())
+    /// "Conectou em 84 ms · PostgreSQL 16.4".
+    pub fn test_ok(self, elapsed_ms: u64, server_version: &str) -> String {
+        match self.0 {
+            Language::PtBr => format!("Conectou em {elapsed_ms} ms · PostgreSQL {server_version}"),
+            Language::En => format!("Connected in {elapsed_ms} ms · PostgreSQL {server_version}"),
+        }
+    }
+
+    /// O título do diálogo de remover, com o nome da conexão.
+    pub fn remove_connection_title(self, name: &str) -> String {
+        match self.0 {
+            Language::PtBr => format!("Remover a conexão {name}?"),
+            Language::En => format!("Remove the {name} connection?"),
+        }
     }
 }
 
@@ -153,14 +193,6 @@ mod tests {
         assert_eq!(EN.cancel(), "Cancel");
         assert_eq!(PT.connections(), "Conexões");
         assert_eq!(EN.connections(), "Connections");
-        assert_eq!(
-            PT.no_connections(),
-            "Nenhuma conexão ainda. Crie a primeira em ＋ Nova."
-        );
-        assert_eq!(
-            EN.no_connections(),
-            "No connections yet. Create the first one with ＋ New."
-        );
     }
 
     #[test]

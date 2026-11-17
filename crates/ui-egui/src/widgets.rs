@@ -96,6 +96,20 @@ pub fn icon_button(ui: &mut Ui, icon: &str, hint: &str) -> Response {
         .min_size(egui::vec2(size::CONTROL, size::CONTROL)),
     )
     .on_hover_text(hint)
+    .with_accessible_label(hint)
+}
+
+/// O nome que o leitor de tela (e o teste) usa para um widget só com ícone.
+trait AccessibleLabel {
+    fn with_accessible_label(self, label: &str) -> Self;
+}
+
+impl AccessibleLabel for Response {
+    fn with_accessible_label(self, label: &str) -> Self {
+        let enabled = self.enabled();
+        self.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+        self
+    }
 }
 
 /// Texto sobre o vermelho: branco no claro, escuro no escuro (o vermelho do escuro é claro).
@@ -258,6 +272,49 @@ pub fn dialog(
     action: Option<DialogAction<'_>>,
     body: impl FnOnce(&mut Ui),
 ) -> DialogOutcome {
+    dialog_full(
+        ctx,
+        DialogParts {
+            id,
+            title,
+            subtitle: None,
+            width: 380.0,
+            cancel,
+            action,
+        },
+        body,
+        |_| {},
+    )
+}
+
+/// O que um diálogo mostra fora do conteúdo.
+#[derive(Debug, Clone, Copy)]
+pub struct DialogParts<'a> {
+    pub id: egui::Id,
+    pub title: &'a str,
+    /// Uma linha sob o título.
+    pub subtitle: Option<&'a str>,
+    /// Largura mínima do conteúdo.
+    pub width: f32,
+    pub cancel: &'a str,
+    pub action: Option<DialogAction<'a>>,
+}
+
+/// [`dialog`] com subtítulo, largura e o lado esquerdo do rodapé (ex.: "Testar conexão").
+pub fn dialog_full(
+    ctx: &egui::Context,
+    parts: DialogParts<'_>,
+    body: impl FnOnce(&mut Ui),
+    footer_left: impl FnOnce(&mut Ui),
+) -> DialogOutcome {
+    let DialogParts {
+        id,
+        title,
+        subtitle,
+        width,
+        cancel,
+        action,
+    } = parts;
     let t = theme::current(ctx);
     let mut outcome = DialogOutcome::Open;
     let response = egui::Modal::new(id)
@@ -269,29 +326,47 @@ pub fn dialog(
                 .inner_margin(space::XL as i8),
         )
         .show(ctx, |ui| {
-            ui.set_min_width(380.0);
+            ui.set_min_width(width);
+            ui.set_max_width(width);
             ui.label(
                 RichText::new(title)
                     .size(text_size::HEADING)
                     .family(fonts::strong(ui.ctx()))
                     .color(t.text),
             );
+            if let Some(subtitle) = subtitle {
+                ui.label(RichText::new(subtitle).color(t.text_muted));
+            }
             ui.add_space(space::M);
             body(ui);
             ui.add_space(space::L);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if let Some(action) = action {
-                    let confirm = ui.add_enabled(
-                        action.enabled,
-                        styled_button(&t, fonts::strong(ui.ctx()), action.kind, None, action.label),
-                    );
-                    if confirm.clicked() {
-                        outcome = DialogOutcome::Confirm;
+            // Os botões primeiro, da direita: o lado esquerdo fica com a largura que sobra e um
+            // texto longo (erro do "Testar conexão") não passa por baixo deles.
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if let Some(action) = action {
+                        let confirm = ui.add_enabled(
+                            action.enabled,
+                            styled_button(
+                                &t,
+                                fonts::strong(ui.ctx()),
+                                action.kind,
+                                None,
+                                action.label,
+                            ),
+                        );
+                        if confirm.clicked() {
+                            outcome = DialogOutcome::Confirm;
+                        }
                     }
-                }
-                if button(ui, ButtonKind::Normal, None, cancel).clicked() {
-                    outcome = DialogOutcome::Cancel;
-                }
+                    if button(ui, ButtonKind::Normal, None, cancel).clicked() {
+                        outcome = DialogOutcome::Cancel;
+                    }
+                    ui.with_layout(
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        footer_left,
+                    );
+                });
             });
         });
     if outcome == DialogOutcome::Open && response.should_close() {

@@ -59,8 +59,10 @@ where
                         ui.vertical_centered(|ui| {
                             // Rótulos sem seleção de texto: o clique tem de chegar ao item.
                             ui.add(
-                                egui::Label::new(egui::RichText::new("🛢").size(18.0))
-                                    .selectable(false),
+                                egui::Label::new(
+                                    egui::RichText::new(crate::fonts::icon::DATABASE).size(18.0),
+                                )
+                                .selectable(false),
                             );
                             ui.add(
                                 egui::Label::new(egui::RichText::new(database).small().strong())

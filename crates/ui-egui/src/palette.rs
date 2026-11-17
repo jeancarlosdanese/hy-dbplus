@@ -56,12 +56,7 @@ where
                     egui::RichText::new("Nenhum banco com esse nome.").color(tokens.text_muted),
                 );
             }
-            for (i, name) in matches.iter().enumerate() {
-                let selected = i == palette.selected;
-                if ui.selectable_label(selected, name).clicked() {
-                    chosen = Some(name.clone());
-                }
-            }
+            // As teclas antes da lista: a seleção nova já sai desenhada e rolada neste frame.
             ui.input(|input| {
                 if input.key_pressed(egui::Key::Escape) {
                     close = true;
@@ -76,6 +71,27 @@ where
                     chosen = matches.get(palette.selected).cloned();
                 }
             });
+            // A lista rola dentro da janela: com muitos bancos ela passava do fim da tela (achado do
+            // Jean, 17/11/2026). A seleção pelas setas rola junto.
+            let moved = ui.input(|i| {
+                i.key_pressed(egui::Key::ArrowDown) || i.key_pressed(egui::Key::ArrowUp)
+            });
+            let max_height = (ctx.content_rect().height() - 220.0).max(120.0);
+            egui::ScrollArea::vertical()
+                .max_height(max_height)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    for (i, name) in matches.iter().enumerate() {
+                        let selected = i == palette.selected;
+                        let response = ui.selectable_label(selected, name);
+                        if response.clicked() {
+                            chosen = Some(name.clone());
+                        }
+                        if selected && moved {
+                            response.scroll_to_me(None);
+                        }
+                    }
+                });
         });
     if let Some(database) = chosen {
         app.palette = None;

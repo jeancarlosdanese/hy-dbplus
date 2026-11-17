@@ -12,6 +12,8 @@ const MONO: &[u8] = include_bytes!("../assets/fonts/JetBrainsMono-Regular.ttf");
 const INTER_NAME: &str = "inter";
 const INTER_SEMIBOLD_NAME: &str = "inter-semibold";
 const MONO_NAME: &str = "jetbrains-mono";
+/// A mono padrão do egui, reserva dos símbolos geométricos.
+const HACK: &str = "Hack";
 /// A família do texto forte (título, nome de conexão, aba ativa).
 const STRONG_FAMILY: &str = "strong";
 
@@ -94,6 +96,13 @@ pub fn definitions() -> FontDefinitions {
         .insert(0, MONO_NAME.to_owned());
     // Ícones como reserva da Proportional (segunda posição: não cobrem a Inter).
     icons::regular::add_to_fonts(&mut fonts);
+    // A Hack (mono padrão do egui, já no binário) por último: só ela tem ▦ ◫ ▸ ◂ ⇄ ▾, que os
+    // rótulos antigos usam; sem ela o egui desenha o quadrado de substituição.
+    if let Some(prop) = fonts.families.get_mut(&FontFamily::Proportional)
+        && fonts.font_data.contains_key(HACK)
+    {
+        prop.push(HACK.to_owned());
+    }
     let mut strong = fonts
         .families
         .get(&FontFamily::Proportional)
@@ -185,5 +194,22 @@ mod tests {
         let mut output = ctx.run_ui(Default::default(), |_| {});
         output.textures_delta.clear();
         assert_eq!(strong(&ctx), FontFamily::Name(STRONG_FAMILY.into()));
+    }
+
+    #[test]
+    fn os_simbolos_dos_rotulos_antigos_tem_glifo() {
+        let ctx = egui::Context::default();
+        install(&ctx);
+        let mut output = ctx.run_ui(Default::default(), |_| {});
+        output.textures_delta.clear();
+        let families = [FontFamily::Proportional, strong(&ctx)];
+        ctx.fonts_mut(|f| {
+            for family in families {
+                let id = egui::FontId::new(13.0, family.clone());
+                for ch in "▦◫▸◂⇄▾".chars() {
+                    assert!(f.has_glyph(&id, ch), "{family:?} sem glifo para {ch}");
+                }
+            }
+        });
     }
 }
