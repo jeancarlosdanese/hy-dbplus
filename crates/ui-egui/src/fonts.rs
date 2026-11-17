@@ -21,7 +21,7 @@ egui_phosphor::subset! {
     /// Os ícones do app: só estes vão para o binário. Ícone novo entra aqui.
     pub mod icons {
         use regular::{
-            ARROW_CLOCKWISE, ARROW_COUNTER_CLOCKWISE, CARET_DOWN, CARET_LEFT, CARET_RIGHT, CARET_UP,
+            ARROWS_LEFT_RIGHT, ARROW_CLOCKWISE, ARROW_COUNTER_CLOCKWISE, CARET_DOWN, CARET_LEFT, CARET_RIGHT, CARET_UP,
             CHECK, CLOCK, CODE, COPY, DATABASE, EYE, FAST_FORWARD, FUNCTION, KEY, LINK,
             MAGIC_WAND, MAGNIFYING_GLASS, PENCIL_SIMPLE, PLAY, PLUGS, PLUGS_CONNECTED, PLUS,
             SIDEBAR_SIMPLE, STOP, TABLE, TRASH, WARNING, WARNING_CIRCLE, X,
@@ -38,6 +38,8 @@ pub mod icon {
     pub const DATABASE: &str = r::DATABASE;
     pub const TABLE: &str = r::TABLE;
     pub const VIEW: &str = r::EYE;
+    /// Tabela externa (foreign table).
+    pub const FOREIGN_TABLE: &str = r::ARROWS_LEFT_RIGHT;
     pub const FUNCTION: &str = r::FUNCTION;
     pub const KEY: &str = r::KEY;
     pub const FOREIGN_KEY: &str = r::LINK;
@@ -96,8 +98,9 @@ pub fn definitions() -> FontDefinitions {
         .insert(0, MONO_NAME.to_owned());
     // Ícones como reserva da Proportional (segunda posição: não cobrem a Inter).
     icons::regular::add_to_fonts(&mut fonts);
-    // A Hack (mono padrão do egui, já no binário) por último: só ela tem ▦ ◫ ▸ ◂ ⇄ ▾, que os
-    // rótulos antigos usam; sem ela o egui desenha o quadrado de substituição.
+    // A Hack (mono padrão do egui, já no binário) por último: rede de segurança para símbolos que
+    // nem a Inter nem as reservas do egui têm (setas e formas geométricas, como ▸ ◂ ◫); sem ela o
+    // egui desenha o quadrado de substituição. Não pesa: a fonte já vem para o texto mono.
     if let Some(prop) = fonts.families.get_mut(&FontFamily::Proportional)
         && fonts.font_data.contains_key(HACK)
     {
@@ -197,7 +200,7 @@ mod tests {
     }
 
     #[test]
-    fn os_simbolos_dos_rotulos_antigos_tem_glifo() {
+    fn simbolos_em_uso_e_os_da_reserva_tem_glifo() {
         let ctx = egui::Context::default();
         install(&ctx);
         let mut output = ctx.run_ui(Default::default(), |_| {});
@@ -206,7 +209,8 @@ mod tests {
         ctx.fonts_mut(|f| {
             for family in families {
                 let id = egui::FontId::new(13.0, family.clone());
-                for ch in "▦◫▸◂⇄▾".chars() {
+                // ▲ ▼: a ordenação do grid; ▸ ◂ ◫: só a Hack tem.
+                for ch in "▲▼▸◂◫".chars() {
                     assert!(f.has_glyph(&id, ch), "{family:?} sem glifo para {ch}");
                 }
             }

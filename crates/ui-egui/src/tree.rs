@@ -1,11 +1,13 @@
-//! A árvore de objetos (tela 3.3): grupos **Functions** e **Tables**, views com ícone próprio,
-//! tabela expansível até as colunas `nome  tipo`, chave primária com ícone, busca e o seletor de
-//! schema no rodapé do painel.
+//! A árvore de objetos (tela 3.3, desenho da FEAT-015): grupos Tabelas e Funções com a contagem,
+//! tabela, view e tabela externa com ícone próprio, tabela expansível até as colunas `nome  tipo`,
+//! chave primária com ícone, busca e o seletor de schema com o recarregar no rodapé do painel.
 
 use hy_dbplus_engine::{Driver, TableKind, Template};
 
 use crate::app::{App, DbKey, SqlItem};
-use crate::theme;
+use crate::fonts::icon;
+use crate::widgets::AccessibleLabel;
+use crate::{theme, widgets};
 
 pub fn show<D>(app: &mut App<D>, ui: &mut egui::Ui, key: &DbKey)
 where
@@ -13,6 +15,7 @@ where
     D::Conn: 'static,
 {
     let tokens = theme::current(ui.ctx());
+    let tr = app.tr();
     let Some(ws) = app.workspaces.get(key) else {
         return;
     };
@@ -25,62 +28,72 @@ where
 
     // Rodapé: seletor de schema.
     let mut chosen_schema: Option<String> = None;
-    egui::Panel::bottom("tree-schema").show(ui, |ui| {
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new("Schema")
-                    .small()
-                    .color(tokens.text_muted),
-            );
-            egui::ComboBox::from_id_salt("schema")
-                .selected_text(current.clone().unwrap_or_else(|| "—".into()))
-                .show_ui(ui, |ui| {
-                    for name in &schemas {
-                        if ui
-                            .selectable_label(current.as_deref() == Some(name), name)
-                            .clicked()
-                        {
-                            chosen_schema = Some(name.clone());
-                        }
-                    }
-                });
-            if ui
-                .add_enabled(!locked, egui::Button::new("↻").small())
-                .on_hover_text("Recarregar o catálogo")
-                .on_disabled_hover_text(crate::data::LOCK_HINT)
-                .clicked()
-            {
-                app.deps.sessions.refresh(&id, &database);
-                if let Some(schema) = &current {
-                    if let Some(ws) = app.workspaces.get_mut(key) {
-                        ws.objects.remove(schema);
-                        ws.columns.clear();
-                        ws.expanded.clear(); // tabela aberta pede as colunas de novo
-                        // A estrutura cacheada sai; a aba que está em Structure/Index pede de novo
-                        // na hora, senão ficaria em branco até trocar de sub-aba.
-                        let mut again = Vec::new();
-                        for tab in ws.tabs.iter_mut().filter_map(crate::app::Tab::table_mut) {
-                            tab.structure = None;
-                            tab.structure_error = None;
-                            // Pedido já em voo não se repete: a resposta dele chega depois do refresh.
-                            let in_flight = tab.structure_requested;
-                            tab.structure_requested = tab.view != crate::app::TabView::Data;
-                            if tab.structure_requested && !in_flight {
-                                again.push((tab.schema.clone(), tab.table.clone()));
+    egui::Panel::bottom("tree-schema")
+        .frame(
+            egui::Frame::new()
+                .fill(tokens.panel)
+                .inner_margin(egui::Margin::symmetric(0, 6)),
+        )
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new("Schema")
+                        .size(theme::text_size::SMALL)
+                        .color(tokens.text_faint),
+                );
+                egui::ComboBox::from_id_salt("schema")
+                    .selected_text(current.clone().unwrap_or_else(|| "—".into()))
+                    .show_ui(ui, |ui| {
+                        for name in &schemas {
+                            if ui
+                                .selectable_label(current.as_deref() == Some(name), name)
+                                .clicked()
+                            {
+                                chosen_schema = Some(name.clone());
                             }
                         }
-                        ws.loading = true;
-                        for (schema, table) in again {
-                            app.deps
-                                .sessions
-                                .load_structure(&id, &database, &schema, &table);
+                    });
+                if widgets::icon_button_full(
+                    ui,
+                    !locked,
+                    icon::REFRESH,
+                    tr.reload_catalog(),
+                    None,
+                    crate::data::LOCK_HINT,
+                )
+                .clicked()
+                {
+                    app.deps.sessions.refresh(&id, &database);
+                    if let Some(schema) = &current {
+                        if let Some(ws) = app.workspaces.get_mut(key) {
+                            ws.objects.remove(schema);
+                            ws.columns.clear();
+                            ws.expanded.clear(); // tabela aberta pede as colunas de novo
+                            // A estrutura cacheada sai; a aba que está em Structure/Index pede de novo
+                            // na hora, senão ficaria em branco até trocar de sub-aba.
+                            let mut again = Vec::new();
+                            for tab in ws.tabs.iter_mut().filter_map(crate::app::Tab::table_mut) {
+                                tab.structure = None;
+                                tab.structure_error = None;
+                                // Pedido já em voo não se repete: a resposta dele chega depois do refresh.
+                                let in_flight = tab.structure_requested;
+                                tab.structure_requested = tab.view != crate::app::TabView::Data;
+                                if tab.structure_requested && !in_flight {
+                                    again.push((tab.schema.clone(), tab.table.clone()));
+                                }
+                            }
+                            ws.loading = true;
+                            for (schema, table) in again {
+                                app.deps
+                                    .sessions
+                                    .load_structure(&id, &database, &schema, &table);
+                            }
                         }
+                        app.deps.sessions.load_schema(&id, &database, schema);
                     }
-                    app.deps.sessions.load_schema(&id, &database, schema);
                 }
-            }
+            });
         });
-    });
     if let Some(schema) = chosen_schema {
         if let Some(ws) = app.workspaces.get_mut(key) {
             ws.current_schema = Some(schema.clone());
@@ -97,13 +110,13 @@ where
         };
         ui.add(
             egui::TextEdit::singleline(&mut ws.search)
-                .hint_text("Buscar")
-                .desired_width(f32::INFINITY),
+                .hint_text(format!("{} {}", icon::SEARCH, tr.search_tree()))
+                .desired_width(f32::INFINITY)
+                .min_size(egui::vec2(0.0, theme::size::CONTROL)),
         );
-        ui.add_space(4.0);
+        ui.add_space(theme::space::S);
         if let Some(error) = ws.error.clone() {
-            ui.colored_label(theme::error_color(ui.ctx()), error);
-            if ui.small_button("Tentar de novo").clicked()
+            if widgets::banner(ui, widgets::BannerKind::Error, &error, Some(tr.retry()))
                 && let Some(schema) = ws.current_schema.clone()
             {
                 ws.error = None;
@@ -114,15 +127,15 @@ where
             return;
         }
         let Some(schema) = ws.current_schema.clone() else {
-            ui.label(egui::RichText::new("Banco sem schema visível.").color(tokens.text_muted));
+            ui.label(egui::RichText::new(tr.no_visible_schema()).color(tokens.text_muted));
             return;
         };
         let Some((tables, functions)) = ws.objects.get(&schema).cloned() else {
             ui.label(
                 egui::RichText::new(if ws.loading {
-                    "Carregando…"
+                    tr.loading()
                 } else {
-                    "Sem dados."
+                    tr.no_data()
                 })
                 .color(tokens.text_muted),
             );
@@ -141,21 +154,17 @@ where
         let mut to_open: Option<String> = None;
         let mut to_generate: Option<(String, SqlItem)> = None;
         egui::ScrollArea::vertical().show(ui, |ui| {
-            egui::CollapsingHeader::new(format!("Functions ({})", functions.len()))
-                .default_open(false)
-                .show(ui, |ui| {
-                    for f in &functions {
-                        ui.label(format!("ƒ {}", f.signature()));
-                    }
-                });
-            egui::CollapsingHeader::new(format!("Tables ({})", tables.len()))
+            egui::CollapsingHeader::new(format!("{} {}", tr.tables(), tables.len()))
+                // Id fixo: o rótulo muda com o idioma e a contagem, e o estado das tabelas abertas
+                // é guardado debaixo deste id.
+                .id_salt("tree-tables")
                 .default_open(true)
                 .show(ui, |ui| {
                     for t in &tables {
-                        let icon = match t.kind {
-                            TableKind::View | TableKind::MaterializedView => "◫",
-                            TableKind::Foreign => "⇄",
-                            TableKind::Table => "▦",
+                        let kind_icon = match t.kind {
+                            TableKind::View | TableKind::MaterializedView => icon::VIEW,
+                            TableKind::Foreign => icon::FOREIGN_TABLE,
+                            TableKind::Table => icon::TABLE,
                         };
                         let key = (schema.clone(), t.name.clone());
                         // A seta expande as colunas (botão com rótulo, acessível); o nome abre a aba Data (tela 3.4).
@@ -169,12 +178,22 @@ where
                         let was_open = state.is_open();
                         let header = ui
                             .horizontal(|ui| {
+                                let (caret, caret_hint) = if was_open {
+                                    (icon::COLLAPSE, tr.hide_columns())
+                                } else {
+                                    (icon::EXPAND, tr.show_columns())
+                                };
                                 if ui
                                     .add(
-                                        egui::Button::new(if was_open { "▾" } else { "▸" })
-                                            .frame(false)
-                                            .small(),
+                                        egui::Button::new(
+                                            egui::RichText::new(caret)
+                                                .size(theme::text_size::SMALL)
+                                                .color(tokens.text_faint),
+                                        )
+                                        .frame(false),
                                     )
+                                    .on_hover_text(caret_hint)
+                                    .with_accessible_label(caret_hint)
                                     .clicked()
                                 {
                                     state.toggle(ui);
@@ -183,8 +202,8 @@ where
                                     .data()
                                     .is_some_and(|d| d.schema == schema && d.table == t.name);
                                 // Abre numa aba nova ou foca a da tabela: nada trava a troca.
-                                let response =
-                                    ui.selectable_label(selected, format!("{icon} {}", t.name));
+                                let response = ui
+                                    .selectable_label(selected, format!("{kind_icon} {}", t.name));
                                 if response.clicked() {
                                     to_open = Some(t.name.clone());
                                 }
@@ -215,20 +234,24 @@ where
                         state.show_body_indented(&header, ui, |ui| match ws.columns.get(&key) {
                             Some(columns) => {
                                 for c in columns {
-                                    let marker = if c.is_primary_key { "🔑" } else { "  " };
                                     ui.horizontal(|ui| {
-                                        ui.label(format!("{marker} {}", c.name));
+                                        if c.is_primary_key {
+                                            ui.label(format!("{} {}", icon::KEY, c.name));
+                                        } else {
+                                            ui.add_space(theme::space::L);
+                                            ui.label(&c.name);
+                                        }
                                         ui.label(
                                             egui::RichText::new(&c.data_type)
-                                                .small()
-                                                .color(tokens.text_muted),
+                                                .size(theme::text_size::SMALL)
+                                                .color(tokens.text_faint),
                                         );
                                     });
                                 }
                             }
                             None => {
                                 ui.label(
-                                    egui::RichText::new("carregando…")
+                                    egui::RichText::new(tr.loading_columns())
                                         .small()
                                         .color(tokens.text_muted),
                                 );
@@ -242,6 +265,14 @@ where
                             // Fechada: reabrir pede de novo (o engine responde do cache sem query).
                             ws.expanded.remove(&key);
                         }
+                    }
+                });
+            egui::CollapsingHeader::new(format!("{} {}", tr.functions(), functions.len()))
+                .id_salt("tree-functions")
+                .default_open(false)
+                .show(ui, |ui| {
+                    for f in &functions {
+                        ui.label(format!("{} {}", icon::FUNCTION, f.signature()));
                     }
                 });
         });
@@ -261,6 +292,20 @@ where
 
 #[cfg(test)]
 mod tests {
+
+    /// O rótulo da tabela na árvore: o ícone e o nome.
+    fn table(name: &str) -> String {
+        format!("{} {name}", crate::fonts::icon::TABLE)
+    }
+
+    fn view(name: &str) -> String {
+        format!("{} {name}", crate::fonts::icon::VIEW)
+    }
+
+    /// A coluna de chave primária na árvore.
+    fn key_col(name: &str) -> String {
+        format!("{} {name}", crate::fonts::icon::KEY)
+    }
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
@@ -609,7 +654,7 @@ mod tests {
         let id = c.id.clone();
         let mut harness = Harness::new_ui_state(|ui, app: &mut App<FakeDriver>| app.ui(ui), app);
         wait_for(&mut harness, "Connected", |app| app.view == View::Workspace);
-        harness.get_by_label("Nenhum banco selecionado.");
+        harness.get_by_label("Nenhum banco aberto");
 
         // ⌘K abre a paleta com os bancos; escolher "loja" abre o banco e carrega public.
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::K);
@@ -619,10 +664,10 @@ mod tests {
             app.workspace_of(&id)
                 .is_some_and(|ws| ws.objects.contains_key("public"))
         });
-        harness.get_by_label_contains(": loja");
-        harness.get_by_label("Tables (2)");
-        harness.get_by_label("Functions (1)");
-        harness.get_by_label("◫ v_pedido");
+        harness.get_by_label_contains("/ loja");
+        harness.get_by_label("Tabelas 2");
+        harness.get_by_label("Funções 1");
+        harness.get_by_label(&view("v_pedido"));
         assert_eq!(
             queries.load(Ordering::SeqCst),
             3,
@@ -630,14 +675,18 @@ mod tests {
         );
 
         // Expandir a tabela pede as colunas uma vez; a chave primária tem o ícone.
-        harness.get_all_by_label("▸").next().unwrap().click();
+        harness
+            .get_all_by_label("Mostrar colunas")
+            .next()
+            .unwrap()
+            .click();
         wait_for(&mut harness, "ColumnsLoaded", |app| {
             app.workspace_of(&id).is_some_and(|ws| {
                 ws.columns
                     .contains_key(&("public".to_owned(), "pedido".to_owned()))
             })
         });
-        harness.get_by_label("🔑 id");
+        harness.get_by_label(&key_col("id"));
         harness.get_by_label("integer");
         harness.get_by_label("character varying(80)");
         assert_eq!(queries.load(Ordering::SeqCst), 4);
@@ -755,7 +804,7 @@ mod tests {
         });
         harness.get_by_label_contains("template0: ");
         harness.get_by_label_contains("not currently accepting");
-        harness.get_by_label("Nenhum banco selecionado.");
+        harness.get_by_label("Nenhum banco aberto");
         assert!(harness.state().deps.sessions.is_open(&id));
     }
 
@@ -779,14 +828,18 @@ mod tests {
             app.workspace_of(&id)
                 .is_some_and(|ws| ws.objects.contains_key("public"))
         });
-        harness.get_all_by_label("▸").next().unwrap().click();
+        harness
+            .get_all_by_label("Mostrar colunas")
+            .next()
+            .unwrap()
+            .click();
         wait_for(&mut harness, "ColumnsLoaded", |app| {
             app.workspace_of(&id)
                 .is_some_and(|ws| !ws.columns.is_empty())
         });
-        harness.get_by_label("🔑 id");
+        harness.get_by_label(&key_col("id"));
         let before = queries.load(Ordering::SeqCst);
-        harness.get_by_label("↻").click();
+        harness.get_by_label("Recarregar o catálogo").click();
         wait_for(&mut harness, "cache esvaziado", |app| {
             app.workspace_of(&id)
                 .is_some_and(|ws| ws.columns.is_empty())
@@ -795,7 +848,7 @@ mod tests {
             app.workspace_of(&id)
                 .is_some_and(|ws| !ws.columns.is_empty())
         });
-        harness.get_by_label("🔑 id");
+        harness.get_by_label(&key_col("id"));
         assert_eq!(
             queries.load(Ordering::SeqCst),
             before + 3,
@@ -867,10 +920,10 @@ mod tests {
             app.workspace_of(&id)
                 .is_some_and(|ws| ws.objects.contains_key("public"))
         });
-        harness.get_by_label("Escolha uma tabela na árvore.");
+        harness.get_by_label_contains("Clique numa tabela na árvore");
 
         // O nome abre a aba Data: página, contagem e tamanhos.
-        harness.get_by_label("▦ pedido").click();
+        harness.get_by_label(&table("pedido")).click();
         wait_for(&mut harness, "PageLoaded", |app| {
             app.workspace_of(&id)
                 .is_some_and(|ws| ws.data().is_some_and(|d| d.rows.is_some()))
@@ -997,21 +1050,27 @@ mod tests {
         harness.get_by_label("Copiar").click_accesskit();
         harness.step();
         // O botão da barra esconde e mostra o painel.
-        harness.get_by_label("Painel ▸").click_accesskit();
+        harness
+            .get_by_label("Esconder o painel de registro")
+            .click_accesskit();
         harness.step();
         harness.step();
         assert!(
             harness.query_by_label("2 linhas").is_none(),
             "painel ainda visível"
         );
-        harness.get_by_label("◂ Painel").click_accesskit();
+        harness
+            .get_by_label("Mostrar o painel de registro")
+            .click_accesskit();
         harness.step();
         harness.step();
         harness.get_by_label("2 linhas");
         // Fechado pelo botão, o painel não reabre num clique de linha: só a primeira seleção abre.
         // O clique é numa célula de valor (nome "a" da linha 102), não no número: o texto da célula não
         // pode engolir o clique da linha (o Jean só conseguia selecionar pelo número, 22/10/2026).
-        harness.get_by_label("Painel ▸").click_accesskit();
+        harness
+            .get_by_label("Esconder o painel de registro")
+            .click_accesskit();
         harness.step();
         harness.get_by_label("a").click();
         harness.step();
@@ -1084,7 +1143,7 @@ mod tests {
                 })
             });
         };
-        open(&mut harness, "▦ pedido", "pedido");
+        open(&mut harness, &table("pedido"), "pedido");
         let tab = |app: &App<FakeDriver>| app.workspace_of(&id).unwrap().data().cloned().unwrap();
 
         // Duplo clique na célula "a" (nome da linha 1) abre o campo; digitar e Enter deixa pendente.
@@ -1249,7 +1308,7 @@ mod tests {
         assert!(!tab(harness.state()).has_changes());
 
         // Tabela sem chave primária: aviso, e o duplo clique não abre nada.
-        open(&mut harness, "◫ v_pedido", "v_pedido");
+        open(&mut harness, &view("v_pedido"), "v_pedido");
         harness.get_by_label(crate::data::READ_ONLY_HINT);
         double_click(&mut harness, "a");
         assert!(tab(harness.state()).editing.is_none());
@@ -1659,10 +1718,11 @@ mod tests {
             });
         };
         open_db(&mut harness, "loja");
-        harness.get_by_label("▦ pedido").click();
+        harness.get_by_label(&table("pedido")).click();
         wait_for(&mut harness, "tabela carregada", |app| {
             app.workspace_of(&id).is_some_and(|ws| {
-                ws.data().is_some_and(|d| d.rows.is_some() && !d.loading)
+                ws.data()
+                    .is_some_and(|d| d.rows.is_some() && d.stats.is_some() && !d.loading)
                     && ws
                         .columns
                         .contains_key(&("public".to_owned(), "pedido".to_owned()))
@@ -1688,9 +1748,9 @@ mod tests {
                 (id.clone(), "postgres".to_owned())
             ]
         );
-        harness.get_by_label("Escolha uma tabela na árvore.");
+        harness.get_by_label_contains("Clique numa tabela na árvore");
         assert!(harness.query_by_label("1 alteração").is_none());
-        harness.get_by_label_contains(": postgres");
+        harness.get_by_label_contains("/ postgres");
 
         // Volta ao primeiro pela faixa: aba e pendência intactas.
         harness.get_all_by_label("loja").next().unwrap().click();
@@ -1725,16 +1785,20 @@ mod tests {
         // × no banco com pendência, com clique de ponteiro (o × fica dentro do item clicável):
         // confirmação; Cancelar mantém; Descartar e fechar tira da faixa.
         let close_first = |harness: &mut Harness<'_, App<FakeDriver>>| {
-            harness.get_all_by_label("×").next().unwrap().click();
+            harness
+                .get_all_by_label("Fechar este banco")
+                .next()
+                .unwrap()
+                .click();
             harness.step();
             harness.step();
         };
         close_first(&mut harness);
-        harness.get_by_label("Fechar o banco?");
+        harness.get_by_label_contains("Fechar o banco ");
         harness.get_by_label("Cancelar").click_accesskit();
         harness.step();
         harness.step();
-        assert!(harness.query_by_label("Fechar o banco?").is_none());
+        assert!(harness.query_by_label_contains("Fechar o banco ").is_none());
         assert_eq!(harness.state().rail.len(), 2);
         close_first(&mut harness);
         harness.get_by_label("Descartar e fechar").click_accesskit();
@@ -1744,14 +1808,14 @@ mod tests {
             Some("postgres")
         );
         assert!(harness.query_by_label("1 alteração").is_none());
-        harness.get_by_label("Escolha uma tabela na árvore.");
+        harness.get_by_label_contains("Clique numa tabela na árvore");
 
         // Fechar o único banco: faixa vazia, conexão em foco, convite ao ⌘K.
         close_first(&mut harness);
         wait_for(&mut harness, "faixa vazia", |app| app.rail.is_empty());
         assert!(harness.state().active.is_none());
         assert_eq!(harness.state().view, View::Workspace);
-        harness.get_by_label("Nenhum banco selecionado.");
+        harness.get_by_label("Nenhum banco aberto");
     }
 
     /// FEAT-008 passo 2: cada tabela abre numa aba; clicar na tabela já aberta foca a aba; trocar de
@@ -1790,7 +1854,7 @@ mod tests {
             let ws = app.workspace_of(&id).unwrap();
             (ws.tabs.len(), ws.active_tab)
         };
-        open(&mut harness, "▦ pedido", "pedido");
+        open(&mut harness, &table("pedido"), "pedido");
         double_click(&mut harness, "a");
         harness
             .input_mut()
@@ -1803,16 +1867,16 @@ mod tests {
         harness.get_by_label("1 alteração");
 
         // Segunda tabela: segunda aba, ativa, sem pendência; a primeira segue com a dela.
-        open(&mut harness, "◫ v_pedido", "v_pedido");
+        open(&mut harness, &view("v_pedido"), "v_pedido");
         assert_eq!(ws(harness.state()), (2, Some(1)));
         assert!(harness.query_by_label("1 alteração").is_none());
-        harness.get_by_label("● pedido").click_accesskit();
+        harness.get_by_label("pedido").click_accesskit();
         harness.step();
         harness.step();
         assert_eq!(ws(harness.state()), (2, Some(0)));
         harness.get_by_label("1 alteração");
         // Clicar na árvore numa tabela já aberta só foca a aba dela.
-        harness.get_by_label("◫ v_pedido").click();
+        harness.get_by_label(&view("v_pedido")).click();
         harness.step();
         harness.step();
         assert_eq!(ws(harness.state()), (2, Some(1)));
@@ -1826,28 +1890,28 @@ mod tests {
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::W);
         harness.step();
         harness.step();
-        harness.get_by_label("Fechar a aba?");
+        harness.get_by_label_contains("Fechar a aba ");
         harness.get_by_label("Cancelar").click_accesskit();
         harness.step();
         harness.step();
         assert_eq!(ws(harness.state()), (1, Some(0)));
         // × da aba (o último ×: o primeiro é o do banco na faixa) com "Descartar e fechar".
         harness
-            .get_all_by_label("×")
+            .get_all_by_label("Fechar a aba")
             .last()
             .unwrap()
             .click_accesskit();
         harness.step();
         harness.step();
-        harness.get_by_label("Fechar a aba?");
+        harness.get_by_label_contains("Fechar a aba ");
         harness.get_by_label("Descartar e fechar").click_accesskit();
         harness.step();
         harness.step();
         assert_eq!(ws(harness.state()), (0, None));
-        harness.get_by_label("Escolha uma tabela na árvore.");
+        harness.get_by_label_contains("Clique numa tabela na árvore");
 
         // Desconectar com pendência: confirmação; Cancelar mantém; Descartar e fechar desconecta.
-        open(&mut harness, "▦ pedido", "pedido");
+        open(&mut harness, &table("pedido"), "pedido");
         double_click(&mut harness, "a");
         harness
             .input_mut()
@@ -1861,7 +1925,7 @@ mod tests {
         harness.get_by_label("Desconectar").click_accesskit();
         harness.step();
         harness.step();
-        harness.get_by_label("Desconectar?");
+        harness.get_by_label_contains("Desconectar ");
         harness.get_by_label("Cancelar").click_accesskit();
         harness.step();
         harness.step();
@@ -1869,7 +1933,9 @@ mod tests {
         harness.get_by_label("Desconectar").click_accesskit();
         harness.step();
         harness.step();
-        harness.get_by_label("Descartar e fechar").click_accesskit();
+        harness
+            .get_by_label("Descartar e desconectar")
+            .click_accesskit();
         wait_for(&mut harness, "Disconnected", |app| {
             app.view == View::Connections
         });
@@ -2154,7 +2220,7 @@ mod tests {
             app.workspace_of(&id)
                 .is_some_and(|ws| ws.objects.contains_key("public"))
         });
-        harness.get_by_label("▦ pedido").click();
+        harness.get_by_label(&table("pedido")).click();
         wait_for(&mut harness, "tabela carregada", |app| {
             app.workspace_of(&id).is_some_and(|ws| {
                 ws.data()
@@ -2172,6 +2238,7 @@ mod tests {
             before + 4,
             "cabeçalho, colunas, restrições, índices"
         );
+        // A aba Structure ainda usa o 🔑 (o desenho dela é da fase D).
         harness.get_by_label("🔑 id");
         harness.get_by_label("character varying(80)");
         harness.get_by_label("pedido_cliente_fkey");
@@ -2218,7 +2285,7 @@ mod tests {
         // ↻ zera a estrutura; falha ao reler mostra o erro com "Tentar de novo" (sem "Carregando…"),
         // e o botão pede de novo quando o servidor volta.
         fail_structure.store(true, Ordering::SeqCst);
-        harness.get_by_label("↻").click();
+        harness.get_by_label("Recarregar o catálogo").click();
         wait_for(&mut harness, "StructureFailed", |app| {
             app.workspace_of(&id)
                 .is_some_and(|ws| ws.data().is_some_and(|d| d.structure_error.is_some()))
@@ -2239,7 +2306,7 @@ mod tests {
         );
 
         // View: Structure mostra a definição.
-        harness.get_by_label("◫ v_pedido").click();
+        harness.get_by_label(&view("v_pedido")).click();
         wait_for(&mut harness, "aba da view", |app| {
             app.workspace_of(&id).is_some_and(|ws| {
                 ws.data()
@@ -2280,7 +2347,7 @@ mod tests {
         let query = |app: &App<FakeDriver>| app.workspace_of(&id).unwrap().query().cloned();
 
         // + SQL abre "SQL Query 1" ativa, com o editor vazio.
-        harness.get_by_label("+ SQL").click_accesskit();
+        harness.get_by_label("Nova consulta SQL").click_accesskit();
         harness.step();
         harness.step();
         assert_eq!(
@@ -2484,7 +2551,7 @@ mod tests {
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::W);
         harness.step();
         assert!(
-            harness.query_by_label("Fechar a aba?").is_none(),
+            harness.query_by_label_contains("Fechar a aba ").is_none(),
             "⌘W com SQL rodando"
         );
         harness.get_by_label("Cancelar").click_accesskit();
@@ -2627,12 +2694,12 @@ mod tests {
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::W);
         harness.step();
         harness.step();
-        harness.get_by_label("Fechar a aba?");
+        harness.get_by_label_contains("Fechar a aba ");
         harness.get_by_label("Descartar e fechar").click_accesskit();
         harness.step();
         harness.step();
         assert!(harness.state().workspace_of(&id).unwrap().tabs.is_empty());
-        harness.get_by_label("Escolha uma tabela na árvore.");
+        harness.get_by_label_contains("Clique numa tabela na árvore");
         // ⌘T abre outra.
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
         harness.step();
@@ -2742,7 +2809,7 @@ mod tests {
         };
         // Digita na aba 1 e abre outra com ⌘T: a troca de aba salva a 1 (o editor dela some da
         // tela, então é o varrimento por frame que grava).
-        harness.get_by_label("+ SQL").click_accesskit();
+        harness.get_by_label("Nova consulta SQL").click_accesskit();
         harness.step();
         type_sql(&mut harness, "select 1");
         assert!(!file.exists(), "salvou com o editor em foco");
@@ -2761,9 +2828,13 @@ mod tests {
         assert_eq!(query(harness.state()).unwrap().saved, "select 2");
 
         // × do banco com texto: fecha sem perguntar; os arquivos ficam.
-        harness.get_all_by_label("×").next().unwrap().click();
+        harness
+            .get_all_by_label("Fechar este banco")
+            .next()
+            .unwrap()
+            .click();
         wait_for(&mut harness, "DatabaseClosed", |app| app.rail.is_empty());
-        assert!(harness.query_by_label("Fechar o banco?").is_none());
+        assert!(harness.query_by_label_contains("Fechar o banco ").is_none());
         assert!(file.exists() && file2.exists());
 
         // Abrir de novo: as abas voltam na ordem, a primeira ativa, com o texto e sem resultados;
@@ -2797,7 +2868,7 @@ mod tests {
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::W);
         harness.step();
         harness.step();
-        harness.get_by_label("Fechar a aba?");
+        harness.get_by_label_contains("Fechar a aba ");
         harness.get_by_label("Descartar e fechar").click_accesskit();
         harness.step();
         harness.step();
@@ -2805,7 +2876,7 @@ mod tests {
         assert!(file.exists(), "apagou o arquivo da outra aba");
         assert_eq!(harness.state().workspace_of(&id).unwrap().tabs.len(), 1);
         // A numeração não volta atrás dentro do banco aberto.
-        harness.get_by_label("+ SQL").click_accesskit();
+        harness.get_by_label("Nova consulta SQL").click_accesskit();
         harness.step();
         harness.step();
         assert_eq!(
@@ -2997,7 +3068,7 @@ mod tests {
         let query = |app: &App<FakeDriver>| app.workspace_of(&id).unwrap().query().cloned();
         // INSERT numa tabela sem colunas carregadas: o pedido fica pendente, as colunas chegam e
         // o SQL entra numa aba SQL nova, ativa, com o cursor no começo e o editor com o foco.
-        harness.get_by_label("▦ pedido").click_secondary();
+        harness.get_by_label(&table("pedido")).click_secondary();
         harness.step();
         harness.get_by_label("INSERT").click_accesskit();
         harness.step();
@@ -3026,7 +3097,7 @@ mod tests {
 
         // DELETE com as colunas já carregadas: na mesma aba, no fim, linha em branco antes, cursor no
         // DELETE, que é o statement sob o cursor (Run Current rodaria só ele).
-        harness.get_by_label("▦ pedido").click_secondary();
+        harness.get_by_label(&table("pedido")).click_secondary();
         harness.step();
         harness.get_by_label("DELETE").click_accesskit();
         harness.step();
@@ -3052,7 +3123,7 @@ mod tests {
         harness.step();
 
         // CREATE espera a estrutura (StructureLoaded completa o pedido).
-        harness.get_by_label("▦ pedido").click_secondary();
+        harness.get_by_label(&table("pedido")).click_secondary();
         harness.step();
         harness.get_by_label("CREATE").click_accesskit();
         harness.step();
@@ -3070,7 +3141,7 @@ mod tests {
 
         // View: sem INSERT/UPDATE/DELETE/TRUNCATE; DROP é de view. Falha da estrutura no CREATE da
         // view descarta o pedido e avisa.
-        harness.get_by_label("◫ v_pedido").click_secondary();
+        harness.get_by_label(&view("v_pedido")).click_secondary();
         harness.step();
         assert!(harness.query_by_label("INSERT").is_none());
         assert!(harness.query_by_label("TRUNCATE").is_none());
@@ -3086,7 +3157,7 @@ mod tests {
         harness.key_press(egui::Key::Escape);
         harness.step();
         fail_structure.store(true, Ordering::SeqCst);
-        harness.get_by_label("◫ v_pedido").click_secondary();
+        harness.get_by_label(&view("v_pedido")).click_secondary();
         harness.step();
         harness.get_by_label("CREATE").click_accesskit();
         harness.step();
@@ -3158,7 +3229,7 @@ mod tests {
             harness.step();
             harness.step();
         };
-        harness.get_by_label("+ SQL").click_accesskit();
+        harness.get_by_label("Nova consulta SQL").click_accesskit();
         harness.step();
         harness.step();
         harness
@@ -3841,5 +3912,151 @@ mod tests {
             harness.get_by_label("banco_00").rect().top() < first.top(),
             "a lista rolou"
         );
+    }
+
+    // ---- Workspace (FEAT-015 fase C) ----
+
+    #[test]
+    fn fechar_aba_com_pendencia_diz_quanto_se_perde_e_oferece_revisar_e_gravar() {
+        let (mut app, _rt, key) = connected_app();
+        app.open_table(&key, "public", "pedido");
+        let mut harness = connections_harness(app);
+        wait_for(&mut harness, "pedido carregada", |app| {
+            app.workspaces.get(&key).is_some_and(|ws| {
+                ws.data().is_some_and(|d| d.rows.is_some() && !d.loading)
+                    && ws
+                        .columns
+                        .contains_key(&("public".to_owned(), "pedido".to_owned()))
+            })
+        });
+        if let Some(tab) = harness
+            .state_mut()
+            .workspaces
+            .get_mut(&key)
+            .and_then(|ws| ws.data_mut())
+        {
+            tab.pending
+                .insert(0, [("nome".to_owned(), Some("x".to_owned()))].into());
+            tab.deleted.insert(1);
+        }
+        // Um frame antes do clique: a pendência foi posta direto no estado.
+        let close = |harness: &mut Harness<'_, App<FakeDriver>>| {
+            harness.step();
+            harness.get_by_label("Fechar a aba").click_accesskit();
+            harness.step();
+            harness.step();
+        };
+        close(&mut harness);
+        harness.get_by_label("Fechar a aba pedido?");
+        harness.get_by_label(
+            "Há 1 alteração e 1 exclusão que ainda não foram gravadas. Se fechar, elas se perdem.",
+        );
+        // Esc cancela: a aba fica, com a pendência.
+        harness.key_press(egui::Key::Escape);
+        harness.step();
+        harness.step();
+        assert!(harness.state().confirm_close.is_none());
+        assert!(tab_of(harness.state(), &key).has_changes());
+        // Revisar e gravar: nada fecha e a gravação da aba abre.
+        close(&mut harness);
+        harness.get_by_label("Revisar e gravar").click_accesskit();
+        harness.step();
+        harness.step();
+        assert!(harness.state().confirm_close.is_none());
+        let tab = tab_of(harness.state(), &key);
+        assert!(tab.commit.is_some(), "a caixa de gravação abriu");
+        assert!(tab.has_changes());
+        // Descartar e fechar: a aba sai.
+        if let Some(tab) = harness
+            .state_mut()
+            .workspaces
+            .get_mut(&key)
+            .and_then(|ws| ws.data_mut())
+        {
+            tab.commit = None;
+        }
+        close(&mut harness);
+        harness.get_by_label("Descartar e fechar").click_accesskit();
+        harness.step();
+        harness.step();
+        assert!(harness.state().workspaces[&key].data().is_none());
+    }
+
+    #[test]
+    fn barra_superior_faixa_e_nenhum_controle_morto() {
+        let (mut app, _rt, _key) = connected_app();
+        app.side_panel_open = false;
+        let mut harness = connections_harness(app);
+        harness.run();
+        harness.get_by_label("pg-localhost / loja");
+        harness.get_by_label("PostgreSQL 15.15");
+        harness.get_by_label("LOCAL");
+        // Queries e History (M7) não aparecem como texto sem ação.
+        for dead in ["Items", "Queries", "History"] {
+            assert!(harness.query_by_label(dead).is_none(), "{dead}");
+        }
+        // O painel de registro pelo ícone.
+        harness.get_by_label("Mostrar o painel de registro").click();
+        harness.run();
+        assert!(harness.state().side_panel_open);
+        // O "+" da faixa abre a paleta; Esc fecha.
+        harness.get_by_label("Abrir outro banco").click();
+        harness.run();
+        assert!(harness.state().palette.is_some());
+        harness.get_by_label("Bancos");
+        harness.key_press(egui::Key::Escape);
+        harness.run();
+        assert!(harness.state().palette.is_none());
+        // Clique fora também fecha.
+        harness.get_by_label_contains("Ir para banco").click();
+        harness.run();
+        assert!(harness.state().palette.is_some());
+        let pos = egui::pos2(20.0, 780.0);
+        harness.hover_at(pos);
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        harness.run();
+        assert!(harness.state().palette.is_none());
+    }
+
+    #[test]
+    fn workspace_em_ingles() {
+        let (mut app, _rt, _key) = connected_app();
+        app.lang = hy_dbplus_engine::Language::En;
+        let mut harness = connections_harness(app);
+        harness.run();
+        harness.get_by_label_contains("Connections");
+        harness.get_by_label_contains("Go to database");
+        harness.get_by_label("Tables 2");
+        harness.get_by_label("Functions 1");
+        harness.get_by_label_contains("Click a table in the tree");
+        assert!(harness.query_by_label("Tabelas 2").is_none());
+    }
+
+    #[test]
+    fn trocar_o_idioma_mantem_as_tabelas_abertas_na_arvore() {
+        let (app, _rt, key) = connected_app();
+        let mut harness = connections_harness(app);
+        harness.run();
+        harness
+            .get_all_by_label("Mostrar colunas")
+            .next()
+            .unwrap()
+            .click();
+        wait_for(&mut harness, "ColumnsLoaded", |app| {
+            app.workspaces[&key].expanded.len() == 1
+        });
+        harness.run();
+        harness.get_by_label(&key_col("id"));
+        harness.get_by_label("EN").click();
+        harness.run();
+        harness.get_by_label(&key_col("id"));
+        harness.get_by_label("Hide columns");
     }
 }

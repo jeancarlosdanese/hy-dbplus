@@ -1880,6 +1880,59 @@ where
         }
     }
 
+    /// As abas de tabela com pendência que fechar o alvo perderia, na ordem da faixa e das abas.
+    pub(crate) fn pending_tabs(&self, target: &CloseTarget) -> Vec<(DbKey, usize)> {
+        let keys: Vec<DbKey> = match target {
+            CloseTarget::Tab(key, _) | CloseTarget::Database(key) => vec![key.clone()],
+            CloseTarget::Connection(id) => self.workspace_keys_of(id),
+        };
+        let mut found = Vec::new();
+        for key in keys {
+            let Some(ws) = self.workspaces.get(&key) else {
+                continue;
+            };
+            for (i, tab) in ws.tabs.iter().enumerate() {
+                if let CloseTarget::Tab(_, index) = target
+                    && *index != i
+                {
+                    continue;
+                }
+                if tab.table().is_some_and(DataTab::has_changes) {
+                    found.push((key.clone(), i));
+                }
+            }
+        }
+        found
+    }
+
+    /// (alterações, exclusões) pendentes que fechar o alvo perderia.
+    pub(crate) fn pending_counts(&self, target: &CloseTarget) -> (usize, usize) {
+        self.pending_tabs(target)
+            .iter()
+            .filter_map(|(key, i)| self.workspaces.get(key)?.tabs.get(*i)?.table())
+            .map(DataTab::change_counts)
+            .fold((0, 0), |(u, d), (a, b)| (u + a, d + b))
+    }
+
+    /// "Revisar e gravar" na confirmação de fechar: nada fecha; a primeira aba com pendência vira
+    /// a ativa, na sub-aba Data, e a caixa de gravação dela abre.
+    pub(crate) fn review_pending(&mut self) {
+        let Some(target) = self.confirm_close.take() else {
+            return;
+        };
+        let Some((key, index)) = self.pending_tabs(&target).into_iter().next() else {
+            return;
+        };
+        self.activate(&key);
+        if let Some(ws) = self.workspaces.get_mut(&key) {
+            ws.active_tab = Some(index);
+            if let Some(tab) = ws.tabs.get_mut(index).and_then(Tab::table_mut) {
+                tab.view = TabView::Data;
+            }
+        }
+        self.open_commit(&key);
+    }
+
     /// "Descartar e fechar" na confirmação. Descartar uma aba SQL apaga o arquivo dela; descartar o
     /// banco ou a conexão (a caixa só aparece por pendência em aba de tabela) descarta só a edição:
     /// as queries salvas ficam, como no fechamento sem pendência.

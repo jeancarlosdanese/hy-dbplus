@@ -81,10 +81,29 @@ fn styled_button<'a>(
         .min_size(egui::vec2(size::CONTROL, size::CONTROL))
 }
 
-/// Botão só com ícone (quadrado), com a dica que diz o que ele faz.
+/// Botão só com ícone (quadrado), com a dica que diz o que ele faz; a dica é também o nome
+/// acessível.
 pub fn icon_button(ui: &mut Ui, icon: &str, hint: &str) -> Response {
+    icon_button_full(ui, true, icon, hint, None, "")
+}
+
+/// [`icon_button`] com estado desligado (e a dica do motivo) e o atalho na dica (`⌘T`). O nome
+/// acessível fica sem o atalho, que muda com a plataforma.
+pub fn icon_button_full(
+    ui: &mut Ui,
+    enabled: bool,
+    icon: &str,
+    hint: &str,
+    shortcut: Option<&str>,
+    disabled_hint: &str,
+) -> Response {
     let t = theme::current(ui.ctx());
-    ui.add(
+    let tooltip = match shortcut {
+        Some(shortcut) => format!("{hint} ({shortcut})"),
+        None => hint.to_owned(),
+    };
+    ui.add_enabled(
+        enabled,
         egui::Button::new(
             RichText::new(icon)
                 .size(text_size::HEADING)
@@ -95,12 +114,13 @@ pub fn icon_button(ui: &mut Ui, icon: &str, hint: &str) -> Response {
         .corner_radius(CornerRadius::same(radius::CONTROL))
         .min_size(egui::vec2(size::CONTROL, size::CONTROL)),
     )
-    .on_hover_text(hint)
+    .on_hover_text(tooltip)
+    .on_disabled_hover_text(disabled_hint)
     .with_accessible_label(hint)
 }
 
 /// O nome que o leitor de tela (e o teste) usa para um widget só com ícone.
-trait AccessibleLabel {
+pub(crate) trait AccessibleLabel {
     fn with_accessible_label(self, label: &str) -> Self;
 }
 

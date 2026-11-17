@@ -5,7 +5,7 @@
 use hy_dbplus_engine::Driver;
 
 use crate::app::{App, CloseTarget, DbKey};
-use crate::theme;
+use crate::{theme, widgets};
 
 pub const WIDTH: f32 = 84.0;
 const ITEM_HEIGHT: f32 = 92.0;
@@ -16,11 +16,18 @@ where
     D::Conn: 'static,
 {
     let tokens = theme::current(ui.ctx());
+    let tr = app.tr();
+    let mut open_palette = false;
     let mut activate: Option<DbKey> = None;
     let mut close: Option<DbKey> = None;
     egui::Panel::left("rail")
         .exact_size(WIDTH)
         .resizable(false)
+        .frame(
+            egui::Frame::new()
+                .fill(tokens.bg)
+                .inner_margin(egui::Margin::symmetric(8, 0)),
+        )
         .show(ui, |ui| {
             ui.add_space(6.0);
             egui::ScrollArea::vertical().show(ui, |ui| {
@@ -76,11 +83,15 @@ where
                                 .truncate()
                                 .selectable(false),
                             );
-                            if ui
-                                .add_enabled(!running, egui::Button::new("×").small())
-                                .on_hover_text("Fechar este banco")
-                                .on_disabled_hover_text("Aguarde a execução terminar")
-                                .clicked()
+                            if widgets::icon_button_full(
+                                ui,
+                                !running,
+                                crate::fonts::icon::CLOSE,
+                                tr.close_database(),
+                                None,
+                                tr.wait_for_run(),
+                            )
+                            .clicked()
                             {
                                 close = Some(key.clone());
                             }
@@ -94,8 +105,19 @@ where
                     }
                     ui.add_space(4.0);
                 }
+                // O "+" no fim abre a paleta para escolher outro banco.
+                ui.vertical_centered(|ui| {
+                    if widgets::icon_button(ui, crate::fonts::icon::ADD, tr.open_another_database())
+                        .clicked()
+                    {
+                        open_palette = true;
+                    }
+                });
             });
         });
+    if open_palette {
+        crate::palette::toggle(app);
+    }
     if let Some(key) = activate {
         app.activate(&key);
     }
@@ -104,7 +126,9 @@ where
     }
 }
 
-/// Confirmação para fechar banco, aba ou conexão com edição pendente.
+/// Confirmação para fechar banco, aba ou conexão com trabalho a perder (tela 16): o título diz o
+/// que fecha, o texto diz quanto se perde, e as saídas são revisar e gravar (com pendência de
+/// tabela), cancelar e descartar.
 pub fn confirm<D>(app: &mut App<D>, ctx: &egui::Context)
 where
     D: Driver + 'static,
@@ -113,56 +137,80 @@ where
     let Some(target) = app.confirm_close.clone() else {
         return;
     };
+    let tr = app.tr();
+    let tokens = theme::current(ctx);
+    let (updates, deletes) = app.pending_counts(&target);
+    let has_pending = updates + deletes > 0;
     // Aba de SQL perde o texto do editor; banco e conexão só perguntam por pendência de aba de
-    // tabela (o texto das abas SQL é salvo em arquivo antes de fechar, FEAT-011).
-    let mut loses = "tem alterações pendentes";
-    let (title, what) = match &target {
-        CloseTarget::Database(key) => ("Fechar o banco?", format!("O banco {}", key.1)),
+    // tabela (o texto das abas SQL é salvo em arquivo antes de fechar, FEAT-011). Célula aberta
+    // sem outra pendência perde o valor digitado.
+    let (title, discard) = match &target {
+        CloseTarget::Database(key) => (tr.close_database_title(&key.1), tr.discard_and_close()),
         CloseTarget::Tab(key, index) => (
-            "Fechar a aba?",
-            app.workspaces
-                .get(key)
-                .and_then(|ws| {
-                    let t = ws.tabs.get(*index)?;
-                    if t.query().is_some() {
-                        loses = "tem texto no editor";
-                    }
-                    Some(format!("A aba {}", t.title(ws.current_schema.as_deref())))
-                })
-                .unwrap_or_else(|| "A aba".to_owned()),
+            tr.close_tab_title(
+                &app.workspaces
+                    .get(key)
+                    .and_then(|ws| Some(ws.tabs.get(*index)?.title(ws.current_schema.as_deref())))
+                    .unwrap_or_default(),
+            ),
+            tr.discard_and_close(),
         ),
         CloseTarget::Connection(id) => (
-            "Desconectar?",
-            app.deps
-                .store
-                .get(id)
-                .map(|c| format!("A conexão {}", c.name))
-                .unwrap_or_else(|| "A conexão".to_owned()),
+            tr.disconnect_title(
+                &app.deps
+                    .store
+                    .get(id)
+                    .map(|c| c.name.clone())
+                    .unwrap_or_default(),
+            ),
+            tr.discard_and_disconnect(),
         ),
     };
-    let mut decision: Option<bool> = None;
-    let response = egui::Modal::new(egui::Id::new("confirm-close")).show(ctx, |ui| {
-        ui.set_width(380.0);
-        ui.heading(title);
-        ui.label(format!("{what} {loses}. Fechar descarta tudo sem gravar."));
-        ui.separator();
-        ui.horizontal(|ui| {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("Descartar e fechar").clicked() {
-                    decision = Some(true);
-                }
-                if ui.button("Cancelar").clicked() {
-                    decision = Some(false);
-                }
-            });
-        });
-    });
-    if response.should_close() {
-        decision = Some(false);
-    }
-    match decision {
-        Some(true) => app.confirm_close_now(),
-        Some(false) => app.confirm_close = None,
-        None => {}
+    let is_query = matches!(&target, CloseTarget::Tab(key, index)
+        if app.workspaces.get(key).and_then(|ws| ws.tabs.get(*index)).is_some_and(|t| t.query().is_some()));
+    let body = if is_query {
+        tr.query_text_body().to_owned()
+    } else if has_pending {
+        tr.pending_body(updates as u64, deletes as u64)
+    } else {
+        tr.cell_edit_body().to_owned()
+    };
+    let mut review = false;
+    let outcome = widgets::dialog_full(
+        ctx,
+        widgets::DialogParts {
+            id: egui::Id::new("confirm-close"),
+            title: &title,
+            subtitle: None,
+            width: 420.0,
+            cancel: tr.cancel(),
+            action: Some(widgets::DialogAction {
+                label: discard,
+                kind: widgets::ButtonKind::Danger,
+                enabled: true,
+            }),
+        },
+        |ui| {
+            ui.add(egui::Label::new(egui::RichText::new(&body).color(tokens.text_muted)).wrap());
+        },
+        |ui| {
+            if has_pending
+                && widgets::button(
+                    ui,
+                    widgets::ButtonKind::Normal,
+                    None,
+                    tr.review_and_commit(),
+                )
+                .clicked()
+            {
+                review = true;
+            }
+        },
+    );
+    match outcome {
+        widgets::DialogOutcome::Confirm => app.confirm_close_now(),
+        widgets::DialogOutcome::Cancel => app.confirm_close = None,
+        widgets::DialogOutcome::Open if review => app.review_pending(),
+        widgets::DialogOutcome::Open => {}
     }
 }

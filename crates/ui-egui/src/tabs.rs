@@ -1,12 +1,23 @@
-//! A barra de abas do banco ativo (FEAT-008): uma aba por tabela aberta, rótulo `schema.tabela`
-//! (só `tabela` no schema atual), e as abas "SQL Query N" (FEAT-010, **+ SQL** ou ⌘T); × em cada
-//! aba e ⌘W na ativa; fechar uma aba com edição pendente ou com texto passa pela confirmação. O
-//! ponto na aba marca pendência (ou SQL em execução).
+//! A barra de abas do banco ativo (FEAT-008, desenho da FEAT-015): uma aba por tabela aberta,
+//! rótulo `schema.tabela` (só `tabela` no schema atual), e as abas "SQL Query N" (FEAT-010, "+" ou
+//! ⌘T), cada uma com o ícone do tipo; × em cada aba e ⌘W na ativa; fechar uma aba com edição
+//! pendente ou com texto passa pela confirmação. O ponto âmbar marca pendência (ou SQL em execução).
 
 use hy_dbplus_engine::Driver;
 
 use crate::app::{App, DbKey};
-use crate::theme;
+use crate::fonts::icon;
+use crate::{i18n, theme, widgets};
+
+/// ⌘W: fecha a aba ativa.
+pub fn close_tab_shortcut() -> egui::KeyboardShortcut {
+    egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::W)
+}
+
+/// ⌘T: uma aba de SQL nova no banco ativo.
+pub fn new_query_shortcut() -> egui::KeyboardShortcut {
+    egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::T)
+}
 
 pub fn show<D>(app: &mut App<D>, ui: &mut egui::Ui, key: &DbKey)
 where
@@ -19,24 +30,26 @@ where
     };
     let current_schema = ws.current_schema.clone();
     let active = ws.active_tab;
-    let labels: Vec<(String, bool, bool)> = ws
+    let tr = app.tr();
+    // (título, pendência, ocupada, é SQL)
+    let labels: Vec<(String, bool, bool, bool)> = ws
         .tabs
         .iter()
         .map(|t| {
             let pending =
                 t.table().is_some_and(|t| t.has_changes()) || t.query().is_some_and(|q| q.running);
-            (t.title(current_schema.as_deref()), pending, t.busy())
+            (
+                t.title(current_schema.as_deref()),
+                pending,
+                t.busy(),
+                t.query().is_some(),
+            )
         })
         .collect();
     let mut focus: Option<usize> = None;
     let mut close: Option<usize> = None;
     let mut new_query = false;
-    if ui.input_mut(|i| {
-        i.consume_shortcut(&egui::KeyboardShortcut::new(
-            egui::Modifiers::COMMAND,
-            egui::Key::T,
-        ))
-    }) {
+    if ui.input_mut(|i| i.consume_shortcut(&new_query_shortcut())) {
         new_query = true;
     }
     // ⌘W vale sem campo em foco ou com o foco no editor de SQL da aba ativa (o que se perderia
@@ -50,51 +63,107 @@ where
         && app.palette.is_none()
         && focus_ok
         && !active_running
-        && ui.input_mut(|i| {
-            i.consume_shortcut(&egui::KeyboardShortcut::new(
-                egui::Modifiers::COMMAND,
-                egui::Key::W,
-            ))
-        })
+        && ui.input_mut(|i| i.consume_shortcut(&close_tab_shortcut()))
     {
         close = active;
     }
-    egui::Panel::top(egui::Id::new(("workspace-tabs", key))).show(ui, |ui| {
-        egui::ScrollArea::horizontal().show(ui, |ui| {
-            ui.horizontal(|ui| {
-                for (i, (label, pending, running)) in labels.iter().enumerate() {
-                    let selected = active == Some(i);
-                    let mut text = egui::RichText::new(if *pending {
-                        format!("● {label}")
-                    } else {
-                        label.clone()
-                    });
-                    if *pending {
-                        text = text.color(tokens.accent);
+    let new_query_label = i18n::shortcut_label(ui.ctx(), &new_query_shortcut());
+    let close_label = i18n::shortcut_label(ui.ctx(), &close_tab_shortcut());
+    egui::Panel::top(egui::Id::new(("workspace-tabs", key)))
+        .frame(
+            egui::Frame::new()
+                .fill(tokens.panel)
+                .inner_margin(egui::Margin {
+                    left: 8,
+                    right: 8,
+                    top: 4,
+                    bottom: 0,
+                }),
+        )
+        .show(ui, |ui| {
+            egui::ScrollArea::horizontal().show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = theme::space::XS;
+                    for (i, (label, pending, running, is_query)) in labels.iter().enumerate() {
+                        let selected = active == Some(i);
+                        // A aba ativa tem o fundo do conteúdo e fica "colada" nele.
+                        let fill = if selected { tokens.bg } else { tokens.panel };
+                        egui::Frame::new()
+                            .fill(fill)
+                            .corner_radius(egui::CornerRadius {
+                                nw: theme::radius::CONTROL,
+                                ne: theme::radius::CONTROL,
+                                sw: 0,
+                                se: 0,
+                            })
+                            .inner_margin(egui::Margin {
+                                left: 10,
+                                right: 4,
+                                top: 4,
+                                bottom: 4,
+                            })
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = theme::space::XS;
+                                    let kind = if *is_query { icon::SQL } else { icon::TABLE };
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(kind).color(tokens.text_muted),
+                                        )
+                                        .selectable(false),
+                                    );
+                                    let text =
+                                        egui::RichText::new(label.as_str()).color(if selected {
+                                            tokens.text
+                                        } else {
+                                            tokens.text_muted
+                                        });
+                                    let response = ui.add(
+                                        egui::Button::new(text).frame(false).selected(selected),
+                                    );
+                                    if response.clicked() {
+                                        focus = Some(i);
+                                    }
+                                    if *pending {
+                                        ui.add(
+                                            egui::Label::new(
+                                                egui::RichText::new("●")
+                                                    .size(theme::text_size::SMALL - 2.0)
+                                                    .color(tokens.warn),
+                                            )
+                                            .selectable(false),
+                                        );
+                                    }
+                                    if widgets::icon_button_full(
+                                        ui,
+                                        !running,
+                                        icon::CLOSE,
+                                        tr.close_tab(),
+                                        Some(&close_label),
+                                        tr.wait_for_run(),
+                                    )
+                                    .clicked()
+                                    {
+                                        close = Some(i);
+                                    }
+                                });
+                            });
                     }
-                    if ui.selectable_label(selected, text).clicked() {
-                        focus = Some(i);
-                    }
-                    if ui
-                        .add_enabled(!running, egui::Button::new("×").small())
-                        .on_hover_text("Fechar a aba (⌘W fecha a ativa)")
-                        .on_disabled_hover_text("Aguarde a execução terminar")
-                        .clicked()
-                    {
-                        close = Some(i);
-                    }
-                    ui.add_space(6.0);
-                }
-                if ui
-                    .small_button("+ SQL")
-                    .on_hover_text("Uma aba de SQL neste banco (⌘T)")
+                    if widgets::icon_button_full(
+                        ui,
+                        true,
+                        icon::ADD,
+                        tr.new_query(),
+                        Some(&new_query_label),
+                        "",
+                    )
                     .clicked()
-                {
-                    new_query = true;
-                }
+                    {
+                        new_query = true;
+                    }
+                });
             });
         });
-    });
     if new_query {
         app.open_query_tab(key);
     }
