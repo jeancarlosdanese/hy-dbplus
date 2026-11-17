@@ -357,6 +357,17 @@ mod tests {
                 }
                 return Ok(Outcome::default());
             }
+            if sql.contains("wide") {
+                // 30 colunas: o grid de resultados fica mais largo que a janela.
+                return Ok(Outcome {
+                    rows: Some(TextRows {
+                        columns: (1..=30).map(|i| format!("c{i:02}")).collect(),
+                        rows: vec![(1..=30).map(|i| Some(i.to_string())).collect()],
+                    }),
+                    affected: None,
+                    truncated: false,
+                });
+            }
             if sql.to_ascii_lowercase().starts_with("update") {
                 return Ok(Outcome {
                     affected: Some(3),
@@ -1335,6 +1346,101 @@ mod tests {
         (app, key)
     }
 
+    /// O contador de execuções do editor é um só por processo: a aba restaurada volta com o mesmo
+    /// id e o estado antigo da rolagem ainda está na memória do egui, então um contador por aba
+    /// repetiria o id (achado do revisor, 17/11/2026).
+    #[test]
+    fn execucoes_do_editor_tem_numero_unico_entre_abas() {
+        let (mut app, key) = app_with_wide_table(3);
+        app.open_query_tab(&key);
+        app.open_query_tab(&key);
+        let started = |tab| hy_dbplus_engine::Event::SqlStarted {
+            connection: key.0.clone(),
+            database: key.1.clone(),
+            tab,
+            total: 1,
+        };
+        app.apply_event(started(1));
+        app.apply_event(started(2));
+        let seq = |app: &mut App<FakeDriver>, tab| {
+            app.workspaces
+                .get_mut(&key)
+                .and_then(|ws| ws.query_tab_mut(tab))
+                .map(|q| q.run_seq)
+        };
+        assert_eq!(seq(&mut app, 1), Some(1));
+        assert_eq!(seq(&mut app, 2), Some(2));
+    }
+
+    /// Larguras e rolagem vertical do grid são de cada tabela de cada banco: antes o estado ficava com
+    /// o painel e a tabela aberta em seguida nascia rolada como a anterior (achado do revisor).
+    #[test]
+    fn grid_de_outra_tabela_nasce_no_topo() {
+        let (app, key) = app_with_wide_table(3);
+        let mut harness = wide_harness(app);
+        let set_table = |harness: &mut Harness<'_, App<FakeDriver>>, table: &str| {
+            let tab = harness
+                .state_mut()
+                .workspaces
+                .get_mut(&key)
+                .and_then(|ws| ws.data_mut())
+                .unwrap();
+            tab.table = table.into();
+            tab.rows = Some(Arc::new(TextRows {
+                columns: vec!["a".into()],
+                rows: (0..500).map(|_| vec![Some("x".into())]).collect(),
+            }));
+        };
+        set_table(&mut harness, "alta");
+        harness.run();
+        harness.get_by_label("1").hover();
+        harness.step();
+        harness.input_mut().events.push(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -3000.0),
+            modifiers: egui::Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+        });
+        // A rolagem longa é suavizada por mais quadros do que o `run()` aceita.
+        harness.run_steps(60);
+        assert!(
+            harness.query_by_label("1").is_none(),
+            "o grid não rolou na vertical"
+        );
+        set_table(&mut harness, "outra");
+        harness.run();
+        harness.get_by_label("1");
+
+        // A mesma `public.outra` em outro banco também nasce no topo: o banco entra no id do estado.
+        harness.get_by_label("1").hover();
+        harness.step();
+        harness.input_mut().events.push(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -3000.0),
+            modifiers: egui::Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+        });
+        harness.run_steps(60);
+        assert!(harness.query_by_label("1").is_none());
+        {
+            let app = harness.state_mut();
+            let tab = app.workspaces[&key].data().cloned().unwrap();
+            let other: crate::app::DbKey = (key.0.clone(), "loja2".into());
+            app.workspaces.insert(
+                other.clone(),
+                crate::app::Workspace {
+                    tabs: vec![crate::app::Tab::Table(Box::new(tab))],
+                    active_tab: Some(0),
+                    ..Default::default()
+                },
+            );
+            app.rail.push(other.clone());
+            app.active = Some(other);
+        }
+        harness.run();
+        harness.get_by_label("1");
+    }
+
     /// Tabela com muitas colunas rola na horizontal (pedido do Jean, 17/11/2026): a Table do egui_extras
     /// só rola na vertical, e as colunas da direita ficavam fora da tela sem jeito de alcançar. A roda
     /// horizontal sobre o grid desloca o cabeçalho; antes do conserto ele não se mexia.
@@ -2202,6 +2308,10 @@ mod tests {
             query(app).is_some_and(|q| !q.running && q.results.len() == 1)
         });
         assert_eq!(queries.load(Ordering::SeqCst), before + 1);
+        // Cada execução muda o id da rolagem horizontal dos resultados (achado do revisor,
+        // 17/11/2026): sem isso o grid novo nascia rolado como o da execução anterior.
+        let first_run = query(harness.state()).map(|q| q.run_seq);
+        assert_eq!(first_run, Some(1));
         harness.get_by_label("Query 1");
         harness.get_by_label_contains("3 rows ·");
         assert!(harness.query_by_label("Query 2").is_none());
@@ -2263,6 +2373,85 @@ mod tests {
             "SELECT\n  5;\nSELECT\n  erro;\nSELECT\n  3"
         );
 
+        // Resultado largo rola na horizontal, e o da execução seguinte nasce na primeira coluna
+        // (achado do revisor, 17/11/2026: o estado da rolagem ficava com o id da aba e o grid novo
+        // nascia rolado).
+        let run_sql = |harness: &mut Harness<'_, App<FakeDriver>>, sql: &str| {
+            let before = query(harness.state()).map(|q| q.run_seq);
+            {
+                let q = harness
+                    .state_mut()
+                    .workspaces
+                    .get_mut(&(id.clone(), "loja".to_owned()))
+                    .and_then(|ws| ws.query_mut())
+                    .unwrap();
+                q.buffer = sql.into();
+                q.cursor = sql.len();
+            }
+            harness.step();
+            harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Enter);
+            wait_for(harness, "resultado largo", |app| {
+                query(app)
+                    .is_some_and(|q| !q.running && Some(q.run_seq) > before && q.results.len() == 1)
+            });
+            harness.run();
+        };
+        run_sql(&mut harness, "select wide");
+        let home = harness.get_by_label("c01").rect().min.x;
+        harness.get_by_label("c01").hover();
+        harness.step();
+        harness.input_mut().events.push(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(-600.0, 0.0),
+            modifiers: egui::Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+        });
+        harness.run();
+        assert!(
+            harness.get_by_label("c01").rect().min.x < home - 100.0,
+            "o grid de resultados não rolou na horizontal"
+        );
+        run_sql(&mut harness, "select wide");
+        assert_eq!(
+            harness.get_by_label("c01").rect().min.x,
+            home,
+            "o resultado da execução nova nasceu rolado"
+        );
+        // O mesmo na vertical (o estado da tabela também é por execução): 500 linhas, roda para
+        // baixo e a linha 1 sai da tela; a execução seguinte nasce no topo.
+        let set_limit = |harness: &mut Harness<'_, App<FakeDriver>>, limit: Option<usize>| {
+            let q = harness
+                .state_mut()
+                .workspaces
+                .get_mut(&(id.clone(), "loja".to_owned()))
+                .and_then(|ws| ws.query_mut())
+                .unwrap();
+            std::mem::replace(&mut q.limit, limit)
+        };
+        let old_limit = set_limit(&mut harness, None);
+        run_sql(&mut harness, "select 500");
+        assert!(harness.query_all_by_label("1").next().is_some());
+        harness.get_all_by_label("1").next().unwrap().hover();
+        harness.step();
+        harness.input_mut().events.push(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -3000.0),
+            modifiers: egui::Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+        });
+        // A rolagem longa é suavizada por mais quadros do que o `run()` aceita.
+        harness.run_steps(60);
+        assert!(
+            harness.query_all_by_label("1").next().is_none(),
+            "o grid de resultados não rolou na vertical"
+        );
+        run_sql(&mut harness, "select 500");
+        assert!(
+            harness.query_all_by_label("1").next().is_some(),
+            "o resultado da execução nova nasceu rolado na vertical"
+        );
+        set_limit(&mut harness, old_limit);
+
         // Cancelar pela UI: "select sleep" roda, Cancelar interrompe, o aviso aparece; enquanto roda,
         // × da aba e do banco ficam travados e um segundo ⌘↩ avisa.
         {
@@ -2280,6 +2469,10 @@ mod tests {
         wait_for(&mut harness, "rodando", |app| {
             query(app).is_some_and(|q| q.running)
         });
+        assert!(
+            query(harness.state()).map(|q| q.run_seq) > first_run,
+            "execução nova não mudou o id da rolagem dos resultados"
+        );
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Enter);
         harness.step();
         harness.get_by_label_contains("Já há uma execução em curso");

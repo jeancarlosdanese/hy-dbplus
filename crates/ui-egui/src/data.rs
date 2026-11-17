@@ -322,144 +322,146 @@ where
             .id_salt(("data-grid-hscroll", key, &tab.schema, &tab.table))
             .auto_shrink([false, false])
             .show(ui, |ui| {
-        let mut builder = TableBuilder::new(ui)
-            .striped(true)
-            .resizable(true)
-            .sense(egui::Sense::click())
-            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-            .column(TableColumn::exact(48.0));
-        for _ in &rows.columns {
-            builder = builder.column(TableColumn::initial(140.0).at_least(60.0).clip(true));
-        }
-        builder
-            .header(ROW_HEIGHT + 4.0, |mut header| {
-                header.col(|ui| {
-                    ui.label(egui::RichText::new("#").small().color(tokens.text_muted));
-                });
-                for (i, name) in rows.columns.iter().enumerate() {
-                    header.col(|ui| {
-                        let current = tab
-                            .page
-                            .order
-                            .as_ref()
-                            .filter(|o| &o.column == name)
-                            .map(|o| o.direction);
-                        let arrow = match current {
-                            Some(Direction::Asc) => " ▲",
-                            Some(Direction::Desc) => " ▼",
-                            None => "",
-                        };
-                        let label = ui.add(
-                            egui::Label::new(
-                                egui::RichText::new(format!("{name}{arrow}")).strong(),
-                            )
-                            .sense(egui::Sense::click()),
-                        );
-                        if let Some(Some(ty)) = types.get(i) {
-                            ui.label(egui::RichText::new(ty).small().color(tokens.text_muted));
-                        }
-                        if label.clicked() && !tab.loading && !locked {
-                            // asc → desc → sem ordem
-                            let order = match current {
-                                None => Some(Order {
-                                    column: name.clone(),
-                                    direction: Direction::Asc,
-                                }),
-                                Some(Direction::Asc) => Some(Order {
-                                    column: name.clone(),
-                                    direction: Direction::Desc,
-                                }),
-                                Some(Direction::Desc) => None,
-                            };
-                            next_page = Some(Page {
-                                order,
-                                offset: 0,
-                                ..tab.page.clone()
+                // Larguras de coluna e rolagem vertical são de cada tabela de cada banco, não da aba.
+                let mut builder = TableBuilder::new(ui)
+                    .id_salt(("data-table", key, &tab.schema, &tab.table))
+                    .striped(true)
+                    .resizable(true)
+                    .sense(egui::Sense::click())
+                    .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                    .column(TableColumn::exact(48.0));
+                for _ in &rows.columns {
+                    builder = builder.column(TableColumn::initial(140.0).at_least(60.0).clip(true));
+                }
+                builder
+                    .header(ROW_HEIGHT + 4.0, |mut header| {
+                        header.col(|ui| {
+                            ui.label(egui::RichText::new("#").small().color(tokens.text_muted));
+                        });
+                        for (i, name) in rows.columns.iter().enumerate() {
+                            header.col(|ui| {
+                                let current = tab
+                                    .page
+                                    .order
+                                    .as_ref()
+                                    .filter(|o| &o.column == name)
+                                    .map(|o| o.direction);
+                                let arrow = match current {
+                                    Some(Direction::Asc) => " ▲",
+                                    Some(Direction::Desc) => " ▼",
+                                    None => "",
+                                };
+                                let label = ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(format!("{name}{arrow}")).strong(),
+                                    )
+                                    .sense(egui::Sense::click()),
+                                );
+                                if let Some(Some(ty)) = types.get(i) {
+                                    ui.label(egui::RichText::new(ty).small().color(tokens.text_muted));
+                                }
+                                if label.clicked() && !tab.loading && !locked {
+                                    // asc → desc → sem ordem
+                                    let order = match current {
+                                        None => Some(Order {
+                                            column: name.clone(),
+                                            direction: Direction::Asc,
+                                        }),
+                                        Some(Direction::Asc) => Some(Order {
+                                            column: name.clone(),
+                                            direction: Direction::Desc,
+                                        }),
+                                        Some(Direction::Desc) => None,
+                                    };
+                                    next_page = Some(Page {
+                                        order,
+                                        offset: 0,
+                                        ..tab.page.clone()
+                                    });
+                                }
+                                if locked {
+                                    label.on_hover_text(LOCK_HINT);
+                                }
                             });
                         }
-                        if locked {
-                            label.on_hover_text(LOCK_HINT);
-                        }
-                    });
-                }
-            })
-            .body(|body| {
-                body.rows(ROW_HEIGHT, rows.rows.len(), |mut row| {
-                    let index = row.index();
-                    let deleted = tab.deleted.contains(&index);
-                    row.set_selected(tab.selected_rows.contains(&index));
-                    row.col(|ui| {
-                        // O número da linha é o alvo de seleção; o resto da linha também seleciona.
-                        let number = (tab.page.offset + index as u64 + 1).to_string();
-                        let mut text = egui::RichText::new(number).small();
-                        if deleted {
-                            text = text.strikethrough().color(theme::error_color());
-                        }
-                        if ui
-                            .selectable_label(tab.selected_rows.contains(&index), text)
-                            .clicked()
-                        {
-                            select = Some((index, modifiers));
-                        }
-                    });
-                    for col in 0..rows.columns.len() {
-                        let editing_here = tab
-                            .editing
-                            .as_ref()
-                            .is_some_and(|e| e.row == index && e.col == col);
-                        let pending = rows
-                            .columns
-                            .get(col)
-                            .is_some_and(|name| tab.is_pending(index, name));
-                        let value = tab.cell_value(index, col).flatten().map(str::to_owned);
-                        let (_, response) = row.col(|ui| {
-                            if editing_here {
-                                let mut text = tab
+                    })
+                    .body(|body| {
+                        body.rows(ROW_HEIGHT, rows.rows.len(), |mut row| {
+                            let index = row.index();
+                            let deleted = tab.deleted.contains(&index);
+                            row.set_selected(tab.selected_rows.contains(&index));
+                            row.col(|ui| {
+                                // O número da linha é o alvo de seleção; o resto da linha também seleciona.
+                                let number = (tab.page.offset + index as u64 + 1).to_string();
+                                let mut text = egui::RichText::new(number).small();
+                                if deleted {
+                                    text = text.strikethrough().color(theme::error_color());
+                                }
+                                if ui
+                                    .selectable_label(tab.selected_rows.contains(&index), text)
+                                    .clicked()
+                                {
+                                    select = Some((index, modifiers));
+                                }
+                            });
+                            for col in 0..rows.columns.len() {
+                                let editing_here = tab
                                     .editing
                                     .as_ref()
-                                    .map(|e| e.text.clone())
-                                    .unwrap_or_default();
-                                let field = ui.add(
-                                    egui::TextEdit::singleline(&mut text)
-                                        .font(egui::TextStyle::Monospace)
-                                        .desired_width(f32::INFINITY),
-                                );
-                                if tab.editing.as_ref().is_some_and(|e| e.focus_pending) {
-                                    field.request_focus();
+                                    .is_some_and(|e| e.row == index && e.col == col);
+                                let pending = rows
+                                    .columns
+                                    .get(col)
+                                    .is_some_and(|name| tab.is_pending(index, name));
+                                let value = tab.cell_value(index, col).flatten().map(str::to_owned);
+                                let (_, response) = row.col(|ui| {
+                                    if editing_here {
+                                        let mut text = tab
+                                            .editing
+                                            .as_ref()
+                                            .map(|e| e.text.clone())
+                                            .unwrap_or_default();
+                                        let field = ui.add(
+                                            egui::TextEdit::singleline(&mut text)
+                                                .font(egui::TextStyle::Monospace)
+                                                .desired_width(f32::INFINITY),
+                                        );
+                                        if tab.editing.as_ref().is_some_and(|e| e.focus_pending) {
+                                            field.request_focus();
+                                        }
+                                        edit_text = Some(text);
+                                        // Enter e Esc soltam o foco sozinhos; clicar fora também confirma.
+                                        if field.lost_focus() {
+                                            finish_edit = Some(!escape);
+                                        }
+                                        return;
+                                    }
+                                    if pending {
+                                        ui.painter()
+                                            .rect_filled(ui.max_rect(), 0.0, tokens.accent_soft);
+                                    }
+                                    let mut text = match &value {
+                                        Some(value) => egui::RichText::new(value).monospace(),
+                                        None => egui::RichText::new("NULL")
+                                            .italics()
+                                            .color(tokens.text_muted),
+                                    };
+                                    if deleted {
+                                        text = text.strikethrough().color(theme::error_color());
+                                    }
+                                    // Sem seleção de texto na célula: o Label selecionável consome o clique e ele
+                                    // não chega à linha (só o número selecionava). Copiar é pelo painel.
+                                    ui.add(egui::Label::new(text).selectable(false));
+                                });
+                                if response.double_clicked() && editable && !deleted {
+                                    start_edit = Some((index, col));
                                 }
-                                edit_text = Some(text);
-                                // Enter e Esc soltam o foco sozinhos; clicar fora também confirma.
-                                if field.lost_focus() {
-                                    finish_edit = Some(!escape);
-                                }
-                                return;
                             }
-                            if pending {
-                                ui.painter()
-                                    .rect_filled(ui.max_rect(), 0.0, tokens.accent_soft);
+                            if row.response().clicked() {
+                                select = Some((index, modifiers));
                             }
-                            let mut text = match &value {
-                                Some(value) => egui::RichText::new(value).monospace(),
-                                None => egui::RichText::new("NULL")
-                                    .italics()
-                                    .color(tokens.text_muted),
-                            };
-                            if deleted {
-                                text = text.strikethrough().color(theme::error_color());
-                            }
-                            // Sem seleção de texto na célula: o Label selecionável consome o clique e ele
-                            // não chega à linha (só o número selecionava). Copiar é pelo painel.
-                            ui.add(egui::Label::new(text).selectable(false));
                         });
-                        if response.double_clicked() && editable && !deleted {
-                            start_edit = Some((index, col));
-                        }
-                    }
-                    if row.response().clicked() {
-                        select = Some((index, modifiers));
-                    }
-                });
-            });
+                    });
             });
     });
 

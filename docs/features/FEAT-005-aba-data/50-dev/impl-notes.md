@@ -131,3 +131,10 @@ _Atualizado em 22/10/2026._
   barra horizontal fica embaixo e a vertical continua dentro da tabela. Teste kittest
   `grid_largo_rola_na_horizontal_com_a_roda` (30 colunas, roda horizontal sobre o grid move o cabeçalho);
   provado reprovando sem a correção. O mesmo arranjo foi para o grid de resultados do editor (FEAT-010).
+- [x] Estado da `Table` por tabela (17/11/2026, branch `fix/achados-da-rolagem`, observação do revisor):
+  larguras de coluna e rolagem vertical eram guardadas pelo id do painel e passavam de uma tabela para a
+  outra. A `Table` ganhou `id_salt(("data-table", key, schema, table))`: o banco entra no id, para a tabela de
+  mesmo nome em outro banco não herdar o estado. Mudar de página na mesma tabela mantém larguras e rolagem,
+  como antes. Teste `grid_de_outra_tabela_nasce_no_topo` (outra tabela no mesmo banco e a mesma tabela em
+  outro banco), provado reprovando sem o `id_salt` e sem o banco nele (achados da segunda e da terceira
+  passada do revisor nesta branch).
