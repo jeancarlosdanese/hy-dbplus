@@ -1,0 +1,8 @@
+#!/bin/bash
+# @file: .githooks/pre-merge-commit
+# Merge sem conflito nao passa pelo pre-commit: o git chama este hook. Mesma conferencia
+# (plugin process@hyberica 0.6.0, FEAT-002): na principal, revisor e versao da branch
+# mesclada, e o registro do portao completo da entrega (gate_runner.py, chave "gate" do
+# .claude/process.json, 0.9.0): verde e sobre a arvore exata da ponta da branch. Com
+# conflito, o "git commit" que conclui roda o pre-commit.
+exec "$(dirname "$0")/pre-commit" "$@"

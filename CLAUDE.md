@@ -65,19 +65,52 @@ scripts/quality-gate-tools.sh           # instala cargo-deny e gitleaks (uma vez
 
 ## Processo (plugin `process@hyberica`, FEAT-001)
 
-Dona das regras de commit e revisão neste repositório. Vale aqui:
+O plugin está ligado no escopo do projeto (`.claude/settings.json`); o que é próprio daqui está em
+`.claude/process.json`. Esta seção é a dona das regras de commit e entrega; como o revisor roda (passadas,
+delta, gravidade) e o critério de conclusão ficam na skill `process:quality` (Revisão final e Entrega).
 
-- Commit só depois do resumo do diff, da mensagem sugerida e de uma mensagem só do Jean com "pode commitar": vale
-  para o que estava alterado naquele instante, por 30 minutos, em quantos commits forem; arquivo mudado depois
-  volta a pedir caixa. Não vale para `--amend`.
-- Tag e os comandos que criam commit sem `git commit` (merge, rebase, revert, cherry-pick, pull) pedem aprovação
-  na tela, com ou sem "pode commitar". `git push` é recusado: é do Jean. Versão só quando o Jean pedir.
-- Mudança sensível pendente na árvore não commita sem o agente `process:reviewer` rodar depois do último commit
-  (`/code-review` não conta). O que é sensível aqui está em `.claude/process.json`, somado à base do plugin
-  (este arquivo e o `CLAUDE.md` de cada app, regras, skills, agentes e migrations).
-- A caixa de aprovação é rede de segurança, não caminho do commit. Sempre que ela for aparecer, dizer antes ao
-  Jean o que ela faz e se é para aprovar.
+- **Branch:** toda mudança em branch (`feat/`, `fix/`, `docs/`, `chore/`), em passos pequenos. Todo commit, em
+  branch ou na `main`, só com o "pode commitar" do Jean, sozinho numa oração de mensagem só dele (vale 30
+  minutos, quantos commits forem; não vale para `--amend`): a IA mostra o diff e a mensagem sugerida e espera
+  a palavra. Em branch não há revisor no commit; na `main` o commit ainda exige o revisor sobre todo código
+  tocado. Sequência: diff → "pode commitar" → commit → "entrega". Troca de branch e commit, merge, reset ou
+  tag vão em comandos separados.
+- **Entrega:** "entrega", primeira palavra de uma mensagem só do Jean, autoriza de uma vez o portão completo
+  na branch e o merge `--no-ff` na `main` (vale 30 minutos). Sem ela, o merge é recusado. A trava recusa o
+  merge se a branch tem código sem revisão (ou alterado depois dela, teste incluído) ou sem o portão completo
+  verde sobre a ponta da branch (comando `gate` do `.claude/process.json`, rodado pelo executor do plugin; a
+  saída fica na tela e o push vem depois, do Jean). Versão e tag entram na entrega quando o workspace tiver
+  `version` e `bump` no `process.json` (M8); até lá a IA não sobe versão nem cria tag na entrega (é conduta: sem
+  `version` a trava não confere a tag).
+- **Push e deploy:** sempre do Jean; a trava recusa.
+- **Revisor:** em toda branch com código, antes do merge: primeira passada sobre o diff inteiro, as seguintes
+  só sobre o delta; liberada sem achado alto ou médio (`/code-review` não conta). Achado baixo também se
+  corrige: exceção deste projeto ao padrão da skill, que deixa o baixo só registrado (pedido do Jean,
+  17/11/2026). Detalhe: skill `process:quality`.
+- **Recusa da trava:** não há caixa de aprovação; o comando passa ou é recusado. Recusa não se contorna: a IA
+  explica o motivo e o caminho que tomou, e o resumo traz a tabela de decisões (skill `process:quality`,
+  Revisão final). Arquivo do portão é editável em branch e o revisor o confere; registros da trava,
+  `.git/config` e `settings.json` do Claude a IA não escreve.
+- **Mensagem para outra sessão:** nunca repetir "pode commitar" nem "entrega", nem para explicar algo.
+- **Aviso do plugin:** depois de uma atualização, a sessão recebe a nota da versão, uma vez. Ela diz o que
+  conferir neste projeto e quais comandos são do Jean. A IA apresenta a nota e pergunta; só muda o projeto se
+  o Jean pedir.
 - **Portão de qualidade** (`scripts/quality-gate.sh`): no fim de cada resposta (`--fast`), no pre-commit
-  (`--full`) e no GitHub Actions (`--full --all`). Não há linha de base: o projeto nasceu sem passivo e o portão
-  é estrito desde o primeiro commit. Nunca `git commit --no-verify`.
+  (`--fast` em branch, `--full` na `main` e no merge para ela), na entrega (`--full --all`, pelo `gate`) e no
+  GitHub Actions (`--full --all`). Não há linha de base: o projeto nasceu sem passivo e o portão é estrito
+  desde o primeiro commit. Nunca `git commit --no-verify`. O pre-commit de branch não roda testes: antes de
+  declarar algo pronto ou pedir a entrega, a IA roda `scripts/quality-gate.sh --full`.
+- **Segunda camada:** `.githooks/pre-commit` e `.githooks/pre-merge-commit` conferem o que vai de fato no
+  commit e no merge. Ativar uma vez por clone, pelo Jean: `git config core.hooksPath .githooks`.
+- **Padrão visual e protótipos:** não se aplica: app desktop em `egui`, sem pasta de protótipos; o padrão das
+  telas é o `crates/ui-egui/src/theme.rs` e o BRIEF.
+- **Formulários:** o padrão de formulários do plugin (backend que normaliza, front que mascara) não se aplica:
+  não há backend web. Siglas sempre em maiúsculas: nenhuma. Exceções: nenhuma.
+- **FEATs** (skills `process:feat-new`, `feat-run` e `feat-close`; item sem valor segue o padrão do plugin):
+  - **Pasta:** `docs/features/`.
+  - **Arquivo das concluídas:** nenhum.
+  - **Backlog:** nenhum.
+  - **Passos extras ao fechar:** nenhum.
+  - **Teto de FEATs em andamento:** 15.
+  - **Versão:** padrão do plugin, a partir do M8 (antes disso o projeto não versiona).
 - Padrão de engenharia completo: skill `/process:quality`.

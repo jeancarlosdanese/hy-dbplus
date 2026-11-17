@@ -1,8 +1,9 @@
 # @file: .github/workflows/quality-gate.yml
 # Portão de qualidade em máquina limpa: a rede de segurança final, no push e
 # no PR. Roda scripts/quality-gate.sh --full --all --base <commit de antes>:
-# só aqui o cargo-deny confere advisories (vulnerabilidade publicada hoje não
-# trava commit local, mas aparece no primeiro push). O portão roda no macOS,
+# o mesmo comando da entrega local (chave "gate" do .claude/process.json), com
+# advisories no cargo-deny (vulnerabilidade publicada hoje não trava commit
+# local, mas trava a entrega e aparece no push). O portão roda no macOS,
 # o alvo principal e a máquina de desenvolvimento (docs/BRIEF.md decisão 5).
 # O job "build" confirma que o workspace compila e passa nos testes em Linux e
 # Windows, os builds secundários.
