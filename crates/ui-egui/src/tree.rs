@@ -1291,6 +1291,80 @@ mod tests {
         app.workspaces[key].data().cloned().unwrap()
     }
 
+    /// Um `App` com a tabela `public.larga` aberta, com `n` colunas `c01`, `c02`… e uma linha: o grid
+    /// fica mais largo que a janela do harness.
+    fn app_with_wide_table(n: usize) -> (App<FakeDriver>, crate::app::DbKey) {
+        use crate::app::{DataTab, Workspace};
+        use hy_dbplus_engine::Page;
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut app = App::with_deps(deps(FakeDriver::default(), &rt));
+        std::mem::forget(rt); // o teste é síncrono; o runtime só precisa existir
+        // O workspace só desenha com a conexão no store e com status Connected.
+        let c = Connection::new("pg-localhost", Tag::Local, ConnectionConfig::default());
+        app.deps.store.upsert(c.clone());
+        let id = c.id;
+        app.status.insert(
+            id.clone(),
+            crate::app::Status::Connected {
+                server_version: "17".into(),
+                databases: Vec::new(),
+            },
+        );
+        app.conn_state
+            .insert(id.clone(), crate::app::ConnState::default());
+        let key: crate::app::DbKey = (id.clone(), "loja".into());
+        let mut tab = DataTab::new("public", "larga");
+        tab.requested = None;
+        tab.loading = false;
+        tab.page = Page::default();
+        tab.rows = Some(Arc::new(TextRows {
+            columns: (1..=n).map(|i| format!("c{i:02}")).collect(),
+            rows: vec![(1..=n).map(|i| Some(i.to_string())).collect()],
+        }));
+        let ws = Workspace {
+            tabs: vec![crate::app::Tab::Table(Box::new(tab))],
+            active_tab: Some(0),
+            ..Default::default()
+        };
+        app.workspaces.insert(key.clone(), ws);
+        app.rail.push(key.clone());
+        app.active = Some(key.clone());
+        app.focus = Some(id);
+        app.view = View::Workspace;
+        (app, key)
+    }
+
+    /// Tabela com muitas colunas rola na horizontal (pedido do Jean, 17/11/2026): a Table do egui_extras
+    /// só rola na vertical, e as colunas da direita ficavam fora da tela sem jeito de alcançar. A roda
+    /// horizontal sobre o grid desloca o cabeçalho; antes do conserto ele não se mexia.
+    #[test]
+    fn grid_largo_rola_na_horizontal_com_a_roda() {
+        let (app, _key) = app_with_wide_table(30);
+        let mut harness = wide_harness(app);
+        harness.run();
+        let before = harness.get_by_label("c01").rect();
+        // 30 colunas de 140 px não cabem em 1400 px: a última nasce fora da janela.
+        assert!(
+            harness.get_by_label("c30").rect().min.x > 1400.0,
+            "c30 deveria começar fora da janela"
+        );
+        harness.get_by_label("c01").hover();
+        harness.step();
+        harness.input_mut().events.push(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(-600.0, 0.0),
+            modifiers: egui::Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+        });
+        harness.run();
+        let after = harness.get_by_label("c01").rect();
+        assert!(
+            after.min.x < before.min.x - 100.0,
+            "o grid não rolou na horizontal: c01 em {before:?} → {after:?}"
+        );
+    }
+
     /// Abrir uma célula NULL e sair sem digitar não vira pendência `''` (achado do revisor); digitar
     /// e apagar tudo sobre NULL volta a NULL; valor igual ao da página some da pendência.
     #[test]

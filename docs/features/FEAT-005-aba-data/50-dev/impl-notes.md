@@ -124,3 +124,10 @@ _Atualizado em 22/10/2026._
   stats soma `pg_partition_tree` quando `relkind = 'p'` (`LEFT JOIN LATERAL` com `COALESCE`). Teste com
   servidor cria uma tabela particionada por range com uma partição e duas linhas; provado contra o SQL antigo
   (dava "0 bytes").
+- [x] Rolagem horizontal no grid (pedido do Jean, 17/11/2026, branch `fix/rolagem-horizontal-no-grid`): a
+  `Table` do `egui_extras` só rola na vertical (o `ScrollArea` interno nasce com a horizontal desligada) e,
+  com muitas colunas de 140 px, as da direita ficavam fora da tela sem jeito de alcançar. A tabela passou a
+  viver dentro de um `ScrollArea::horizontal()` (`auto_shrink` desligado), como na demo oficial do egui: a
+  barra horizontal fica embaixo e a vertical continua dentro da tabela. Teste kittest
+  `grid_largo_rola_na_horizontal_com_a_roda` (30 colunas, roda horizontal sobre o grid move o cabeçalho);
+  provado reprovando sem a correção. O mesmo arranjo foi para o grid de resultados do editor (FEAT-010).
