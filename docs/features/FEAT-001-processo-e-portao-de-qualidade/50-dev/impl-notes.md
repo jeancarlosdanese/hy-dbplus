@@ -97,5 +97,5 @@ _Atualizado em 17/11/2026._
   em que a branch saiu da `main`, rodado pelo executor do plugin na entrega), `pre-merge-commit` no check de
   sintaxe do portão, e a seção Processo do `CLAUDE.md` reescrita a partir de `templates/CLAUDE-processo.md` do
   kit, com o bloco FEATs. Sem `version` nem `bump` até o M8. Uma primeira versão desta migração, escrita em
-  04/11 para a 0.7.0, ficou sem commit e foi refeita. Pendente de decisão do Jean: o marcador `FEAT_IMPLEMENTADA` (FEAT-010 a 014) não
-  está entre os que o `feat_lint.py` do plugin aceita.
+  04/11 para a 0.7.0, ficou sem commit e foi refeita. Pendente de decisão do Jean: o marcador
+  `FEAT_IMPLEMENTADA` (FEAT-010 a 014) não está entre os que o `feat_lint.py` do plugin aceita.
