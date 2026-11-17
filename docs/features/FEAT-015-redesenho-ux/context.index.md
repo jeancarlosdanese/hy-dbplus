@@ -10,11 +10,11 @@
 
 ## Status da implementação
 
-Protótipo, aceite e plano aprovados pelo Jean em 17/11/2026. Fase A (fundação) commitada em e461e98 e 14d7c47.
-**Fase B (conexões) implementada** e sem commit: lista, teclado, estado vazio, formulário com erro por campo e
-"Testar conexão" (engine `Sessions::test_connection`), remover em diálogo. As telas do workspace, dados e editor
-ainda têm o desenho antigo com a paleta nova. Próximo: revisão da fase B, "pode commitar" e o detalhamento da fase
-C (workspace).
+Protótipo, aceite e plano aprovados pelo Jean em 17/11/2026. Fase A (fundação) em e461e98 e 14d7c47; fase B
+(conexões) em 1406e00 e 195d23f. **Fase C (workspace) implementada** e sem commit: barra superior neutra com a
+faixa do ambiente, faixa de bancos com "+", árvore com ícones, abas, paleta modal e a confirmação de fechar com
+contagem e "Revisar e gravar". Dados, Estrutura, Índices, DDL e o editor SQL ainda têm o desenho antigo com a paleta
+nova. Próximo: revisão da fase C, "pode commitar" e o detalhamento da fase D (dados).
 
-**Cabe ao mantenedor:** conferência visual no app ao fim de cada fase (nesta: telas 1 a 4 nos dois temas e
-idiomas, e o "Testar conexão" num servidor real).
+**Cabe ao mantenedor:** conferência visual no app ao fim de cada fase (nesta: telas 5, 6 e 16 nos dois temas e
+idiomas).

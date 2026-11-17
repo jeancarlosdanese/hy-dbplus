@@ -3,8 +3,8 @@
 # Notas de implementação: FEAT-015
 
 > Protótipo aprovado pelo Jean em 17/11/2026 ("pode seguir"), como desenhado: ambiente em etiqueta e faixa fina.
-> Aceite e plano aprovados no mesmo dia ("pode seguir"). Fase A commitada (e461e98). Fase B implementada, sem
-> commit.
+> Aceite e plano aprovados no mesmo dia ("pode seguir"). Fases A (e461e98) e B (1406e00) commitadas. Fase C
+> implementada de ponta a ponta, a pedido do Jean, sem commit.
 
 ## Decisões de implementação
 
@@ -85,9 +85,32 @@ telas nos dois idiomas. Não há passo do mantenedor além da conferência visua
 
 ### Fase C: workspace
 
-Objetivo: barra superior, faixa de bancos, árvore, abas, paleta e confirmações (telas 5, 6 e 16).
+Objetivo: barra superior, faixa de bancos, árvore, abas, paleta e confirmações (telas 5, 6 e 16). Critérios:
+AC-008 (diálogos), AC-013 (fechar com a contagem e as três saídas), AC-014 (nenhum botão morto) e os textos dessas
+telas nos dois idiomas. Não há passo do mantenedor além da conferência visual.
 
-- [ ] C.0 Detalhar os passos da fase.
+- [x] C.0 Detalhar os passos da fase (17/11/2026).
+- [x] C.1 Barra superior (telas 5 a 16): fundo neutro em vez de pintado pelo ambiente; "← Conexões" discreto,
+      etiqueta do ambiente, `conexão / banco` e a versão do PostgreSQL em texto apagado; à direita o campo "Ir para
+      banco ou tabela ⌘K" (abre a paleta), PT | EN, e os ícones do painel de registro e de desconectar, com dica e
+      nome acessível. Sob a barra, a faixa de 3 px na cor do ambiente. Avisos ("Abrindo banco…", erro do banco, aviso
+      do app) em `widgets::banner` e `widgets::loading`.
+- [x] C.2 Faixa de bancos: item com o ícone de banco e o nome, o ativo destacado, × para fechar (com a mesma
+      confirmação de hoje) e um "+" no fim que abre a paleta.
+- [x] C.3 Árvore: busca com ícone ("Buscar tabela ou função"), grupos "Tabelas" e "Funções" com a contagem e seta de
+      abrir; tabela, view e tabela externa com ícone Phosphor em vez de ▦ ◫ ⇄; coluna com o ícone de chave na chave
+      primária e o tipo em texto apagado; rodapé com o seletor de schema e o ícone de recarregar. Os rótulos
+      "Items", "Queries" e "History" saem: Queries e History são do M7 e hoje são texto sem ação (AC-014).
+- [x] C.4 Abas: aba com ícone (tabela ou SQL), nome, ponto âmbar de pendência e × ; a ativa colada ao conteúdo; "+"
+      com a dica "Nova consulta SQL ⌘T". Estado vazio da área central (tela 5): "Nada aberto", com ⌘K e ⌘T.
+- [x] C.5 Paleta (tela 6): `widgets::dialog` sem rodapé, fundo escurecido, busca com ícone e "esc", grupo "Bancos",
+      item com ícone e "↩ abrir" no selecionado; a rolagem e as setas da fase B continuam.
+- [x] C.6 Fechar com pendências (tela 16): `widgets::dialog_full` com o nome no título, a contagem ("Há 2
+      alterações e 1 exclusão que ainda não foram gravadas"), e as três saídas: "Revisar e gravar" (fecha a
+      confirmação e abre a gravação da aba com pendência), Cancelar e "Descartar e fechar" em vermelho. Aba de SQL
+      com texto, banco e conexão mantêm os textos próprios.
+- [x] C.7 Testes dos rótulos novos nos testes antigos da árvore, das abas e da faixa; testes de AC-013 e AC-014 nas
+      telas da fase; suíte, portão completo, revisor e conferência visual.
 
 ### Fase D: dados
 
@@ -127,6 +150,18 @@ e a linha "Padrão visual e protótipos" do `CLAUDE.md` atualizados.
   Na segunda captura ficou claro que a lista era a da paleta "Escolher banco" (⌘K): com 60 bancos ela passava do
   fim da janela. A lista ganhou altura máxima com rolagem, e a seleção pelas setas rola junto (as teclas passaram
   para antes da lista). O redesenho da paleta segue na fase C. Teste com 60 bancos, provado contra a versão antiga.
+- **C.1, campo da paleta:** o protótipo diz "Ir para banco ou tabela", mas a paleta só acha bancos (tabelas são
+  do M7). O texto ficou "Ir para banco", para não prometer o que não existe (AC-014).
+- **C.3, Items, Queries e History:** saíram do painel esquerdo; Queries e History são do M7 e eram texto sem ação.
+  Volta quando o M7 existir.
+- **C.3, ordem dos grupos:** Tabelas antes de Funções, como no protótipo. Tabela externa ganhou o ícone de setas
+  do Phosphor (novo no recorte).
+- **C.4, título da aba SQL:** continua "SQL Query N" em inglês nos dois idiomas; o título é gravado com a aba e
+  muda na fase E, com o editor.
+- **C.6, "Revisar e gravar":** fecha a confirmação, ativa a primeira aba com pendência do alvo (aba, banco ou
+  conexão), põe na sub-aba Data e abre a caixa de gravação. Só aparece com pendência de tabela (não para texto de
+  SQL nem para célula aberta sem outra pendência). Na conexão, o botão vermelho diz "Descartar e desconectar".
+- **Aba Structure:** o 🔑 da lista de colunas da Structure fica para a fase D.
 - **B.4, texto do remover:** o protótipo diz que as consultas salvas da conexão ficam no disco, mas desde a FEAT-011
   remover a conexão apaga também as consultas dela. O texto do diálogo segue o comportamento: "A senha guardada no
   Keychain e as consultas salvas desta conexão também são apagadas."
@@ -161,6 +196,8 @@ e a linha "Padrão visual e protótipos" do `CLAUDE.md` atualizados.
 | 2ª | delta das correções | 3 baixos (mesmo erro em duas faixas, dica da lista vazia fixa em português, "Escolher banco (⌘K)" fixo) | todos corrigidos, com teste da duplicação provado contra o código sem o filtro; sem nova passada, como a skill manda para baixo do delta; a passada da branch inteira fica para o fechamento |
 | B, 1ª | `git diff HEAD` (fase B) | 2 médios (Enter tomado antes dos widgets: Enter no Cancelar salvava e derrubava a sessão; botões cobriam o erro do teste e o da linha); 1 baixo (sem teste da senha do Keychain no teste da edição) | todos corrigidos; testes do Enter e do rodapé provados contra o código antigo; testes do Keychain (senha guardada e chaveiro falhando) |
 | B, 2ª | delta das correções | 1 baixo (nome e endereço longos passavam sob os botões) | corrigido (largura limitada e truncamento), teste provado contra o código antigo; sem nova passada |
+| C, 1ª | `git diff HEAD` (fase C) e os ajustes do 1406e00 sem passada (barra de rolagem, reserva Hack, ícone da faixa, rolagem da paleta) | 2 baixos (trocar o idioma fechava as tabelas abertas na árvore, porque o id do grupo vinha do rótulo traduzido; textos substituídos ficaram no catálogo, escondidos pelo `allow(dead_code)`) | ambos corrigidos: id fixo nos grupos, com teste provado contra o código sem ele; cinco textos mortos removidos e o teste da reserva Hack ajustado aos símbolos em uso (▲▼ do grid) |
+| C, 2ª | delta das correções | nenhum | fase liberada |
 
 ## Testes
 
@@ -198,6 +235,16 @@ Fase B (17/11/2026), por teste:
 - Enter num botão focado é do botão (Cancelar cancela sem salvar; Remover abre a confirmação e não conecta).
 - Erro longo do teste e da linha, nome e endereço longos: nenhum texto passa sob os botões.
 - Testar na edição com a senha em branco usa a do Keychain; com o chaveiro falhando, mostra o erro e não conecta.
+
+Fase C (17/11/2026), por teste:
+- Os 12 testes antigos do workspace, da árvore, das abas e da faixa passaram para os rótulos novos e seguem verdes.
+- Fechar aba com 1 alteração e 1 exclusão: título com o nome, texto com a contagem, Esc cancela, "Revisar e
+  gravar" abre a gravação sem fechar, "Descartar e fechar" fecha (AC-013). Plural e milhar do texto nos dois
+  idiomas.
+- Barra superior com `conexão / banco`, versão e etiqueta; nenhum "Items", "Queries" ou "History" (AC-014); o
+  ícone do painel abre o painel; o "+" da faixa abre a paleta; a paleta fecha por Esc e por clique fora (AC-008).
+- Workspace em inglês.
+- Trocar PT | EN com uma tabela aberta na árvore mantém as colunas à mostra (falha sem o id fixo do grupo).
 - Portão completo verde.
 - Portão completo verde e `cargo deny check advisories` ok.
 
@@ -208,6 +255,7 @@ Fase B (17/11/2026), por teste:
 - Linux e Windows (só o rótulo de atalho por teste).
 - Fase B no app: visual das telas 1 a 4 nos dois temas e idiomas, foco do teclado com o campo de busca ativo, e o
   "Testar conexão" contra um servidor real. Conferência do Jean.
+- Fase C no app: visual das telas 5, 6 e 16 nos dois temas e idiomas; a faixa de ambiente com cada tag.
 
 ## Segurança (fechamento)
 
