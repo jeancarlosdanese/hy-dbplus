@@ -246,6 +246,20 @@ Cada um com "pode commitar"; os sensíveis com o revisor rodado depois do commit
 - [x] Rolagem horizontal no grid de resultados (17/11/2026, branch `fix/rolagem-horizontal-no-grid`): mesmo
   conserto do grid da aba Data (FEAT-005): `ScrollArea::horizontal()` por fora da `Table`, que só rola na
   vertical. Coberto pelo teste do grid da aba Data; o id do `ScrollArea` leva a aba e o índice do resultado.
-  Revisor (17/11/2026, uma passada, sem achado alto nem médio). **Baixa, registrada sem conserto:** o id do
-  `ScrollArea` não muda por execução; depois de rolar um resultado largo para a direita, o resultado da
-  execução seguinte na mesma posição nasce rolado. Conserto possível: pôr no id algo que mude a cada execução.
+  Revisor (17/11/2026, uma passada, sem achado alto nem médio). **Baixa, corrigida a pedido do Jean (branch
+  `fix/achados-da-rolagem`):** o id do `ScrollArea` não mudava por execução; depois de rolar um resultado largo
+  para a direita, o resultado da execução seguinte na mesma posição nascia rolado. `QueryTab.run_seq` conta as
+  execuções (sobe no `SqlStarted`) e entra no id. O teste do editor confere o contador; provado reprovando sem
+  o incremento. Junto, só espaço: o bloco da tabela em `data.rs` reindentado dentro do `ScrollArea`.
+  Primeira passada da branch `fix/achados-da-rolagem` (três achados baixos, todos corrigidos a pedido do Jean): (1) rolagem vertical e
+  larguras de coluna também eram herdadas entre execuções: a `Table` dos resultados ganhou
+  `id_salt(("results-table", run_seq, result_index))`; (2) `run_seq` por aba voltava a 0 na aba restaurada, com
+  o mesmo id e o estado antigo ainda na memória do egui: o contador passou a ser um só por processo
+  (`App::run_counter`), copiado para a aba no `SqlStarted`; (3) o teste só provava o contador: agora roda um
+  resultado de 30 colunas, rola para a direita, roda de novo e confere que `c01` volta à posição inicial
+  (provado reprovando sem o contador no id da rolagem).
+  Segunda passada da branch `fix/achados-da-rolagem` (delta, dois baixos, corrigidos): o id do estado da tabela
+  da aba Data não levava o banco (conserto e teste na FEAT-005) e faltava teste para o estado da tabela por
+  execução e para o contador por processo. O teste do editor agora também rola 500 linhas na vertical e confere que a execução
+  seguinte nasce no topo; `execucoes_do_editor_tem_numero_unico_entre_abas` confere o contador entre duas
+  abas. Cada um provado reprovando sem o respectivo conserto.

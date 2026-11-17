@@ -165,6 +165,11 @@ pub struct QueryTab {
     pub running: bool,
     pub started: Option<Instant>,
     pub results: Vec<QueryResult>,
+    /// Número da última execução (de `App::run_counter`, um só por processo): entra no id da tabela e
+    /// da rolagem dos resultados, para o grid de uma execução nova não herdar rolagem nem larguras
+    /// da anterior. Por processo e não por aba: a aba restaurada volta com o mesmo id e o estado
+    /// antigo ainda está na memória do egui.
+    pub run_seq: u64,
     pub active_result: usize,
     pub notice: Option<String>,
     /// O texto como está no arquivo (FEAT-011): só grava de novo quando o buffer mudou.
@@ -221,6 +226,7 @@ impl QueryTab {
             running: false,
             started: None,
             results: Vec::new(),
+            run_seq: 0,
             active_result: 0,
             notice: None,
             saved: String::new(),
@@ -729,6 +735,8 @@ const SQL_RUNNING_ERROR: &str =
 pub struct App<D: Driver> {
     pub(crate) deps: Deps<D>,
     pub(crate) view: View,
+    /// Conta as execuções do editor SQL no processo inteiro (ver `QueryTab::run_seq`).
+    pub(crate) run_counter: u64,
     pub(crate) status: HashMap<ConnectionId, Status>,
     /// Os bancos abertos, por (conexão, banco).
     pub(crate) workspaces: HashMap<DbKey, Workspace>,
@@ -766,6 +774,7 @@ where
         Self {
             deps,
             view: View::Connections,
+            run_counter: 0,
             status: HashMap::new(),
             workspaces: HashMap::new(),
             rail: Vec::new(),
@@ -971,9 +980,12 @@ where
                 self.discard_pending_sql(&(id, database), &schema, &table, &error.to_string());
             }
             Event::SqlStarted { database, tab, .. } => {
+                self.run_counter = self.run_counter.wrapping_add(1);
+                let run_seq = self.run_counter;
                 if let Some(q) = self.query_tab_mut(&id, &database, tab) {
                     q.running = true;
                     q.started = Some(Instant::now());
+                    q.run_seq = run_seq;
                     q.results.clear();
                     q.active_result = 0;
                     q.notice = None;

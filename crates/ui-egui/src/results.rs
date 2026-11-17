@@ -87,10 +87,13 @@ where
                         // Barra horizontal por fora da tabela, como no grid da aba Data: a Table do
                         // egui_extras só rola na vertical.
                         egui::ScrollArea::horizontal()
-                            .id_salt(("results-hscroll", key, q.id, result_index))
+                            .id_salt(("results-hscroll", key, q.id, q.run_seq, result_index))
                             .auto_shrink([false, false])
                             .show(ui, |ui| {
+                                // O estado da tabela (larguras, rolagem vertical) também é por
+                                // execução e por resultado.
                                 let mut builder = TableBuilder::new(ui)
+                                    .id_salt(("results-table", q.run_seq, result_index))
                                     .striped(true)
                                     .resizable(true)
                                     .sense(egui::Sense::click())
