@@ -75,8 +75,8 @@ Passos marcáveis, por fase. Cada fase fecha com teste, notas e o "pode commitar
       ```
       Saída esperada: os jobs `macos`, `linux` e `windows` verdes, com os pacotes nos artefatos do run e o
       `dpkg-deb --info` no log do Linux. O job `release` fica pulado (não é tag).
-- [x] C.1 `.github/workflows/release.yml`: gatilhos `push` de tag `v*` e `pull_request` que toca `xtask/`,
-      `packaging/`, `apps/hy-dbplus/` ou o próprio workflow; job `check` (`cargo xtask version --check` com o nome
+- [x] C.1 `.github/workflows/release.yml`: gatilhos `push` de tag `v*`, e `push` da `main` e `pull_request` que
+      tocam `xtask/`, `packaging/`, `apps/hy-dbplus/`, `apps/hy-dbplus-cli/`, `VERSION`, `Cargo.toml`, `Cargo.lock` ou o próprio workflow; job `check` (`cargo xtask version --check` com o nome
       da tag, só na tag); jobs `macos` (`--universal`), `linux` (dependências do eframe, `.deb` e `.tar.gz`,
       `dpkg-deb --info` e `--contents`, e o `.deb` instalado por `apt install` num contêiner `debian:bookworm-slim`
       limpo, que prova que todas as dependências se resolvem, e o app aberto por alguns segundos sob `xvfb-run` no mesmo
@@ -137,7 +137,8 @@ Passos marcáveis, por fase. Cada fase fecha com teste, notas e o "pode commitar
   `Depends` se resolve), `hy-dbplus-cli --version` e o app aberto 15 s sob `xvfb-run`, com o Mesa fazendo o papel
   do driver do desktop e a senha só em memória. Saída antes dos 15 s reprova.
 - **C.1, ações de artefato:** `upload-artifact@v7` e `download-artifact@v8` (as últimas, consultadas na API do
-  GitHub em 18/11/2026; Node 24, com `pattern` e `merge-multiple`); as outras seguem as do `quality-gate.yml`.
+  GitHub em 18/11/2026; Node 24, com `pattern` e `merge-multiple`); no fechamento, todas as ações do `release.yml`
+  foram fixadas por SHA e o `rust-cache` saiu (abaixo).
 - **C.1, notas da Release:** as geradas pelo GitHub, precedidas do aviso de pacotes sem assinatura, que manda
   conferir pelo `SHA256SUMS` (anexo).
 - **C, achados do revisor (lote único, todos baixos):** o `CLAUDE.md` mandava subir a versão em toda entrega, mas a
@@ -147,6 +148,16 @@ Passos marcáveis, por fase. Cada fase fecha com teste, notas e o "pode commitar
   `main`, que ela não percorre: o revisor simulou com as funções da trava (merge desta FEAT, tag no commit de merge,
   merge seguinte, `cargo xtask version 0.3.0`, commit e tag passam; commit na `main` antes da tag é recusado), e a
   prova real fica para a próxima entrega.
+- **Fechamento, revisão da branch inteira (1 médio, 5 baixos, lote único):** o `.tar.gz` gravava o dono do
+  usuário que montou (no runner, uid 1001): extraído com `sudo`, o binário em `/opt` ficaria de um usuário comum —
+  médio; o `tar` agora grava `--owner=0 --group=0 --numeric-owner`, e o CI reprova entrada que não seja 0/0. Como a
+  entrega é merge local, o `release.yml` só montava pacote em pull request ou na tag: agora roda também no push da
+  `main` que toca o empacotamento (o `check` e o `release` passaram a olhar `refs/tags/v`), e o próprio
+  `release.yml` entrou nos `paths` do `version` (conserto só nele pode subir versão e tag nova). As ações do
+  `release.yml` ficaram fixadas por SHA (os binários vão para a Release), sem o `rust-cache`, e a imagem do Debian
+  por digest. A página do projeto no `.deb` vem do `repository` do `cargo metadata` (sem cópia no xtask). O brief,
+  o AC-006, o C.1 e o comentário do alias em `.cargo/config.toml` foram alinhados. A passada sobre o delta achou um baixo (uma frase das notas
+  ainda dizia que as ações seguiam as do `quality-gate.yml`), corrigido sem nova passada.
 - **C, 2ª passada (um baixo, corrigido sem nova passada):** o reenvio por cima também regravaria os anexos de uma
   Release já publicada (reexecução do run ou tag movida); agora só regrava rascunho, e publicada falha dizendo
   que versão publicada não se regrava.

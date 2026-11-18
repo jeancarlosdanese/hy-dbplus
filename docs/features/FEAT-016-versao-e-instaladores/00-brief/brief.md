@@ -93,8 +93,9 @@ comando e conferidos por teste.
 - **Push e tag publicados são do Jean:** a IA cria a tag local na entrega; o push dela, que dispara a Release, é dele.
 - `xtask/`, `packaging/`, `Cargo.toml`, `Cargo.lock`, `apps/*/src/` e `.github/` são sensíveis ou protegidos: passam
   pelo revisor.
-- A chave `version` do `process.json` liga a trava de versão assim que é gravada: entra no último commit da branch,
-  com o `VERSION` em `0.1.0`, para que a primeira subida seja a da entrega desta FEAT.
+- A chave `version` do `process.json` liga a trava de versão assim que é gravada; ela entrou com o `VERSION` já em
+  `0.2.0`, subido na branch (desvio do C.2 nas notas: sem tag `v0.1.0`, a trava recusaria o commit da versão na
+  `main`).
 
 ## Decisões do mantenedor (18/11/2026)
 

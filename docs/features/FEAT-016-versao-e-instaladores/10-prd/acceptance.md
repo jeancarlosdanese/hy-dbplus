@@ -79,10 +79,10 @@ Cenário: nada de segredo
       dessa entrega).
 - [ ] AC-005: nomes dos pacotes, `control` do `.deb`, `.desktop` e árvore dos pacotes. Verificar: teste (em
       qualquer sistema).
-- [ ] AC-006: `.deb` e `.tar.gz` montados no Ubuntu. Verificar: CI (o `release.yml` também roda em
-      pull request que toca `xtask/`, `packaging/` ou o próprio workflow, só montando os pacotes, sem Release; o log
-      traz `dpkg-deb --info` e `--contents`).
-- [ ] AC-007: `.zip` montado no Windows e o `.exe` com subsistema gráfico. Verificar: CI (o mesmo pull request) e
+- [ ] AC-006: `.deb` e `.tar.gz` montados no Ubuntu. Verificar: CI (o `release.yml` também roda no
+      push da `main` e em pull request que tocam `xtask/`, `packaging/`, `apps/hy-dbplus/`, `apps/hy-dbplus-cli/`, `VERSION`, `Cargo.toml`, `Cargo.lock` ou o próprio workflow, só montando
+      os pacotes, sem Release; o log traz `dpkg-deb --info`, `--contents` e o dono 0/0 do `.tar.gz`).
+- [ ] AC-007: `.zip` montado no Windows e o `.exe` com subsistema gráfico. Verificar: CI (o mesmo run) e
       teste do atributo.
 - [ ] AC-008: `.dmg` do macOS sem regressão. Verificar: `cargo xtask bundle` no Mac.
 - [ ] AC-009: tag diferente da versão faz o workflow falhar antes dos pacotes. Verificar: teste da conferência (o
