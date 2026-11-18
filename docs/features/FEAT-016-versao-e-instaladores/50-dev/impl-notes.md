@@ -67,8 +67,9 @@ Passos marcáveis, por fase. Cada fase fecha com teste, notas e o "pode commitar
 
 ### Fase C: release no CI e a versão ligada na entrega
 
-- [ ] ⏸️ C.0 Mantenedor: depois do commit da fase, push da branch e abertura do pull request, para o `release.yml`
-      rodar nos três sistemas sem criar Release:
+- [x] ⏸️ C.0 (cancelado em 18/11/2026: a entrega é toda local, e o CI roda no push da `main` e da tag, que é do
+      Jean; ver "Desvios") Mantenedor: push da branch e pull request, para o `release.yml` rodar nos três sistemas
+      sem criar Release:
       ```bash
       git push -u origin feat/FEAT-016-versao-e-instaladores
       gh pr create --fill --draft
@@ -162,6 +163,11 @@ Passos marcáveis, por fase. Cada fase fecha com teste, notas e o "pode commitar
   Release já publicada (reexecução do run ou tag movida); agora só regrava rascunho, e publicada falha dizendo
   que versão publicada não se regrava.
 
+- **C.0 cancelado:** o Jean corrigiu o fluxo em 18/11/2026: "entrega" é toda local (portão, merge, versão, commit da
+  versão, tag e o `.dmg`, na ordem do `CLAUDE.md`) e o push é dele; não há pull request nem CI antes. Os critérios que só o CI prova (AC-006,
+  AC-007 e AC-010) ficam abertos com o motivo, e a conferência deles é o run do `release.yml` no push. A entrega
+  também monta o `.dmg` local (`cargo xtask bundle`), regra registrada no `CLAUDE.md`.
+
 ## Testes
 
 Fase A (18/11/2026), por teste e no repositório:
@@ -199,16 +205,18 @@ Fase C (18/11/2026), local:
 - `release.yml` lido como YAML (Ruby): cinco jobs, escrita só no `release`.
 - `.claude/process.json` válido, com `version` e `bump`.
 
-**Não conferido:** o `release.yml` rodando (depende do push da branch, C.0); o `.deb`, o `.tar.gz` e o `.zip` montados de verdade (esta máquina é macOS; montam no CI, fase
+**Não conferido:** o `release.yml` rodando (roda no push da `main` e da tag, do Jean, depois da entrega); o `.deb`, o `.tar.gz` e o `.zip` montados de verdade (esta máquina é macOS; montam no CI, fase
 C); o `--universal` (falta o target x86_64 neste Mac; monta no CI); o checkout do Windows com o `.gitattributes` (o `VERSION` ainda não foi para o remoto; confere
-no CI do primeiro push da branch); a falha de gravação depois de truncar (disco cheio), que não se simula em
+no CI do push da `main`); a falha de gravação depois de truncar (disco cheio), que não se simula em
 teste: o teste cobre a falha no segundo arquivo, com o primeiro devolvido e sem temporário sobrando; a subida dentro da entrega, com a trava do plugin (esta entrega só faz o merge e a tag no commit de merge; o commit da
 versão na `main` foi conferido por simulação com as funções da trava e roda de verdade na próxima entrega).
 
 ## Segurança (fechamento)
 
 Sem rota nem tela nova. O que importa aqui é o `release.yml` (token e permissões) e o conteúdo dos pacotes, no
-AC-011 e no revisor.
+AC-011 e no revisor: escrita (`contents: write`) só no job `release`, token do próprio run, tag por variável de
+ambiente, ações por SHA e imagem por digest, pacotes sem arquivo de conexão, preferência ou senha, `.tar.gz` com
+dono root. Verificado pelo revisor em cada fase e na branch inteira.
 
 ## Riscos
 

@@ -1,4 +1,4 @@
-<!-- FEAT_EM_ANDAMENTO — fases A a C commitadas; falta o CI no pull request (C.0, do Jean) e o fechamento -->
+<!-- FEAT_CONCLUIDA — 18/11/2026: fases A a C, revisão da branch inteira; falta a conferência dos pacotes de Linux e Windows no CI do push do Jean (AC-006, AC-007, AC-010) -->
 # @file: docs/features/FEAT-016-versao-e-instaladores/context.index.md
 
 # FEAT-016: versão e instaladores
@@ -16,7 +16,9 @@ Linux, `.zip` no Windows, em `xtask/src/package.rs`; `.dmg` com o nome novo no m
 com `error.log`; revisada, portão completo verde. `.deb` e `.zip` só se montam no CI (fase C). **Fase C**
 em c7db0e0, 6c40bb4 e no commit de docs seguinte: `release.yml` (pacotes nos três sistemas, `.deb` instalado e aberto num Debian limpo, Release em
 rascunho na tag), `version` e `bump` no `process.json`, regra no `CLAUDE.md` e a versão já em 0.2.0 na branch (a
-entrega faz o merge e a tag `v0.2.0` no commit de merge). Falta o CI no pull request (C.0) e o fechamento.
+entrega faz o merge e a tag `v0.2.0` no commit de merge). Correções da revisão da branch inteira em 379c4eb.
+Fechada na branch em 18/11/2026, com o portão completo verde.
 
-**Cabe ao mantenedor:** push da branch e o pull request (C.0), para o `release.yml` montar os pacotes nos três
-sistemas; push da tag `v0.2.0` depois da entrega, que cria a Release em rascunho; revisar e publicar a Release.
+**Cabe ao mantenedor:** depois da entrega, o push da `main` e da tag `v0.2.0` (`git push origin main v0.2.0`): o
+`release.yml` monta os pacotes nos três sistemas (AC-006 e AC-007) e cria a Release em rascunho (AC-010); revisar e
+publicar a Release. O que falhar no CI vira correção.

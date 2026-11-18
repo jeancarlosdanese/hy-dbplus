@@ -83,7 +83,8 @@ delta, gravidade) e o critério de conclusão ficam na skill `process:quality` (
   saída fica na tela e o push vem depois, do Jean). A entrega também faz versão e tag (FEAT-016) quando a branch
   traz mudança nos `paths` do `version` no `process.json` (código, apps, xtask, empacotamento, manifestos, `release.yml`): depois
   do merge, na `main`, a IA roda o `bump` (`cargo xtask version <nova>`), commita só a troca da versão e cria a tag
-  `v<versão>` nesse commit; quando a branch já subiu a versão, a tag vai no commit de merge. Sem essa mudança (só
+  `v<versão>` nesse commit; quando a branch já subiu a versão, a tag vai no commit de merge. Depois da tag, monta o
+  `.dmg` (`cargo xtask bundle`, em `target/bundle/`). Tudo local, sem pull request nem CI antes. Sem essa mudança (só
   docs, por exemplo), a entrega é só o merge: a trava recusa versão nova sem código versionado desde a tag.
   O push da tag é do Jean e dispara o `release.yml`, que cria a Release em rascunho com os instaladores.
 - **Push e deploy:** sempre do Jean; a trava recusa.

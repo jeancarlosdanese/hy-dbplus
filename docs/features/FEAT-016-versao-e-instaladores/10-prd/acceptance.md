@@ -70,23 +70,25 @@ Cenário: nada de segredo
 
 ## Checklist
 
-- [ ] AC-001: `cargo xtask version` troca a versão nos três arquivos e só nas linhas da versão. Verificar: teste.
-- [ ] AC-002: versão inválida ou que não sobe é recusada sem mudar arquivo. Verificar: teste.
-- [ ] AC-003: `VERSION` e `Cargo.toml` diferentes reprovam o portão. Verificar: teste.
-- [ ] AC-004: `process.json` com `version` e `bump`, e a regra de versão no `CLAUDE.md`. Verificar: leitura; a
+- [x] AC-001: `cargo xtask version` troca a versão nos três arquivos e só nas linhas da versão. Verificar: teste.
+- [x] AC-002: versão inválida ou que não sobe é recusada sem mudar arquivo. Verificar: teste.
+- [x] AC-003: `VERSION` e `Cargo.toml` diferentes reprovam o portão. Verificar: teste.
+- [ ] AC-004 (motivo: a leitura e a simulação estão feitas; a prova pela trava é a própria entrega): `process.json`
+      com `version` e `bump`, e a regra de versão no `CLAUDE.md`. Verificar: leitura; a
       trava na entrega desta FEAT (merge e a tag `v0.2.0` no commit de merge, porque a 0.2.0 subiu na branch) e,
       por simulação com as funções da própria trava, o commit da versão na entrega seguinte (a prova real é a
       dessa entrega).
-- [ ] AC-005: nomes dos pacotes, `control` do `.deb`, `.desktop` e árvore dos pacotes. Verificar: teste (em
+- [x] AC-005: nomes dos pacotes, `control` do `.deb`, `.desktop` e árvore dos pacotes. Verificar: teste (em
       qualquer sistema).
-- [ ] AC-006: `.deb` e `.tar.gz` montados no Ubuntu. Verificar: CI (o `release.yml` também roda no
+- [ ] AC-006 (motivo: só o CI monta; roda no push da `main` e da tag `v0.2.0` pelo Jean, depois da entrega): `.deb` e `.tar.gz` montados no Ubuntu. Verificar: CI (o `release.yml` também roda no
       push da `main` e em pull request que tocam `xtask/`, `packaging/`, `apps/hy-dbplus/`, `apps/hy-dbplus-cli/`, `VERSION`, `Cargo.toml`, `Cargo.lock` ou o próprio workflow, só montando
       os pacotes, sem Release; o log traz `dpkg-deb --info`, `--contents` e o dono 0/0 do `.tar.gz`).
-- [ ] AC-007: `.zip` montado no Windows e o `.exe` com subsistema gráfico. Verificar: CI (o mesmo run) e
+- [ ] AC-007 (motivo: só o CI monta; roda no push da `main` e da tag `v0.2.0` pelo Jean, depois da entrega): `.zip` montado no Windows e o `.exe` com subsistema gráfico. Verificar: CI (o mesmo run) e
       teste do atributo.
-- [ ] AC-008: `.dmg` do macOS sem regressão. Verificar: `cargo xtask bundle` no Mac.
-- [ ] AC-009: tag diferente da versão faz o workflow falhar antes dos pacotes. Verificar: teste da conferência (o
+- [x] AC-008: `.dmg` do macOS sem regressão. Verificar: `cargo xtask bundle` no Mac (arm64, feito; o universal
+      monta no CI, porque este Mac não tem o target x86_64).
+- [x] AC-009: tag diferente da versão faz o workflow falhar antes dos pacotes. Verificar: teste da conferência (o
       passo chama `cargo xtask version --check <tag>`).
-- [ ] AC-010: Release em rascunho com os cinco arquivos no push da tag. Verificar: push da `v0.2.0` pelo Jean.
-- [ ] AC-011: `GITHUB_TOKEN` com `contents: write` só no job da Release; nenhum segredo no workflow. Verificar:
+- [ ] AC-010 (motivo: depende do push da tag `v0.2.0`, que é do Jean): Release em rascunho com os cinco arquivos no push da tag. Verificar: push da `v0.2.0` pelo Jean.
+- [x] AC-011: `GITHUB_TOKEN` com `contents: write` só no job da Release; nenhum segredo no workflow. Verificar:
       revisor.
