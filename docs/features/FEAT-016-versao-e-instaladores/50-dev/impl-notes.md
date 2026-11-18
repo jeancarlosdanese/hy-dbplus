@@ -16,9 +16,10 @@
 - **Nome dos pacotes:** `hy-dbplus-<versão>-<sistema>-<arquitetura>.<ext>` (`macos-universal.dmg`,
   `macos-arm64.dmg`, `linux-x86_64.deb`, `linux-x86_64.tar.gz`, `windows-x86_64.zip`). O `.dmg` muda de
   `hy-dbplus-<versão>-<arch>.dmg` para esse padrão.
-- **`.deb` sem `dpkg-shlibdeps`:** o `control` declara as dependências fixas (`libc6`, `libgcc-s1`, `libgl1`,
-  `libxkbcommon0`, `libgtk-3-0`), conferidas no CI com `ldd` e `dpkg-deb --info`; o pacote nasce com
-  `dpkg-deb --build --root-owner-group`.
+- **`.deb` sem `dpkg-shlibdeps`:** o `control` declara as dependências fixas (`DEB_DEPENDS` em
+  `xtask/src/package.rs`: libc, runtime do Rust, GL e EGL, Wayland, X11 e xkbcommon). As de GL, Wayland e X11 são
+  abertas por `dlopen` e não aparecem no `ldd`; o CI instala o `.deb` num Debian limpo para conferir que o `apt`
+  resolve todas. O pacote nasce com `dpkg-deb --build --root-owner-group`.
 - **`.zip` pelo `tar` do sistema:** no Windows 10 em diante o `tar` é o bsdtar e grava zip (`tar -a -c -f`); no
   Linux, o `.tar.gz` sai pelo `tar -czf`. Nenhuma crate de compressão.
 - **Release em rascunho:** os pacotes não têm assinatura de código; o Jean revê a Release e publica.
@@ -49,20 +50,20 @@ Passos marcáveis, por fase. Cada fase fecha com teste, notas e o "pode commitar
 
 ### Fase B: pacotes do Linux e do Windows
 
-- [ ] B.1 `bundle.rs`: o `run` escolhe pelo sistema (`macos`, `linux`, `windows`; outro sistema recusa com erro
+- [x] B.1 `bundle.rs`: o `run` escolhe pelo sistema (`macos`, `linux`, `windows`; outro sistema recusa com erro
       claro). O macOS não muda, salvo o nome do `.dmg`.
-- [ ] B.2 Linux: build release do app e da CLI, árvore do `.deb` (`DEBIAN/control`, `/usr/bin`,
-      `/usr/share/applications/hy-dbplus.desktop`, `/usr/share/icons/hicolor/256x256/apps/hy-dbplus.png`,
+- [x] B.2 Linux: build release do app e da CLI, árvore do `.deb` (`DEBIAN/control`, `/usr/bin`,
+      `/usr/share/applications/br.com.hy.dbplus.desktop`, `/usr/share/icons/hicolor/256x256/apps/hy-dbplus.png`,
       `/usr/share/doc/hy-dbplus/copyright`), `dpkg-deb --build --root-owner-group`, e o `.tar.gz` com os binários, o
       ícone, o `.desktop` e a licença.
-- [ ] B.3 Windows: build release do app e da CLI, `.zip` com os dois `.exe` e a licença; `apps/hy-dbplus/src/main.rs`
-      ganha `#![cfg_attr(windows, windows_subsystem = "windows")]` (sem janela de console; o erro de abrir a janela
-      continua no stderr, que no Windows gráfico não aparece: anotado em "Não conferido").
-- [ ] B.4 Testes das partes puras, em qualquer sistema: nomes dos pacotes, texto do `control` (pacote, versão,
+- [x] B.3 Windows: build release do app e da CLI, `.zip` com os dois `.exe` e a licença; `apps/hy-dbplus/src/main.rs`
+      ganha `windows_subsystem = "windows"` no release (sem janela de console); como o stderr some nesse modo, o erro
+      que impede a abertura vai também para `error.log`, ao lado do `connections.toml`.
+- [x] B.4 Testes das partes puras, em qualquer sistema: nomes dos pacotes, texto do `control` (pacote, versão,
       arquitetura, dependências, descrição), `.desktop` (nome, `Exec`, `Icon`, categorias), árvore do `.deb` e do
       `.tar.gz` montada numa pasta temporária, argumentos do bundle por sistema; teste do atributo de subsistema no
       `main.rs`.
-- [ ] B.5 Portão `--full`, revisor da fase e notas.
+- [x] B.5 Portão `--full`, revisor da fase e notas (duas passadas; o baixo da segunda, a lista antiga nas notas, corrigido sem nova passada).
 
 ### Fase C: release no CI e a versão ligada na entrega
 
@@ -77,7 +78,10 @@ Passos marcáveis, por fase. Cada fase fecha com teste, notas e o "pode commitar
 - [ ] C.1 `.github/workflows/release.yml`: gatilhos `push` de tag `v*` e `pull_request` que toca `xtask/`,
       `packaging/`, `apps/hy-dbplus/` ou o próprio workflow; job `check` (`cargo xtask version --check` com o nome
       da tag, só na tag); jobs `macos` (`--universal`), `linux` (dependências do eframe, `.deb` e `.tar.gz`,
-      `dpkg-deb --info` e `--contents`) e `windows`, cada um subindo os pacotes como artefato; job `release`, só na
+      `dpkg-deb --info` e `--contents`, e o `.deb` instalado por `apt install` num contêiner `debian:bookworm-slim`
+      limpo, que prova que todas as dependências se resolvem, e o app aberto por alguns segundos sob `xvfb-run` no mesmo
+      contêiner, que pega biblioteca nova que o `winit` ou o `glutin` passem a abrir; o `ldd` não vê as abertas por
+      `dlopen`) e `windows`, cada um subindo os pacotes como artefato; job `release`, só na
       tag, com `contents: write`, que baixa os artefatos, gera o `SHA256SUMS` e roda `gh release create --draft
       --generate-notes`. `permissions: contents: read` no topo.
 - [ ] C.2 `.claude/process.json`: `version` (`file: VERSION`, `paths` com `^(apps|crates|xtask|packaging)/` e
@@ -107,6 +111,19 @@ Passos marcáveis, por fase. Cada fase fecha com teste, notas e o "pode commitar
   cima: o `fs::write` direto truncava o arquivo antes de escrever, e uma falha no meio deixaria o lock vazio com a
   mensagem "nada mudou" (baixo).
 
+- **B, módulo novo:** Linux e Windows ficaram em `xtask/src/package.rs`; o `bundle.rs` segue dono do macOS e do
+  `run`, que escolhe pelo sistema. Fora do macOS, `--universal` e `--no-dmg` são recusados.
+- **B.1, nome do `.dmg` sem `--universal`:** usava `arm64` fixo, mesmo num Mac Intel; agora é a arquitetura da
+  máquina. Os documentos da FEAT-014 citam o nome antigo e ficam como histórico.
+- **B.2, atalho com o nome do `app_id`:** `br.com.hy.dbplus.desktop`, com `StartupWMClass` igual: no Wayland o
+  compositor casa a janela com o atalho pelo `app_id`, e o ícone da barra só aparece assim.
+- **B.2, dependências do `.deb`:** sem GTK (o eframe aqui não tem diálogo de arquivo); a lista tem dono único, o
+  `DEB_DEPENDS` de `xtask/src/package.rs` (12 pacotes, com o motivo de cada grupo no comentário).
+- **B.2, `Maintainer`:** `Hyberica <página do projeto>`, sem e-mail: nenhum endereço pessoal vai no pacote.
+- **B.3, `tar.exe` do `System32`:** o `tar` do Git no PATH do runner é o GNU, que não grava zip; o bsdtar do sistema
+  grava.
+- **B.3, `windows_subsystem` só no release:** o build de debug segue com console para os logs.
+
 ## Testes
 
 Fase A (18/11/2026), por teste e no repositório:
@@ -127,7 +144,19 @@ Fase A (18/11/2026), por teste e no repositório:
   testes falham sem o conserto). Subida real repetida e desfeita.
 - Portão completo verde.
 
-**Não conferido:** o checkout do Windows com o `.gitattributes` (o `VERSION` ainda não foi para o remoto; confere
+Fase B (18/11/2026), por teste e no Mac:
+- Nomes dos pacotes e arquiteturas (`x86_64`, `arm64`; outra recusada), `control` do `.deb` (campos, formato do
+  dpkg: fim em `\n`, descrição longa com espaço, sem linha vazia nem espaço no fim), `.desktop` (campos e nome).
+- Árvore do `.deb` numa pasta temporária: os seis arquivos, a árvore recriada (sobra de antes some), binários 0755,
+  o resto 0644, pastas 0755, `Installed-Size` em KiB. Pastas do `.tar.gz` e do `.zip` com os arquivos certos.
+  Entrada que falta é recusada.
+- `windows_subsystem` no `main.rs` do app: o teste falha sem o atributo (prova feita e desfeita).
+- macOS no Mac: `cargo xtask bundle` montou `hy-dbplus-0.1.0-macos-arm64.dmg`, com 0.1.0 no `Info.plist` e a
+  assinatura ad hoc válida (`codesign -v`); argumento desconhecido recusado.
+- Portão completo verde.
+
+**Não conferido:** o `.deb`, o `.tar.gz` e o `.zip` montados de verdade (esta máquina é macOS; montam no CI, fase
+C); o `--universal` (falta o target x86_64 neste Mac; monta no CI); o checkout do Windows com o `.gitattributes` (o `VERSION` ainda não foi para o remoto; confere
 no CI do primeiro push da branch); a falha de gravação depois de truncar (disco cheio), que não se simula em
 teste: o teste cobre a falha no segundo arquivo, com o primeiro devolvido e sem temporário sobrando; a subida dentro da entrega, com a trava do plugin (é a da própria entrega desta FEAT, na fase
 C).
@@ -140,7 +169,8 @@ AC-011 e no revisor.
 ## Riscos
 
 - **Dependências do `.deb` fixas:** uma biblioteca carregada em tempo de execução (Wayland, X11, GL) pode faltar num
-  Ubuntu mínimo. Mitigação: `ldd` no log do CI e a lista no `control`; o `.tar.gz` não declara nada.
+  Ubuntu mínimo. Mitigação: a lista no `control` vem do código do `winit` e do `glutin`, e o CI instala o `.deb`
+  num Debian limpo; o `.tar.gz` não declara nada.
 - **Primeira entrega com versão:** a trava passa a cobrar versão e tag com o `process.json` novo; um caminho que não
   esteja nos testes do plugin pode recusar o commit da versão. Mitigação: o C.2 confere nos testes antes, e a
   recusa não se contorna (vira pergunta ao Jean).
