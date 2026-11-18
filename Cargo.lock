@@ -1472,7 +1472,7 @@ dependencies = [
 
 [[package]]
 name = "hy-dbplus"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "eframe",
  "hy-dbplus-engine",
@@ -1482,14 +1482,14 @@ dependencies = [
 
 [[package]]
 name = "hy-dbplus-automation"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hy-dbplus-engine",
 ]
 
 [[package]]
 name = "hy-dbplus-catalog"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hy-dbplus-driver",
  "tokio",
@@ -1498,14 +1498,14 @@ dependencies = [
 
 [[package]]
 name = "hy-dbplus-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hy-dbplus-automation",
 ]
 
 [[package]]
 name = "hy-dbplus-driver"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "futures-util",
  "rustls",
@@ -1520,7 +1520,7 @@ dependencies = [
 
 [[package]]
 name = "hy-dbplus-engine"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hy-dbplus-catalog",
  "hy-dbplus-driver",
@@ -1536,7 +1536,7 @@ dependencies = [
 
 [[package]]
 name = "hy-dbplus-sql"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hy-dbplus-catalog",
  "sqlformat",
@@ -1545,7 +1545,7 @@ dependencies = [
 
 [[package]]
 name = "hy-dbplus-ui-egui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "eframe",
  "egui",
@@ -4315,7 +4315,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde_json",
 ]
