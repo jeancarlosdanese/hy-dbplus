@@ -227,7 +227,7 @@ where
                                     );
                                 }
                                 builder
-                                    .header(ROW_HEIGHT + 4.0, |mut row| {
+                                    .header(ROW_HEIGHT + theme::space::XS, |mut row| {
                                         row.col(|ui| header(ui, "#", &tokens));
                                         for name in &rows.columns {
                                             row.col(|ui| header(ui, name, &tokens));

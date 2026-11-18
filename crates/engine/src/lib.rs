@@ -13,7 +13,7 @@ pub mod secrets;
 pub mod session;
 pub mod store;
 
-pub use error::EngineError;
+pub use error::{ChangeError, EngineError};
 pub use hy_dbplus_catalog::{
     ChangeSet, Column, Constraint, ConstraintKind, Direction, EditError, Function, Index, Order,
     Reference, RowUpdate, Schema, Table, TableKind, TableStats, TableStructure, Template,

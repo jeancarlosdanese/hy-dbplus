@@ -26,10 +26,10 @@ where
         .frame(
             egui::Frame::new()
                 .fill(tokens.bg)
-                .inner_margin(egui::Margin::symmetric(8, 0)),
+                .inner_margin(egui::Margin::symmetric(theme::space::S as i8, 0)),
         )
         .show(ui, |ui| {
-            ui.add_space(6.0);
+            ui.add_space(theme::space::XS + theme::space::HAIR);
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for key in app.rail.clone() {
                     let (id, database) = &key;
@@ -52,7 +52,7 @@ where
                     // vai ao último registrado, e com o fundo por cima o × nunca receberia o clique
                     // (achado do revisor, 22/10/2026). Altura fixa: nome truncado, sem quebra.
                     let (rect, response) = ui.allocate_exact_size(
-                        egui::vec2(WIDTH - 16.0, ITEM_HEIGHT),
+                        egui::vec2(WIDTH - 2.0 * theme::space::S, ITEM_HEIGHT),
                         egui::Sense::click(),
                     );
                     ui.painter().rect(
@@ -62,48 +62,54 @@ where
                         egui::Stroke::new(if active { 2.0 } else { 1.0 }, color),
                         egui::StrokeKind::Inside,
                     );
-                    ui.scope_builder(egui::UiBuilder::new().max_rect(rect.shrink(4.0)), |ui| {
-                        ui.vertical_centered(|ui| {
-                            // Rótulos sem seleção de texto: o clique tem de chegar ao item.
-                            ui.add(
-                                egui::Label::new(
-                                    egui::RichText::new(crate::fonts::icon::DATABASE).size(18.0),
-                                )
-                                .selectable(false),
-                            );
-                            ui.add(
-                                egui::Label::new(egui::RichText::new(database).small().strong())
+                    ui.scope_builder(
+                        egui::UiBuilder::new().max_rect(rect.shrink(theme::space::XS)),
+                        |ui| {
+                            ui.vertical_centered(|ui| {
+                                // Rótulos sem seleção de texto: o clique tem de chegar ao item.
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(crate::fonts::icon::DATABASE)
+                                            .size(theme::text_size::ICON),
+                                    )
+                                    .selectable(false),
+                                );
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(database).small().strong(),
+                                    )
                                     .truncate()
                                     .selectable(false),
-                            );
-                            ui.add(
-                                egui::Label::new(
-                                    egui::RichText::new(&name).small().color(tokens.text_muted),
+                                );
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(&name).small().color(tokens.text_muted),
+                                    )
+                                    .truncate()
+                                    .selectable(false),
+                                );
+                                if widgets::icon_button_full(
+                                    ui,
+                                    !running,
+                                    crate::fonts::icon::CLOSE,
+                                    tr.close_database(),
+                                    None,
+                                    tr.wait_for_run(),
                                 )
-                                .truncate()
-                                .selectable(false),
-                            );
-                            if widgets::icon_button_full(
-                                ui,
-                                !running,
-                                crate::fonts::icon::CLOSE,
-                                tr.close_database(),
-                                None,
-                                tr.wait_for_run(),
-                            )
-                            .clicked()
-                            {
-                                close = Some(key.clone());
-                            }
-                        });
-                    });
+                                .clicked()
+                                {
+                                    close = Some(key.clone());
+                                }
+                            });
+                        },
+                    );
                     if response
                         .on_hover_text(format!("{name} : {database}"))
                         .clicked()
                     {
                         activate = Some(key.clone());
                     }
-                    ui.add_space(4.0);
+                    ui.add_space(theme::space::XS);
                 }
                 // O "+" no fim abre a paleta para escolher outro banco.
                 ui.vertical_centered(|ui| {

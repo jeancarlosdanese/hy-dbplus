@@ -14,6 +14,10 @@ pub mod space {
     pub const M: f32 = 12.0;
     pub const L: f32 = 16.0;
     pub const XL: f32 = 24.0;
+    /// A margem lateral da tela de conexões (cabeçalho, lista e rodapé), como no protótipo.
+    pub const PAGE: f32 = 32.0;
+    /// A folga interna de controle pequeno: entre as opções do segmentado, dentro do chip.
+    pub const HAIR: f32 = 2.0;
 }
 
 /// Escala de tipo (px): título de tela, título de seção, corpo e detalhe.
@@ -22,6 +26,16 @@ pub mod text_size {
     pub const HEADING: f32 = 16.0;
     pub const BODY: f32 = 13.0;
     pub const SMALL: f32 = 12.0;
+    /// Rótulo miúdo: tipo da coluna no cabeçalho, opções do segmentado, etiqueta de ambiente.
+    pub const TINY: f32 = 11.0;
+    /// O ponto de pendência na aba.
+    pub const DOT: f32 = 10.0;
+    /// O nome da conexão na lista.
+    pub const NAME: f32 = 14.0;
+    /// O ícone da faixa de bancos abertos.
+    pub const ICON: f32 = 18.0;
+    /// O ícone grande do estado vazio.
+    pub const ICON_LARGE: f32 = 32.0;
 }
 
 /// Alturas fixas: linha do grid, barras (superior, de abas, de ferramentas), rodapé e controles.
@@ -30,6 +44,8 @@ pub mod size {
     pub const BAR: f32 = 40.0;
     pub const FOOTER: f32 = 32.0;
     pub const CONTROL: f32 = 28.0;
+    /// O selo da conexão na lista (a inicial do tipo de banco).
+    pub const BADGE: f32 = 32.0;
     /// A faixa de ambiente sob a barra superior.
     pub const ENV_STRIPE: f32 = 3.0;
 }
@@ -39,7 +55,16 @@ pub mod radius {
     pub const CONTROL: u8 = 6;
     pub const CARD: u8 = 8;
     pub const WINDOW: u8 = 12;
+    /// Selo quadrado (marca do app, inicial da conexão) e o fundo do segmentado.
+    pub const BADGE: u8 = 7;
+    /// A etiqueta de ambiente, em pílula.
+    pub const PILL: u8 = 9;
 }
+
+/// A marca do app (o quadrado azul-petróleo com "hy"): igual nos dois temas, como a logomarca.
+pub const BRAND: Color32 = rgb(0x1C4F5E);
+/// Texto sobre cor de sinal (marca do app, etiqueta de ambiente): igual nos dois temas.
+pub const ON_SIGNAL: Color32 = Color32::WHITE;
 
 /// As cores de uma variante. Nomes pelo papel, não pela cor: a paleta muda, o papel fica.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,6 +101,8 @@ pub struct Tokens {
     /// Erro e ação destrutiva, e o fundo da faixa de erro.
     pub danger: Color32,
     pub danger_soft: Color32,
+    /// Texto sobre o vermelho (botão destrutivo): branco no claro, escuro no escuro.
+    pub danger_ink: Color32,
     /// Sucesso (conectado, gravado).
     pub ok: Color32,
     /// Aviso (transação aberta, resultado truncado) e o fundo da faixa de aviso.
@@ -114,6 +141,7 @@ impl Tokens {
                 pending_ink: rgb(0x7A5200),
                 danger: rgb(0xC4313F),
                 danger_soft: rgb(0xF9DEE0),
+                danger_ink: Color32::WHITE,
                 ok: rgb(0x22805A),
                 warn: rgb(0xA96B08),
                 warn_soft: rgb(0xFBEBC2),
@@ -144,6 +172,7 @@ impl Tokens {
                 pending_ink: rgb(0xF3CE6B),
                 danger: rgb(0xF0707B),
                 danger_soft: rgb(0x47202A),
+                danger_ink: rgb(0x2A0A0E),
                 ok: rgb(0x5CC797),
                 warn: rgb(0xE8B04A),
                 warn_soft: rgb(0x4A3A10),

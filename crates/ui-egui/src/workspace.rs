@@ -52,7 +52,10 @@ where
     // mesmo erro já guardado no estado da conexão (fechar aba ou banco) aparece só uma vez, lá.
     let banner_frame = egui::Frame::new()
         .fill(tokens.panel)
-        .inner_margin(egui::Margin::symmetric(12, 6));
+        .inner_margin(egui::Margin::symmetric(
+            theme::space::M as i8,
+            (theme::space::XS + theme::space::HAIR) as i8,
+        ));
     if let Some(notice) = app
         .notice
         .clone()
@@ -94,7 +97,7 @@ where
         .frame(
             egui::Frame::new()
                 .fill(tokens.panel)
-                .inner_margin(egui::Margin::symmetric(8, 8)),
+                .inner_margin(egui::Margin::same(theme::space::S as i8)),
         )
         .show(ui, |ui| {
             if let Some(key) = &active {
@@ -197,7 +200,7 @@ fn top_bar<D>(
         .frame(
             egui::Frame::new()
                 .fill(tokens.panel)
-                .inner_margin(egui::Margin::symmetric(8, 0)),
+                .inner_margin(egui::Margin::symmetric(theme::space::S as i8, 0)),
         )
         .show(ui, |ui| {
             ui.horizontal_centered(|ui| {

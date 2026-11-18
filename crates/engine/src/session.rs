@@ -24,6 +24,7 @@ use hy_dbplus_driver::{
     Secret, TextRows,
 };
 
+use crate::error::ChangeError;
 use crate::store::{Connection, ConnectionId};
 
 /// O que o engine conta à UI.
@@ -161,15 +162,15 @@ pub enum Event {
         deleted: u64,
     },
     /// O lote não gravou nada: SQL recusado (sem chave primária ou chave incompleta), statement
-    /// com erro ou contagem de linhas diferente da esperada. `error` é o texto para mostrar (de
-    /// `EditError` ou `DriverError`, sem segredo); `position` é o statement que falhou, a partir
+    /// com erro ou contagem de linhas diferente da esperada. `error` é o motivo tipado (sem
+    /// segredo), que a interface escreve no idioma dela; `position` é o statement que falhou, a partir
     /// de 1, quando o erro é de um statement (a caixa de Commit o destaca no SQL).
     ChangesFailed {
         connection: ConnectionId,
         database: String,
         schema: String,
         table: String,
-        error: String,
+        error: ChangeError,
         position: Option<usize>,
     },
     /// Fim do "Testar conexão" (FEAT-015): a versão do servidor e o tempo até ela, ou o erro. Não
@@ -1040,7 +1041,7 @@ where
                     database,
                     schema,
                     table,
-                    error: error.to_string(),
+                    error: ChangeError::Edit(error),
                     position: None,
                 });
                 return;
@@ -1089,7 +1090,7 @@ where
                         database: database.clone(),
                         schema: schema.clone(),
                         table: table.clone(),
-                        error: error.to_string(),
+                        error: ChangeError::Driver(error),
                         position,
                     })
                 }
@@ -2030,7 +2031,9 @@ mod tests {
             panic!("{event:?}")
         };
         assert!(
-            error.starts_with("statement 1 do lote falhou e nada foi gravado: invalid input"),
+            error
+                .to_string()
+                .starts_with("statement 1 do lote falhou e nada foi gravado: invalid input"),
             "{error}"
         );
         assert_eq!(*position, Some(1));
@@ -2064,7 +2067,7 @@ mod tests {
             .apply_changes(&c.id, "loja", "public", "pedido", &no_key);
         let event = next(&h.rx);
         assert!(
-            matches!(&event, Event::ChangesFailed { error, .. } if error.contains("chave primária")),
+            matches!(&event, Event::ChangesFailed { error, .. } if matches!(error, ChangeError::Edit(EditError::NoPrimaryKey))),
             "{event:?}"
         );
         assert_eq!(

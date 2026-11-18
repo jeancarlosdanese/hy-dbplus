@@ -5,6 +5,7 @@
 
 use egui::{KeyboardShortcut, ModifierNames};
 pub use hy_dbplus_engine::Language;
+use hy_dbplus_engine::{ChangeError, DriverError, EditError, EngineError};
 
 /// O idioma do sistema operacional; locale ilegível ou ausente vira inglês.
 pub fn system_language() -> Language {
@@ -23,8 +24,6 @@ pub struct Tr(pub Language);
 /// Um método por texto, com o português e o inglês. Texto sem um dos dois não compila.
 macro_rules! texts {
     ($($(#[$doc:meta])* $name:ident => $pt:literal, $en:literal;)*) => {
-        // As telas passam a usar o catálogo nas fases B a E da FEAT-015; a fase F tira esta licença.
-        #[allow(dead_code)]
         impl Tr {
             $(
                 $(#[$doc])*
@@ -197,6 +196,15 @@ texts! {
     run_rollback => "Executar ROLLBACK", "Run ROLLBACK";
     this_query => "a consulta", "the query";
     nothing_running => "Nada em execução", "Nothing is running";
+    // Avisos do app (fase F).
+    page_dropped => "A página foi recarregada e as alterações pendentes foram descartadas",
+        "The page was reloaded and the pending changes were discarded";
+    batch_missing_key => "Não foi possível montar o lote: linha sem chave na página; descarte e recarregue",
+        "Could not build the batch: a row on the page has no key; discard and reload";
+    sql_running_before_commit => "Há uma execução em curso no editor SQL deste banco: aguarde o resultado antes de gravar",
+        "A run is in progress in this database's SQL editor: wait for the result before committing";
+    open_transaction_before_commit => "Há uma transação aberta no editor SQL deste banco: feche com COMMIT ou ROLLBACK antes de gravar",
+        "There is an open transaction in this database's SQL editor: end it with COMMIT or ROLLBACK before committing";
     limit => "Limite", "Limit";
     no_limit => "Sem limite", "No limit";
     saved_on_leave => "Salva sozinha ao sair do editor", "Saved automatically when you leave the editor";
@@ -212,6 +220,8 @@ texts! {
     kind_view => "view", "view";
     kind_schema => "schema", "schema";
     kind_function => "função", "function";
+    /// O rótulo do seletor de schema, sob a árvore (o termo é o do PostgreSQL nos dois idiomas).
+    schema_label => "Schema", "Schema";
     kind_materialized_view => "view materializada", "materialized view";
     kind_foreign_table => "tabela estrangeira", "foreign table";
     kind_key => "chave", "key";
@@ -446,6 +456,38 @@ impl Tr {
         }
     }
 
+    /// As consultas salvas do banco não foram lidas.
+    pub fn saved_queries_failed(self, error: &str) -> String {
+        match self.0 {
+            Language::PtBr => format!("Consultas salvas: {error}"),
+            Language::En => format!("Saved queries: {error}"),
+        }
+    }
+
+    /// O arquivo da consulta não foi apagado.
+    pub fn delete_query_failed(self, error: &str) -> String {
+        match self.0 {
+            Language::PtBr => format!("Não foi possível apagar a consulta salva: {error}"),
+            Language::En => format!("Could not delete the saved query: {error}"),
+        }
+    }
+
+    /// Fechar o banco parou porque uma consulta não foi salva.
+    pub fn database_still_open(self, error: &str) -> String {
+        match self.0 {
+            Language::PtBr => format!("O banco continua aberto: {error}"),
+            Language::En => format!("The database is still open: {error}"),
+        }
+    }
+
+    /// Desconectar parou porque uma consulta não foi salva.
+    pub fn connection_still_open(self, error: &str) -> String {
+        match self.0 {
+            Language::PtBr => format!("A conexão continua aberta: {error}"),
+            Language::En => format!("The connection is still open: {error}"),
+        }
+    }
+
     /// "Executando · 3,4 s".
     pub fn running_for(self, seconds: f32) -> String {
         let value = format!("{seconds:.1}");
@@ -542,8 +584,109 @@ impl Tr {
     }
 }
 
+// Erros do engine, do driver e da edição (FEAT-015, F.2): a moldura no idioma da interface; o
+// motivo que vem do servidor, do sistema ou da biblioteca entra como veio.
+impl Tr {
+    pub fn driver_error(self, e: &DriverError) -> String {
+        let pt = self.0 == Language::PtBr;
+        match e {
+            DriverError::Config(m) if pt => format!("configuração inválida: {m}"),
+            DriverError::Config(m) => format!("invalid configuration: {m}"),
+            DriverError::Connect { host, port, reason } if pt => {
+                format!("não conectou a {host}:{port}: {reason}")
+            }
+            DriverError::Connect { host, port, reason } => {
+                format!("could not connect to {host}:{port}: {reason}")
+            }
+            DriverError::Auth { user, reason } if pt => {
+                format!("autenticação recusada para o usuário {user}: {reason}")
+            }
+            DriverError::Auth { user, reason } => {
+                format!("authentication failed for user {user}: {reason}")
+            }
+            DriverError::Tls(m) => format!("TLS: {m}"),
+            DriverError::Timeout { host, port } if pt => {
+                format!("tempo esgotado ao conectar a {host}:{port}")
+            }
+            DriverError::Timeout { host, port } => format!("timed out connecting to {host}:{port}"),
+            DriverError::Closed if pt => "o servidor fechou a conexão".to_owned(),
+            DriverError::Closed => "the server closed the connection".to_owned(),
+            DriverError::Db(m) if pt => format!("erro do banco: {m}"),
+            DriverError::Db(m) => format!("database error: {m}"),
+            DriverError::Cancelled(m) if pt => format!("statement cancelado: {m}"),
+            DriverError::Cancelled(m) => format!("statement cancelled: {m}"),
+            DriverError::Statement { position, reason } if pt => {
+                format!("statement {position} do lote falhou e nada foi gravado: {reason}")
+            }
+            DriverError::Statement { position, reason } => {
+                format!("statement {position} of the batch failed and nothing was saved: {reason}")
+            }
+            DriverError::RowCount {
+                position,
+                expected,
+                got,
+            } if pt => format!(
+                "statement {position} do lote afetou {}, esperava {}; nada foi gravado",
+                self.rows(*got),
+                self.number(*expected)
+            ),
+            DriverError::RowCount {
+                position,
+                expected,
+                got,
+            } => format!(
+                "statement {position} of the batch affected {}, expected {}; nothing was saved",
+                self.rows(*got),
+                self.number(*expected)
+            ),
+        }
+    }
+
+    pub fn engine_error(self, e: &EngineError) -> String {
+        let pt = self.0 == Language::PtBr;
+        match e {
+            EngineError::Config(m) if pt => format!("configuração: {m}"),
+            EngineError::Config(m) => format!("configuration: {m}"),
+            EngineError::Io { path, reason } => format!("{}: {reason}", path.display()),
+            EngineError::Parse { path, reason } if pt => {
+                format!("{}: arquivo de conexões inválido: {reason}", path.display())
+            }
+            EngineError::Parse { path, reason } => {
+                format!("{}: invalid connections file: {reason}", path.display())
+            }
+            EngineError::Secret(m) if pt => format!("senha no chaveiro do sistema: {m}"),
+            EngineError::Secret(m) => format!("password in the system keychain: {m}"),
+            EngineError::UnknownConnection(m) if pt => format!("conexão desconhecida: {m}"),
+            EngineError::UnknownConnection(m) => format!("unknown connection: {m}"),
+        }
+    }
+
+    pub fn edit_error(self, e: &EditError) -> String {
+        match (e, self.0) {
+            (EditError::NoPrimaryKey, Language::PtBr) => {
+                "a tabela não tem chave primária: só leitura".to_owned()
+            }
+            (EditError::NoPrimaryKey, Language::En) => {
+                "the table has no primary key: read-only".to_owned()
+            }
+            (EditError::KeyMismatch { expected, got }, Language::PtBr) => {
+                format!("chave com {got} valores; a chave primária tem {expected} colunas")
+            }
+            (EditError::KeyMismatch { expected, got }, Language::En) => {
+                format!("key with {got} values; the primary key has {expected} columns")
+            }
+        }
+    }
+
+    pub fn change_error(self, e: &ChangeError) -> String {
+        match e {
+            ChangeError::Edit(e) => self.edit_error(e),
+            ChangeError::Driver(e) => self.driver_error(e),
+        }
+    }
+}
+
 // Plural: o português e o inglês têm a mesma regra (1 é singular; 0 e o resto, plural).
-#[allow(dead_code)]
 impl Tr {
     /// `1 linha`, `12.345 linhas`; `1 row`, `12,345 rows`.
     pub fn rows(self, n: u64) -> String {
@@ -599,7 +742,6 @@ pub fn shortcut(shortcut: &KeyboardShortcut, mac: bool) -> String {
 }
 
 /// [`shortcut`] na plataforma em que o egui está rodando.
-#[allow(dead_code)]
 pub fn shortcut_label(ctx: &egui::Context, sc: &KeyboardShortcut) -> String {
     shortcut(sc, ctx.os() == egui::os::OperatingSystem::Mac)
 }
@@ -703,5 +845,96 @@ mod tests {
     #[test]
     fn idioma_do_sistema_nao_entra_em_panico() {
         let _ = system_language();
+    }
+
+    /// F.2: os erros do driver, do engine e da edição no idioma da interface. Em português o texto
+    /// é o mesmo do `Display` (CLI e MCP), salvo a contagem de linhas, que ganhou o plural.
+    #[test]
+    fn erros_nos_dois_idiomas_e_o_portugues_igual_ao_do_driver() {
+        use std::path::PathBuf;
+        let driver = [
+            DriverError::Config("host vazio".into()),
+            DriverError::Connect {
+                host: "db".into(),
+                port: 5432,
+                reason: "recusado".into(),
+            },
+            DriverError::Auth {
+                user: "app".into(),
+                reason: "senha".into(),
+            },
+            DriverError::Tls("certificado".into()),
+            DriverError::Timeout {
+                host: "db".into(),
+                port: 5432,
+            },
+            DriverError::Closed,
+            DriverError::Db("syntax error".into()),
+            DriverError::Cancelled("by user".into()),
+            DriverError::Statement {
+                position: 2,
+                reason: "invalid input".into(),
+            },
+        ];
+        for e in &driver {
+            assert_eq!(PT.driver_error(e), e.to_string());
+            // "TLS: …" não tem palavra a traduzir.
+            if !matches!(e, DriverError::Tls(_)) {
+                assert_ne!(EN.driver_error(e), e.to_string(), "{e:?}");
+            }
+        }
+        let engine = [
+            EngineError::Config("sem diretório home".into()),
+            EngineError::Parse {
+                path: PathBuf::from("/c.toml"),
+                reason: "linha 3".into(),
+            },
+            EngineError::Secret("negado".into()),
+            EngineError::UnknownConnection("x".into()),
+        ];
+        for e in &engine {
+            assert_eq!(PT.engine_error(e), e.to_string());
+            assert_ne!(EN.engine_error(e), e.to_string(), "{e:?}");
+        }
+        let io = EngineError::Io {
+            path: PathBuf::from("/q/1.sql"),
+            reason: "denied".into(),
+        };
+        assert_eq!(EN.engine_error(&io), io.to_string());
+        for e in [
+            EditError::NoPrimaryKey,
+            EditError::KeyMismatch {
+                expected: 2,
+                got: 1,
+            },
+        ] {
+            assert_eq!(PT.edit_error(&e), e.to_string());
+            assert_ne!(EN.edit_error(&e), e.to_string());
+        }
+        assert_eq!(
+            EN.driver_error(&DriverError::Connect {
+                host: "db".into(),
+                port: 5432,
+                reason: "refused".into(),
+            }),
+            "could not connect to db:5432: refused"
+        );
+        let count = DriverError::RowCount {
+            position: 2,
+            expected: 3,
+            got: 1,
+        };
+        assert_eq!(
+            PT.driver_error(&count),
+            "statement 2 do lote afetou 1 linha, esperava 3; nada foi gravado"
+        );
+        assert_eq!(
+            EN.driver_error(&count),
+            "statement 2 of the batch affected 1 row, expected 3; nothing was saved"
+        );
+        assert_eq!(
+            EN.change_error(&ChangeError::Edit(EditError::NoPrimaryKey)),
+            "the table has no primary key: read-only"
+        );
     }
 }

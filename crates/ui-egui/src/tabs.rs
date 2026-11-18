@@ -80,9 +80,9 @@ where
             egui::Frame::new()
                 .fill(tokens.panel)
                 .inner_margin(egui::Margin {
-                    left: 8,
-                    right: 8,
-                    top: 4,
+                    left: theme::space::S as i8,
+                    right: theme::space::S as i8,
+                    top: theme::space::XS as i8,
                     bottom: 0,
                 }),
         )
@@ -103,10 +103,10 @@ where
                                 se: 0,
                             })
                             .inner_margin(egui::Margin {
-                                left: 10,
-                                right: 4,
-                                top: 4,
-                                bottom: 4,
+                                left: (theme::space::S + theme::space::HAIR) as i8,
+                                right: theme::space::XS as i8,
+                                top: theme::space::XS as i8,
+                                bottom: theme::space::XS as i8,
                             })
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
@@ -134,7 +134,7 @@ where
                                         ui.add(
                                             egui::Label::new(
                                                 egui::RichText::new("●")
-                                                    .size(theme::text_size::SMALL - 2.0)
+                                                    .size(theme::text_size::DOT)
                                                     .color(tokens.warn),
                                             )
                                             .selectable(false),

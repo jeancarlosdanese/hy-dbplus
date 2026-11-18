@@ -22,7 +22,7 @@ egui_phosphor::subset! {
     pub mod icons {
         use regular::{
             ARROWS_LEFT_RIGHT, ARROW_CLOCKWISE, ARROW_COUNTER_CLOCKWISE, CARET_DOWN, CARET_LEFT, CARET_RIGHT, CARET_UP,
-            CHECK, CLOCK, CODE, COLUMNS, COPY, DATABASE, EYE, FAST_FORWARD, FOLDER_SIMPLE, FUNCTION, KEY, LINK,
+            CHECK, CODE, COLUMNS, COPY, DATABASE, EYE, FAST_FORWARD, FOLDER_SIMPLE, FUNCTION, KEY, LINK,
             MAGIC_WAND, MAGNIFYING_GLASS, PENCIL_SIMPLE, PLAY, PLUGS, PLUGS_CONNECTED, PLUS,
             SIDEBAR_SIMPLE, STOP, TABLE, TAG, TEXT_AA, TRASH, WARNING, WARNING_CIRCLE, X,
         };
@@ -30,8 +30,6 @@ egui_phosphor::subset! {
 }
 
 /// O ícone de cada papel na interface. A tela pede o papel; a tabela decide o desenho.
-// As telas passam a usar os ícones nas fases B a E da FEAT-015; a fase F tira esta licença.
-#[allow(dead_code)]
 pub mod icon {
     use super::icons::regular as r;
 
@@ -68,7 +66,6 @@ pub mod icon {
     pub const WARNING: &str = r::WARNING;
     pub const ERROR: &str = r::WARNING_CIRCLE;
     pub const OK: &str = r::CHECK;
-    pub const HISTORY: &str = r::CLOCK;
     pub const COLUMN: &str = r::COLUMNS;
     pub const KEYWORD: &str = r::TEXT_AA;
     pub const ALIAS: &str = r::TAG;

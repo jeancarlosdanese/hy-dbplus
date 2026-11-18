@@ -144,7 +144,7 @@ where
         .frame(
             egui::Frame::new()
                 .fill(tokens.bg)
-                .inner_margin(egui::Margin::symmetric(12, 0)),
+                .inner_margin(egui::Margin::symmetric(theme::space::M as i8, 0)),
         )
         .show(ui, |ui| {
             ui.horizontal_centered(|ui| {
@@ -273,7 +273,10 @@ where
                 // O grid já carregado fica; o erro (página ou stats) vai numa faixa em cima dele.
                 let action = (!locked).then(|| tr.retry());
                 egui::Frame::new()
-                    .inner_margin(egui::Margin::symmetric(12, 6))
+                    .inner_margin(egui::Margin::symmetric(
+                        theme::space::M as i8,
+                        (theme::space::XS + theme::space::HAIR) as i8,
+                    ))
                     .show(ui, |ui| {
                         if widgets::banner(ui, widgets::BannerKind::Error, error, action) {
                             retry = true;
@@ -375,7 +378,7 @@ where
                                             ui.add(
                                                 egui::Label::new(
                                                     egui::RichText::new(ty)
-                                                        .size(theme::text_size::SMALL - 1.0)
+                                                        .size(theme::text_size::TINY)
                                                         .color(tokens.text_faint),
                                                 )
                                                 .selectable(false),
@@ -571,7 +574,7 @@ fn footer(
         .frame(
             egui::Frame::new()
                 .fill(tokens.panel)
-                .inner_margin(egui::Margin::symmetric(12, 0)),
+                .inner_margin(egui::Margin::symmetric(theme::space::M as i8, 0)),
         )
         .show(ui, |ui| {
             ui.horizontal_centered(|ui| {

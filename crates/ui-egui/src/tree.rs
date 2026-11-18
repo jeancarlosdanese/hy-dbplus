@@ -32,12 +32,15 @@ where
         .frame(
             egui::Frame::new()
                 .fill(tokens.panel)
-                .inner_margin(egui::Margin::symmetric(0, 6)),
+                .inner_margin(egui::Margin::symmetric(
+                    0,
+                    (theme::space::XS + theme::space::HAIR) as i8,
+                )),
         )
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(
-                    egui::RichText::new("Schema")
+                    egui::RichText::new(tr.schema_label())
                         .size(theme::text_size::SMALL)
                         .color(tokens.text_faint),
                 );
@@ -1653,17 +1656,25 @@ mod tests {
         assert!(!app.editable(&key), "editável com página em voo");
         app.start_edit(&key, 0, 1);
         assert!(tab_of(&app, &key).editing.is_none());
-        let tab = app.workspaces.get_mut(&key).unwrap().data_mut().unwrap();
-        let dropped = tab.accept_page(
-            Page::default(),
-            TextRows {
+        // Pela chegada do evento, no idioma da interface (fase F: o aviso era fixo em português).
+        app.lang = hy_dbplus_engine::Language::En;
+        app.apply_event(hy_dbplus_engine::Event::PageLoaded {
+            connection: key.0.clone(),
+            database: key.1.clone(),
+            schema: "public".into(),
+            table: "pedidos".into(),
+            page: Page::default(),
+            rows: TextRows {
                 columns: vec!["id".into(), "nome".into()],
                 rows: vec![vec![Some("9".into()), Some("z".into())]],
             },
-        );
-        assert!(dropped);
+        });
+        let tab = app.workspaces.get_mut(&key).unwrap().data_mut().unwrap();
         assert!(!tab.has_changes() && tab.requested.is_none() && !tab.loading);
-        assert_eq!(tab.error.as_deref(), Some(crate::app::DROPPED_HINT));
+        assert_eq!(
+            tab.error.as_deref(),
+            Some("The page was reloaded and the pending changes were discarded")
+        );
         // Sem pendência, a página nova chega limpa, sem aviso.
         assert!(!tab.accept_page(Page::default(), TextRows::default()));
         assert!(tab.error.is_none());
@@ -4073,8 +4084,11 @@ mod tests {
             .next()
             .unwrap()
             .click();
+        // As colunas carregadas, não só o pedido: sob carga elas chegavam depois da verificação
+        // (teste instável visto no portão da fase E).
         wait_for(&mut harness, "ColumnsLoaded", |app| {
-            app.workspaces[&key].expanded.len() == 1
+            let ws = &app.workspaces[&key];
+            ws.expanded.len() == 1 && ws.expanded.iter().all(|t| ws.columns.contains_key(t))
         });
         harness.run();
         harness.get_by_label(&key_col("id"));
@@ -4320,8 +4334,12 @@ mod tests {
             stats.row_count = 1;
         }
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::R);
-        wait_for(&mut harness, "tamanhos de novo", |app| {
-            tab_of(app, &key).stats.is_some_and(|s| s.row_count == 250)
+        // A página e os tamanhos: esperar só os tamanhos deixava a página do recarregar chegar
+        // depois, sob carga, e trocar as linhas no meio da verificação seguinte (teste instável
+        // visto no portão da fase E).
+        wait_for(&mut harness, "página e tamanhos de novo", |app| {
+            let tab = tab_of(app, &key);
+            tab.stats.is_some_and(|s| s.row_count == 250) && tab.requested.is_none() && !tab.loading
         });
         // Célula aberta, sem Enter: ⌘R não recarrega nem descarta o que se digitou.
         harness.state_mut().start_edit(&key, 0, 1);
@@ -4524,6 +4542,51 @@ mod tests {
         assert_eq!(
             harness.state().workspaces[&key].query().unwrap().notice,
             None
+        );
+    }
+
+    /// F.1 e F.2: os erros que chegam por evento e os avisos da gravação seguem o idioma.
+    #[test]
+    fn erros_e_avisos_da_gravacao_no_idioma_da_interface() {
+        use crate::app::Status;
+        use hy_dbplus_engine::{ChangeError, DriverError, EditError, Event};
+        let (mut app, key) = app_with_editable_table();
+        app.lang = hy_dbplus_engine::Language::En;
+        app.apply_event(Event::Failed {
+            connection: key.0.clone(),
+            error: DriverError::Closed,
+        });
+        assert!(matches!(
+            app.status_of(&key.0),
+            Status::Failed(m) if m == "the server closed the connection"
+        ));
+        app.apply_event(Event::ChangesFailed {
+            connection: key.0.clone(),
+            database: key.1.clone(),
+            schema: "public".into(),
+            table: "pedidos".into(),
+            error: ChangeError::Edit(EditError::NoPrimaryKey),
+            position: None,
+        });
+        assert_eq!(
+            tab_of(&app, &key).error.as_deref(),
+            Some("the table has no primary key: read-only")
+        );
+        // Transação aberta no editor: a gravação não abre, e o aviso vem em inglês.
+        app.workspaces.get_mut(&key).unwrap().open_transaction = true;
+        app.workspaces
+            .get_mut(&key)
+            .unwrap()
+            .data_mut()
+            .unwrap()
+            .set_cell(0, 1, Some("b".into()));
+        app.open_commit(&key);
+        assert!(tab_of(&app, &key).commit.is_none());
+        assert!(
+            tab_of(&app, &key)
+                .error
+                .as_deref()
+                .is_some_and(|e| e.starts_with("There is an open transaction"))
         );
     }
 }

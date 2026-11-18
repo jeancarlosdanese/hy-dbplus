@@ -36,7 +36,10 @@ where
         .frame(
             egui::Frame::new()
                 .fill(tokens.bg)
-                .inner_margin(egui::Margin::symmetric(12, 4)),
+                .inner_margin(egui::Margin::symmetric(
+                    theme::space::M as i8,
+                    theme::space::XS as i8,
+                )),
         )
         .show(ui, |ui| {
             let Some(structure) = structure else {
@@ -67,7 +70,7 @@ where
                 .column(TableColumn::initial(120.0).at_least(60.0).clip(true))
                 .column(TableColumn::initial(120.0).at_least(60.0).clip(true))
                 .column(TableColumn::remainder().at_least(80.0).clip(true))
-                .header(ROW_HEIGHT + 4.0, |mut row| {
+                .header(ROW_HEIGHT + theme::space::XS, |mut row| {
                     for name in [
                         tr.name(),
                         tr.method(),

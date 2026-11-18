@@ -186,10 +186,10 @@ where
             egui::Frame::new()
                 .fill(tokens.panel)
                 .inner_margin(egui::Margin {
-                    left: 32,
-                    right: 32,
-                    top: 20,
-                    bottom: 16,
+                    left: theme::space::PAGE as i8,
+                    right: theme::space::PAGE as i8,
+                    top: (theme::space::L + theme::space::XS) as i8,
+                    bottom: theme::space::L as i8,
                 }),
         )
         .show(ui, |ui| {
@@ -227,7 +227,10 @@ where
             .frame(
                 egui::Frame::new()
                     .fill(tokens.panel)
-                    .inner_margin(egui::Margin::symmetric(32, 8)),
+                    .inner_margin(egui::Margin::symmetric(
+                        theme::space::PAGE as i8,
+                        theme::space::S as i8,
+                    )),
             )
             .show(ui, |ui| {
                 if widgets::banner(ui, widgets::BannerKind::Error, &notice, Some(tr.close())) {
@@ -240,11 +243,14 @@ where
             .frame(
                 egui::Frame::new()
                     .fill(tokens.panel)
-                    .inner_margin(egui::Margin::symmetric(32, 10)),
+                    .inner_margin(egui::Margin::symmetric(
+                        theme::space::PAGE as i8,
+                        (theme::space::S + theme::space::HAIR) as i8,
+                    )),
             )
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 18.0;
+                    ui.spacing_mut().item_spacing.x = theme::space::L + theme::space::HAIR;
                     let new = i18n::shortcut_label(ui.ctx(), &new_shortcut());
                     let edit = i18n::shortcut_label(ui.ctx(), &edit_shortcut());
                     for hint in [
@@ -266,7 +272,7 @@ where
         .frame(
             egui::Frame::new()
                 .fill(tokens.panel)
-                .inner_margin(egui::Margin::symmetric(32, 0)),
+                .inner_margin(egui::Margin::symmetric(theme::space::PAGE as i8, 0)),
         )
         .show(ui, |ui| {
             if app.deps.store.list().is_empty() {
@@ -308,15 +314,18 @@ where
 
 /// A marca do app no cabeçalho: o quadrado azul-petróleo com "hy".
 fn mark(ui: &mut egui::Ui) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(theme::size::CONTROL, theme::size::CONTROL),
+        egui::Sense::hover(),
+    );
     ui.painter()
-        .rect_filled(rect, 7.0, egui::Color32::from_rgb(0x1C, 0x4F, 0x5E));
+        .rect_filled(rect, theme::radius::BADGE, theme::BRAND);
     ui.painter().text(
         rect.center(),
         egui::Align2::CENTER_CENTER,
         "hy",
         egui::FontId::new(text_size::BODY, crate::fonts::strong(ui.ctx())),
-        egui::Color32::WHITE,
+        theme::ON_SIGNAL,
     );
     ui.add_space(space::XS);
 }
@@ -434,7 +443,7 @@ where
     };
     ui.painter()
         .rect(rect, radius::CARD, fill, stroke, egui::StrokeKind::Inside);
-    let bar = egui::Rect::from_min_size(rect.min, egui::vec2(4.0, rect.height()));
+    let bar = egui::Rect::from_min_size(rect.min, egui::vec2(theme::space::XS, rect.height()));
     ui.painter().rect_filled(
         bar,
         egui::CornerRadius {
@@ -450,7 +459,7 @@ where
         egui::UiBuilder::new()
             .max_rect(
                 rect.shrink2(egui::vec2(space::M, 0.0))
-                    .translate(egui::vec2(4.0, 0.0)),
+                    .translate(egui::vec2(theme::space::XS, 0.0)),
             )
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
         |ui| {
@@ -501,9 +510,12 @@ where
                     }
                 }
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    let (badge, _) =
-                        ui.allocate_exact_size(egui::vec2(32.0, 32.0), egui::Sense::hover());
-                    ui.painter().rect_filled(badge, 7.0, tokens.hover);
+                    let (badge, _) = ui.allocate_exact_size(
+                        egui::vec2(theme::size::BADGE, theme::size::BADGE),
+                        egui::Sense::hover(),
+                    );
+                    ui.painter()
+                        .rect_filled(badge, theme::radius::BADGE, tokens.hover);
                     ui.painter().text(
                         badge.center(),
                         egui::Align2::CENTER_CENTER,
@@ -523,7 +535,7 @@ where
                                 ui.add(
                                     egui::Label::new(
                                         egui::RichText::new(&c.name)
-                                            .size(14.0)
+                                            .size(text_size::NAME)
                                             .family(crate::fonts::strong(ui.ctx())),
                                     )
                                     .truncate(),
@@ -577,7 +589,7 @@ where
             app.connections.selected = Some(c.id.clone());
         }
     }
-    ui.add_space(6.0);
+    ui.add_space(theme::space::XS + theme::space::HAIR);
 }
 
 /// Conecta com a senha do chaveiro (ou vazia, para autenticação `trust`).
@@ -592,7 +604,7 @@ where
     let secret = match app.deps.secrets.get(&c.id) {
         Ok(s) => s.unwrap_or_default(),
         Err(e) => {
-            app.notice = Some(e.to_string());
+            app.notice = Some(app.tr().engine_error(&e));
             return;
         }
     };
@@ -849,7 +861,10 @@ fn text_field<'a>(
                 .fill(tokens.field)
                 .stroke(egui::Stroke::new(1.0, border))
                 .corner_radius(radius::CONTROL)
-                .inner_margin(egui::Margin::symmetric(8, 6)),
+                .inner_margin(egui::Margin::symmetric(
+                    theme::space::S as i8,
+                    (theme::space::XS + theme::space::HAIR) as i8,
+                )),
         )
 }
 
@@ -860,6 +875,7 @@ where
     D: Driver + 'static,
     D::Conn: 'static,
 {
+    let tr = app.tr();
     let Some(form) = app.form.as_mut() else {
         return;
     };
@@ -876,7 +892,7 @@ where
             Some(id) => match app.deps.secrets.get(id) {
                 Ok(secret) => secret.unwrap_or_default(),
                 Err(e) => {
-                    form.test = FormTest::Done(Err(e.to_string()));
+                    form.test = FormTest::Done(Err(tr.engine_error(&e)));
                     return;
                 }
             },
@@ -897,10 +913,11 @@ pub(crate) fn test_finished<D: Driver>(
     tag: &str,
     result: Result<TestOk, hy_dbplus_engine::DriverError>,
 ) {
+    let tr = crate::i18n::Tr(app.lang);
     if let Some(form) = app.form.as_mut()
         && form.test == FormTest::Running(tag.to_owned())
     {
-        form.test = FormTest::Done(result.map_err(|e| e.to_string()));
+        form.test = FormTest::Done(result.map_err(|e| tr.driver_error(&e)));
     }
 }
 
@@ -922,14 +939,14 @@ where
     app.deps.store.upsert(connection.clone());
     if let Err(e) = app.deps.store.save() {
         // O formulário fica aberto, com a senha digitada, para tentar de novo.
-        app.notice = Some(e.to_string());
+        app.notice = Some(app.tr().engine_error(&e));
         return;
     }
     let password = std::mem::take(&mut form.password);
     if !password.is_empty()
         && let Err(e) = app.deps.secrets.set(&connection.id, &Secret::new(password))
     {
-        app.notice = Some(e.to_string());
+        app.notice = Some(app.tr().engine_error(&e));
     }
     // A configuração mudou: a sessão aberta (ou a tentativa em voo) com a antiga cai.
     app.deps.sessions.disconnect(&connection.id);
@@ -998,7 +1015,7 @@ where
             let errors: Vec<String> = [saved.err(), secret.err(), queries.err()]
                 .into_iter()
                 .flatten()
-                .map(|e| e.to_string())
+                .map(|e| app.tr().engine_error(&e))
                 .collect();
             if !errors.is_empty() {
                 app.notice = Some(errors.join("; "));

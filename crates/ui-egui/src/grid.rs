@@ -3,7 +3,8 @@
 
 use crate::theme::{self, Tokens};
 
-pub const ROW_HEIGHT: f32 = 22.0;
+/// A linha dos grids: a do tema (`size::ROW`), uma fonte só para a medida.
+pub const ROW_HEIGHT: f32 = theme::size::ROW;
 /// A coluna "#" do grid de dados e do de resultados: a mesma largura nos dois.
 pub const NUMBER_WIDTH: f32 = 48.0;
 
@@ -47,7 +48,7 @@ pub fn status_footer(ui: &mut egui::Ui, id: &'static str, text: &str) {
         .frame(
             egui::Frame::new()
                 .fill(tokens.panel)
-                .inner_margin(egui::Margin::symmetric(12, 0)),
+                .inner_margin(egui::Margin::symmetric(theme::space::M as i8, 0)),
         )
         .show(ui, |ui| {
             ui.horizontal_centered(|ui| {

@@ -1,9 +1,6 @@
 //! Os componentes do sistema visual (FEAT-015, tela 17 do protótipo): botões, controle
-//! segmentado, etiqueta e faixa de ambiente, faixas de aviso e de erro, estado vazio, carregando e
-//! o diálogo modal. As telas usam estes em vez de montar cor, raio e altura à mão.
-
-// As telas passam a usar os componentes nas fases B a E da FEAT-015; a fase F tira esta licença.
-#![allow(dead_code)]
+//! segmentado, etiqueta de ambiente, faixas de aviso e de erro, estado vazio, carregando, bloco de
+//! SQL, chip de pendência e o diálogo modal. As telas usam estes em vez de montar cor, raio e altura à mão.
 
 use egui::{Color32, CornerRadius, Response, RichText, Stroke, Ui};
 use hy_dbplus_engine::Tag;
@@ -67,7 +64,7 @@ pub fn button_shortcut(
     let t = theme::current(ui.ctx());
     let ink = match kind {
         ButtonKind::Primary => t.accent_ink,
-        ButtonKind::Danger => danger_ink(&t),
+        ButtonKind::Danger => t.danger_ink,
         ButtonKind::Normal | ButtonKind::Ghost => t.text_faint,
     };
     let button = styled_button(&t, fonts::strong(ui.ctx()), kind, icon, label).right_text(
@@ -91,7 +88,7 @@ fn styled_button<'a>(
         ButtonKind::Primary => (t.accent, Stroke::new(1.0, t.accent), t.accent_ink),
         ButtonKind::Normal => (t.card, Stroke::new(1.0, t.border), t.text),
         ButtonKind::Ghost => (Color32::TRANSPARENT, Stroke::NONE, t.text_muted),
-        ButtonKind::Danger => (t.danger, Stroke::new(1.0, t.danger), danger_ink(t)),
+        ButtonKind::Danger => (t.danger, Stroke::new(1.0, t.danger), t.danger_ink),
     };
     let text = match icon {
         Some(icon) => format!("{icon} {label}"),
@@ -159,29 +156,21 @@ impl AccessibleLabel for Response {
     }
 }
 
-/// Texto sobre o vermelho: branco no claro, escuro no escuro (o vermelho do escuro é claro).
-fn danger_ink(t: &Tokens) -> Color32 {
-    match t.theme {
-        egui::Theme::Light => Color32::WHITE,
-        egui::Theme::Dark => Color32::from_rgb(0x2A, 0x0A, 0x0E),
-    }
-}
-
 /// Controle segmentado: uma opção ligada por vez. Devolve `true` quando o usuário trocou.
 pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, options: &[(T, &str)]) -> bool {
     let t = theme::current(ui.ctx());
     let mut changed = false;
     egui::Frame::new()
         .fill(t.hover)
-        .corner_radius(CornerRadius::same(radius::CONTROL + 1))
-        .inner_margin(2.0)
+        .corner_radius(CornerRadius::same(radius::BADGE))
+        .inner_margin(space::HAIR)
         .show(ui, |ui| {
-            ui.spacing_mut().item_spacing.x = 2.0;
+            ui.spacing_mut().item_spacing.x = space::HAIR;
             ui.horizontal(|ui| {
                 for (option, label) in options {
                     let on = *value == *option;
                     let text = RichText::new(*label)
-                        .size(text_size::SMALL - 1.0)
+                        .size(text_size::TINY)
                         .family(fonts::strong(ui.ctx()))
                         .color(if on { t.text } else { t.text_muted });
                     let response = ui.add(
@@ -190,7 +179,7 @@ pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, options: &[(T,
                             .fill(if on { t.card } else { Color32::TRANSPARENT })
                             .stroke(Stroke::NONE)
                             .corner_radius(CornerRadius::same(radius::CONTROL - 1))
-                            .min_size(egui::vec2(28.0, size::CONTROL - 8.0)),
+                            .min_size(egui::vec2(size::CONTROL, size::CONTROL - space::S)),
                     );
                     if response.clicked() && !on {
                         *value = *option;
@@ -205,23 +194,15 @@ pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, options: &[(T,
 /// Etiqueta de ambiente: o nome em maiúsculas sobre a cor da tag.
 pub fn env_tag(ui: &mut Ui, tag: Tag) -> Response {
     let text = RichText::new(tag.label().to_uppercase())
-        .size(text_size::SMALL - 1.0)
+        .size(text_size::TINY)
         .family(fonts::strong(ui.ctx()))
-        .color(Color32::WHITE);
+        .color(theme::ON_SIGNAL);
     egui::Frame::new()
         .fill(theme::tag_color(tag))
-        .corner_radius(CornerRadius::same(9))
-        .inner_margin(egui::Margin::symmetric(7, 1))
+        .corner_radius(CornerRadius::same(radius::PILL))
+        .inner_margin(egui::Margin::symmetric(space::S as i8, space::HAIR as i8))
         .show(ui, |ui| ui.label(text))
         .response
-}
-
-/// A faixa fina de ambiente, na largura inteira do `ui`, sob a barra superior.
-pub fn env_stripe(ui: &mut Ui, tag: Tag) {
-    let width = ui.available_width();
-    let (rect, _) =
-        ui.allocate_exact_size(egui::vec2(width, size::ENV_STRIPE), egui::Sense::hover());
-    ui.painter().rect_filled(rect, 0.0, theme::tag_color(tag));
 }
 
 /// O tom de uma faixa de mensagem.
@@ -264,7 +245,11 @@ pub fn empty_state(ui: &mut Ui, icon: &str, title: &str, hint: &str) {
     let t = theme::current(ui.ctx());
     ui.vertical_centered(|ui| {
         ui.add_space(space::XL);
-        ui.label(RichText::new(icon).size(32.0).color(t.text_faint));
+        ui.label(
+            RichText::new(icon)
+                .size(text_size::ICON_LARGE)
+                .color(t.text_faint),
+        );
         ui.add_space(space::S);
         ui.label(
             RichText::new(title)
@@ -311,32 +296,6 @@ pub struct DialogAction<'a> {
     pub shortcut: Option<&'a str>,
 }
 
-/// Diálogo modal centralizado com fundo escurecido: título, conteúdo e rodapé com Cancelar e a
-/// ação principal à direita. Esc e clique fora cancelam.
-pub fn dialog(
-    ctx: &egui::Context,
-    id: egui::Id,
-    title: &str,
-    cancel: &str,
-    action: Option<DialogAction<'_>>,
-    body: impl FnOnce(&mut Ui),
-) -> DialogOutcome {
-    dialog_full(
-        ctx,
-        DialogParts {
-            id,
-            title,
-            subtitle: None,
-            width: 380.0,
-            cancel,
-            action,
-            busy: false,
-        },
-        body,
-        |_| {},
-    )
-}
-
 /// O que um diálogo mostra fora do conteúdo.
 #[derive(Debug, Clone, Copy)]
 pub struct DialogParts<'a> {
@@ -352,7 +311,9 @@ pub struct DialogParts<'a> {
     pub busy: bool,
 }
 
-/// [`dialog`] com subtítulo, largura e o lado esquerdo do rodapé (ex.: "Testar conexão").
+/// Diálogo modal centralizado com fundo escurecido: título (e subtítulo opcional), conteúdo e
+/// rodapé com Cancelar e a ação principal à direita e, à esquerda, o que `footer_left` desenhar
+/// (ex.: "Testar conexão"). Esc e clique fora cancelam, salvo com `busy`.
 pub fn dialog_full(
     ctx: &egui::Context,
     parts: DialogParts<'_>,
@@ -468,7 +429,7 @@ pub fn pending_chip(ui: &mut Ui, text: &str) -> Response {
     egui::Frame::new()
         .fill(t.pending)
         .corner_radius(CornerRadius::same(radius::CONTROL))
-        .inner_margin(egui::Margin::symmetric(8, 2))
+        .inner_margin(egui::Margin::symmetric(space::S as i8, space::HAIR as i8))
         .show(ui, |ui| {
             ui.label(
                 RichText::new(text)
@@ -496,20 +457,26 @@ mod tests {
             .with_size(egui::vec2(800.0, 600.0))
             .build_ui_state(
                 |ui, state: &mut State| {
-                    let outcome = dialog(
+                    let outcome = dialog_full(
                         ui.ctx(),
-                        egui::Id::new("teste"),
-                        "Remover conexão",
-                        "Cancelar",
-                        Some(DialogAction {
-                            label: "Remover",
-                            kind: ButtonKind::Danger,
-                            enabled: true,
-                            shortcut: None,
-                        }),
+                        DialogParts {
+                            id: egui::Id::new("teste"),
+                            title: "Remover conexão",
+                            subtitle: None,
+                            width: 380.0,
+                            cancel: "Cancelar",
+                            action: Some(DialogAction {
+                                label: "Remover",
+                                kind: ButtonKind::Danger,
+                                enabled: true,
+                                shortcut: None,
+                            }),
+                            busy: false,
+                        },
                         |ui| {
                             ui.label("Corpo");
                         },
+                        |_| {},
                     );
                     if outcome != DialogOutcome::Open {
                         state.outcomes.push(outcome);
