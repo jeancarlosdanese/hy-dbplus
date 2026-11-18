@@ -4,6 +4,8 @@
 use crate::theme::{self, Tokens};
 
 pub const ROW_HEIGHT: f32 = 22.0;
+/// A coluna "#" do grid de dados e do de resultados: a mesma largura nos dois.
+pub const NUMBER_WIDTH: f32 = 48.0;
 
 pub fn header(ui: &mut egui::Ui, text: &str, tokens: &Tokens) {
     ui.label(

@@ -150,7 +150,9 @@ where
             tr.close_tab_title(
                 &app.workspaces
                     .get(key)
-                    .and_then(|ws| Some(ws.tabs.get(*index)?.title(ws.current_schema.as_deref())))
+                    .and_then(|ws| {
+                        Some(ws.tabs.get(*index)?.title(ws.current_schema.as_deref(), tr))
+                    })
                     .unwrap_or_default(),
             ),
             tr.discard_and_close(),

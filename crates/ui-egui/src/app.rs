@@ -120,11 +120,11 @@ impl Tab {
     }
 
     /// O rótulo da aba: `tabela` (ou `schema.tabela` fora do schema atual) ou o título da SQL.
-    pub fn title(&self, current_schema: Option<&str>) -> String {
+    pub fn title(&self, current_schema: Option<&str>, tr: Tr) -> String {
         match self {
             Tab::Table(t) if current_schema == Some(t.schema.as_str()) => t.table.clone(),
             Tab::Table(t) => format!("{}.{}", t.schema, t.table),
-            Tab::Query(q) => q.title.clone(),
+            Tab::Query(q) => q.title(tr),
         }
     }
 
@@ -156,17 +156,18 @@ pub struct QueryResult {
     pub selected_row: Option<usize>,
 }
 
-/// Uma aba "SQL Query" (FEAT-010): o buffer, o limite, a execução em curso e os resultados.
+/// Uma aba de SQL, "Consulta N" (FEAT-010): o buffer, o limite, a execução em curso e os resultados.
 #[derive(Debug, Clone)]
 pub struct QueryTab {
     pub id: QueryTabId,
-    pub title: String,
     pub buffer: String,
     /// Cursor do editor, em caracteres (o egui conta assim); vira byte para `statement_at`.
     pub cursor: usize,
     pub limit: Option<usize>,
     pub running: bool,
     pub started: Option<Instant>,
+    /// Quantos statements a execução em curso manda (o `total` do `SqlStarted`): "consulta 2 de 3".
+    pub run_total: usize,
     pub results: Vec<QueryResult>,
     /// Número da última execução (de `App::run_counter`, um só por processo): entra no id da tabela e
     /// da rolagem dos resultados, para o grid de uma execução nova não herdar rolagem nem larguras
@@ -174,7 +175,10 @@ pub struct QueryTab {
     /// antigo ainda está na memória do egui.
     pub run_seq: u64,
     pub active_result: usize,
-    pub notice: Option<String>,
+    pub notice: Option<QueryNotice>,
+    /// O aviso da execução que acabou de ser pedida (statement incompleto): vira o `notice` no
+    /// `SqlStarted`, que limpa o aviso anterior.
+    pub run_notice: Option<QueryNotice>,
     /// O texto como está no arquivo (FEAT-011): só grava de novo quando o buffer mudou.
     pub saved: String,
     /// O texto cuja gravação falhou: o varrimento por frame não tenta de novo até ele mudar (sem
@@ -184,10 +188,55 @@ pub struct QueryTab {
     /// buffer e o cursor vai para ele); o editor consome, grava no estado do widget e pede o foco.
     pub pending_cursor: Option<usize>,
     /// A análise do buffer (tokens, statements, spans) do último frame; o editor refaz quando o
-    /// texto muda e o Run Current a reaproveita (FEAT-012).
+    /// texto muda e o Executar a reaproveita (FEAT-012).
     pub analysis: Option<hy_dbplus_sql::Analysis>,
     /// O popup de autocomplete aberto (FEAT-012): o que ele mostra e o item escolhido.
     pub completion: Option<CompletionState>,
+}
+
+/// Um aviso da aba SQL, traduzido na hora de mostrar (FEAT-015): o idioma pode mudar com ele na
+/// tela. Erro do sistema ou do servidor vem como o sistema devolve.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum QueryNotice {
+    Cancelled,
+    /// Outra execução roda neste banco (o engine recusou).
+    OtherRunning,
+    /// Esta aba já está executando.
+    AlreadyRunning,
+    NothingToRun,
+    /// Uma gravação do grid está em curso neste banco.
+    CommitRunning,
+    Incomplete,
+    /// Statement incompleto com `;` depois: não roda.
+    IncompleteSplit,
+    /// O COMMIT de uma transação abortada virou ROLLBACK.
+    CommitUndone,
+    /// O arquivo da consulta não foi salvo: o erro do sistema.
+    SaveFailed(String),
+    /// O SQL gerado não saiu: `schema.tabela: erro do servidor`.
+    Server(String),
+}
+
+impl QueryNotice {
+    pub fn text(&self, tr: Tr) -> String {
+        match self {
+            Self::Cancelled => tr.notice_cancelled().to_owned(),
+            Self::OtherRunning => tr.notice_other_running().to_owned(),
+            Self::AlreadyRunning => tr.notice_already_running().to_owned(),
+            Self::NothingToRun => tr.notice_nothing_to_run().to_owned(),
+            Self::CommitRunning => tr.notice_commit_running().to_owned(),
+            Self::Incomplete => tr.notice_incomplete().to_owned(),
+            Self::IncompleteSplit => tr.notice_incomplete_split().to_owned(),
+            Self::CommitUndone => tr.notice_commit_undone().to_owned(),
+            Self::SaveFailed(error) => tr.save_query_failed(tr.this_query(), error),
+            Self::Server(message) => message.clone(),
+        }
+    }
+
+    /// Erro (faixa vermelha) ou aviso (âmbar).
+    pub fn is_error(&self) -> bool {
+        matches!(self, Self::SaveFailed(_) | Self::Server(_))
+    }
 }
 
 /// O popup de autocomplete de uma aba (FEAT-012): o trecho a substituir e os itens vêm do motor
@@ -222,22 +271,28 @@ impl QueryTab {
     pub fn new(id: QueryTabId) -> Self {
         Self {
             id,
-            title: format!("SQL Query {id}"),
             buffer: String::new(),
             cursor: 0,
             limit: DEFAULT_LIMIT,
             running: false,
             started: None,
+            run_total: 0,
             results: Vec::new(),
             run_seq: 0,
             active_result: 0,
             notice: None,
+            run_notice: None,
             saved: String::new(),
             save_failed: None,
             pending_cursor: None,
             analysis: None,
             completion: None,
         }
+    }
+
+    /// O título na aba e nas confirmações: "Consulta 1".
+    pub fn title(&self, tr: Tr) -> String {
+        tr.query_title(u64::from(self.id))
     }
 
     /// Uma aba que volta do arquivo ao abrir o banco: o texto, sem resultados.
@@ -323,7 +378,7 @@ pub struct Workspace {
     /// Um `BEGIN` do editor sem `COMMIT`/`ROLLBACK`: a transação é da conexão do banco, não da
     /// aba; todas as abas SQL avisam e o Commit do grid espera.
     pub open_transaction: bool,
-    /// O último número de aba SQL deste banco (`SQL Query n`, arquivo `n.sql`): a numeração é por
+    /// O último número de aba SQL deste banco (`Consulta n`, arquivo `n.sql`): a numeração é por
     /// banco, para a aba e o arquivo casarem (FEAT-011).
     pub next_query_id: QueryTabId,
     /// Um erro dentro da transação aberta (qualquer um, inclusive cancel): o servidor a marca como
@@ -1028,16 +1083,22 @@ where
                 }
                 self.discard_pending_sql(&(id, database), &schema, &table, &error.to_string());
             }
-            Event::SqlStarted { database, tab, .. } => {
+            Event::SqlStarted {
+                database,
+                tab,
+                total,
+                ..
+            } => {
                 self.run_counter = self.run_counter.wrapping_add(1);
                 let run_seq = self.run_counter;
                 if let Some(q) = self.query_tab_mut(&id, &database, tab) {
                     q.running = true;
                     q.started = Some(Instant::now());
                     q.run_seq = run_seq;
+                    q.run_total = total;
                     q.results.clear();
                     q.active_result = 0;
-                    q.notice = None;
+                    q.notice = q.run_notice.take();
                 }
             }
             Event::SqlResult {
@@ -1083,10 +1144,7 @@ where
                     });
                     q.active_result = q.results.len() - 1;
                     if commit_undone {
-                        q.notice = Some(
-                            "A transação estava abortada: o COMMIT virou ROLLBACK, nada foi gravado"
-                                .into(),
-                        );
+                        q.notice = Some(QueryNotice::CommitUndone);
                     }
                 }
             }
@@ -1100,14 +1158,14 @@ where
                     q.running = false;
                     q.started = None;
                     if cancelled {
-                        q.notice = Some("Execução cancelada".into());
+                        q.notice = Some(QueryNotice::Cancelled);
                     }
                 }
             }
             Event::SqlBusy { database, tab, .. } => {
                 if let Some(q) = self.query_tab_mut(&id, &database, tab) {
-                    q.notice =
-                        Some("Outra execução ainda roda neste banco; aguarde ou cancele".into());
+                    q.run_notice = None;
+                    q.notice = Some(QueryNotice::OtherRunning);
                 }
             }
             Event::DatabaseClosed { database, .. } => {
@@ -1299,6 +1357,7 @@ where
     /// Grava o texto da aba SQL `index` se mudou desde o último salvamento (texto vazio apaga o
     /// arquivo). Falha vai ao aviso da aba e não trava nada.
     pub(crate) fn save_query_tab(&mut self, key: &DbKey, index: usize) -> Result<(), String> {
+        let tr = self.tr();
         let Some(q) = self
             .workspaces
             .get_mut(key)
@@ -1317,8 +1376,9 @@ where
                 Ok(())
             }
             Err(e) => {
-                let message = format!("não foi possível salvar a query {}: {e}", q.title);
-                q.notice = Some(message.clone());
+                let error = e.to_string();
+                let message = tr.save_query_failed(&q.title(tr), &error);
+                q.notice = Some(QueryNotice::SaveFailed(error));
                 q.save_failed = Some(q.buffer.clone());
                 Err(message)
             }
@@ -1549,7 +1609,7 @@ where
         self.workspaces.iter().any(|(k, ws)| k.0 == id && ws.busy())
     }
 
-    /// **+ SQL** (⌘T): uma aba "SQL Query N" nova no banco, ativa.
+    /// **+ SQL** (⌘T): uma aba "Consulta N" nova no banco, ativa.
     pub(crate) fn open_query_tab(&mut self, key: &DbKey) {
         let Some(ws) = self.workspaces.get_mut(key) else {
             return;
@@ -1673,7 +1733,7 @@ where
         ws.pending_sql = None;
         let message = format!("{schema}.{table}: {error}");
         match query_target(ws).and_then(|i| ws.tabs.get_mut(i).and_then(Tab::query_mut)) {
-            Some(q) => q.notice = Some(message),
+            Some(q) => q.notice = Some(QueryNotice::Server(message)),
             None => {
                 if let Some(state) = self.conn_state.get_mut(&key.0) {
                     state.error = Some(message);
@@ -1683,7 +1743,7 @@ where
     }
 
     /// Põe o SQL no fim da aba SQL ativa (ou da última do banco, ou de uma nova), separado por uma
-    /// linha em branco, com o cursor no começo dele: Run Current roda exatamente ele.
+    /// linha em branco, com o cursor no começo dele: Executar roda exatamente ele.
     fn insert_sql(&mut self, key: &DbKey, sql: &str) {
         if self.workspaces.get(key).and_then(query_target).is_none() {
             self.open_query_tab(key);
@@ -1711,7 +1771,19 @@ where
         q.completion = None;
     }
 
-    /// Run Current (⌘↩): o statement sob o cursor.
+    /// "Executar ROLLBACK" da faixa de transação abortada (FEAT-015, AC-012): o `ROLLBACK` vai pela
+    /// mesma execução do editor, com as mesmas travas, e o estado da transação segue o resultado.
+    pub(crate) fn run_rollback(&mut self, key: &DbKey) {
+        if self
+            .workspaces
+            .get(key)
+            .is_some_and(|ws| ws.transaction_aborted)
+        {
+            self.run(key, vec!["ROLLBACK".to_owned()]);
+        }
+    }
+
+    /// Executar (⌘↩): o statement sob o cursor.
     pub(crate) fn run_current(&mut self, key: &DbKey) {
         let Some(q) = self.workspaces.get(key).and_then(|ws| ws.query()) else {
             return;
@@ -1724,22 +1796,23 @@ where
             // A cauda incompleta vai até o fim do buffer e pode levar statements inteiros que o
             // usuário não pediu (o tokenizador erra em sintaxe que o servidor aceita): não roda.
             if let Some(q) = self.workspaces.get_mut(key).and_then(|ws| ws.query_mut()) {
-                q.notice = Some(
-                    "Statement incompleto (string, $$ ou comentário sem fechar) com `;` depois: o \
-                     editor não sabe onde ele termina. Corrija, tire o `;` ou use Run All"
-                        .into(),
-                );
+                q.notice = Some(QueryNotice::IncompleteSplit);
             }
             return;
         }
         let incomplete = !statement.complete;
-        self.run(key, vec![statement.sql]);
-        if incomplete && let Some(q) = self.workspaces.get_mut(key).and_then(|ws| ws.query_mut()) {
-            q.notice = Some("Statement incompleto (string, $$ ou comentário sem fechar)".into());
+        let started = self.run(key, vec![statement.sql]);
+        // O `SqlStarted` limpa o aviso da aba: o desta execução vai junto com ele, senão sumia antes
+        // de aparecer (achado do revisor, fase E).
+        if started
+            && incomplete
+            && let Some(q) = self.workspaces.get_mut(key).and_then(|ws| ws.query_mut())
+        {
+            q.run_notice = Some(QueryNotice::Incomplete);
         }
     }
 
-    /// Run All (⌘⇧↩): todos os statements do buffer, em ordem; o engine para no primeiro erro.
+    /// Executar tudo (⌘⇧↩): todos os statements do buffer, em ordem; o engine para no primeiro erro.
     pub(crate) fn run_all(&mut self, key: &DbKey) {
         let Some(q) = self.workspaces.get(key).and_then(|ws| ws.query()) else {
             return;
@@ -1751,9 +1824,10 @@ where
         self.run(key, statements);
     }
 
-    fn run(&mut self, key: &DbKey, statements: Vec<String>) {
+    /// Manda os statements ao engine; `false` quando não mandou (o aviso da aba diz por quê).
+    fn run(&mut self, key: &DbKey, statements: Vec<String>) -> bool {
         let Some(ws) = self.workspaces.get_mut(key) else {
-            return;
+            return false;
         };
         // Commit do grid em curso neste banco: o editor esperaria o lock da conexão e um Cancelar
         // dele derrubaria o lote no servidor (o cancel é por conexão, não por statement).
@@ -1762,24 +1836,25 @@ where
             .iter()
             .any(|t| matches!(t, Tab::Table(t) if t.commit_running()));
         let Some(q) = ws.query_mut() else {
-            return;
+            return false;
         };
         if commit_running {
-            q.notice = Some("Há um Commit em curso neste banco; aguarde o resultado".into());
-            return;
+            q.notice = Some(QueryNotice::CommitRunning);
+            return false;
         }
         if q.running {
-            q.notice = Some("Já há uma execução em curso; aguarde ou cancele".into());
-            return;
+            q.notice = Some(QueryNotice::AlreadyRunning);
+            return false;
         }
         if statements.is_empty() {
-            q.notice = Some("Nada para executar".into());
-            return;
+            q.notice = Some(QueryNotice::NothingToRun);
+            return false;
         }
         let (id, limit) = (q.id, q.limit);
         self.deps
             .sessions
             .run_sql(&key.0, &key.1, id, statements, limit);
+        true
     }
 
     pub(crate) fn cancel_sql(&mut self, key: &DbKey) {
@@ -1793,7 +1868,7 @@ where
         }
     }
 
-    /// Beautify (⌘I): o buffer inteiro; `sql::beautify` devolve a entrada intacta se não puder.
+    /// Formatar (⌘I): o buffer inteiro; `sql::beautify` devolve a entrada intacta se não puder.
     pub(crate) fn beautify(&mut self, key: &DbKey) {
         if let Some(q) = self.workspaces.get_mut(key).and_then(|ws| ws.query_mut()) {
             let formatted = hy_dbplus_sql::beautify(&q.buffer);

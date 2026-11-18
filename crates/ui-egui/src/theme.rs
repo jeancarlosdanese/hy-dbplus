@@ -262,12 +262,6 @@ pub fn current(ctx: &egui::Context) -> Tokens {
     Tokens::for_theme(ctx.theme())
 }
 
-/// Cor de erro e de ação destrutiva da variante na tela (`Tokens::danger`). Com o vermelho
-/// fixo do tema claro, o erro caía abaixo do contraste legível sobre os fundos escuros.
-pub fn error_color(ctx: &egui::Context) -> Color32 {
-    current(ctx).danger
-}
-
 /// Cor da tag de ambiente (etiqueta e faixa): verde local, violeta dev, âmbar staging, vermelho
 /// prod. Igual nas duas variantes: é sinal, não decoração; nenhuma é a cor de destaque.
 pub fn tag_color(tag: hy_dbplus_engine::Tag) -> Color32 {
@@ -402,9 +396,9 @@ mod tests {
         ] {
             ctx.set_theme(pref);
             let t = Tokens::for_theme(theme);
-            assert_eq!(error_color(&ctx), t.danger);
+            assert_eq!(current(&ctx).danger, t.danger);
             for bg in [t.panel, t.card, t.field] {
-                assert!(contrast(error_color(&ctx), bg) >= 4.5, "{theme:?}");
+                assert!(contrast(t.danger, bg) >= 4.5, "{theme:?}");
             }
         }
     }

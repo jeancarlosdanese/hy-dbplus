@@ -2,7 +2,7 @@
 //! tabela, view e tabela externa com ícone próprio, tabela expansível até as colunas `nome  tipo`,
 //! chave primária com ícone, busca e o seletor de schema com o recarregar no rodapé do painel.
 
-use hy_dbplus_engine::{Driver, TableKind, Template};
+use hy_dbplus_engine::{Driver, Template};
 
 use crate::app::{App, DbKey, SqlItem};
 use crate::fonts::icon;
@@ -161,11 +161,7 @@ where
                 .default_open(true)
                 .show(ui, |ui| {
                     for t in &tables {
-                        let kind_icon = match t.kind {
-                            TableKind::View | TableKind::MaterializedView => icon::VIEW,
-                            TableKind::Foreign => icon::FOREIGN_TABLE,
-                            TableKind::Table => icon::TABLE,
-                        };
+                        let kind_icon = icon::table_kind(t.kind);
                         let key = (schema.clone(), t.name.clone());
                         // A seta expande as colunas (botão com rótulo, acessível); o nome abre a aba Data (tela 3.4).
                         let state_id = ui.make_persistent_id(&key);
@@ -318,7 +314,9 @@ mod tests {
     };
     use hy_dbplus_engine::{Connection, Direction, Tag};
 
-    use crate::app::{App, View, tests::deps};
+    use crate::app::{App, QueryNotice, View, tests::deps};
+
+    const PT: crate::i18n::Tr = crate::i18n::Tr(crate::i18n::Language::PtBr);
 
     /// Driver falso com o catálogo de um banco "loja": schemas app e public, tabela pedido (PK id)
     /// e view v_pedido, função dobro.
@@ -2149,13 +2147,7 @@ mod tests {
         app.run_all(&key);
         let q = app.workspaces[&key].query().unwrap();
         assert!(!q.running);
-        assert!(
-            q.notice
-                .as_deref()
-                .is_some_and(|n| n.contains("Commit em curso")),
-            "{:?}",
-            q.notice
-        );
+        assert_eq!(q.notice, Some(QueryNotice::CommitRunning));
         {
             let ws = app.workspaces.get_mut(&key).unwrap();
             ws.tabs.pop();
@@ -2343,8 +2335,8 @@ mod tests {
         harness.get_by_label_contains("SELECT id, nome FROM public.pedido");
     }
 
-    /// FEAT-010: + SQL abre a aba; Run Current roda só o statement do cursor; Run All roda todos e
-    /// para no erro, com uma sub-aba por statement; o limite trunca; Beautify formata; o JSON da
+    /// FEAT-010: + SQL abre a aba; Executar roda só o statement do cursor; Executar tudo roda todos e
+    /// para no erro, com uma sub-aba por statement; o limite trunca; Formatar formata; o JSON da
     /// linha vai ao painel; fechar a aba com texto pede confirmação.
     #[test]
     fn editor_sql_run_current_run_all_beautify_limite_e_fechar() {
@@ -2367,16 +2359,17 @@ mod tests {
         });
         let query = |app: &App<FakeDriver>| app.workspace_of(&id).unwrap().query().cloned();
 
-        // + SQL abre "SQL Query 1" ativa, com o editor vazio.
+        // + SQL abre "Consulta 1" ativa, com o editor vazio.
         harness.get_by_label("Nova consulta SQL").click_accesskit();
         harness.step();
         harness.step();
         assert_eq!(
-            query(harness.state()).map(|q| q.title),
-            Some("SQL Query 1".into())
+            query(harness.state()).map(|q| q.title(PT)),
+            Some("Consulta 1".into())
         );
+        harness.get_by_label("Nenhum resultado ainda");
         harness.get_by_label(
-            "Nenhum resultado ainda. ⌘↩ roda o statement sob o cursor; ⌘⇧↩ roda todos.",
+            "Ctrl+Enter executa o statement sob o cursor; Ctrl+Shift+Enter executa todos.",
         );
         // Digita três statements (o cursor fica no fim, no terceiro).
         harness
@@ -2392,9 +2385,9 @@ mod tests {
             query(harness.state()).unwrap().buffer,
             "select 5;\nselect erro;\nselect 3"
         );
-        harness.get_by_label("linha 3, coluna 9");
+        harness.get_by_label("Linha 3, coluna 9");
 
-        // Run Current (⌘↩): só o statement do cursor, 3 linhas, uma sub-aba.
+        // Executar (⌘↩): só o statement do cursor, 3 linhas, uma sub-aba.
         let before = queries.load(Ordering::SeqCst);
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Enter);
         wait_for(&mut harness, "resultado", |app| {
@@ -2405,11 +2398,11 @@ mod tests {
         // 17/11/2026): sem isso o grid novo nascia rolado como o da execução anterior.
         let first_run = query(harness.state()).map(|q| q.run_seq);
         assert_eq!(first_run, Some(1));
-        harness.get_by_label("Query 1");
-        harness.get_by_label_contains("3 rows ·");
-        assert!(harness.query_by_label("Query 2").is_none());
+        harness.get_by_label("Resultado 1");
+        harness.get_by_label_contains("3 linhas ·");
+        assert!(harness.query_by_label("Resultado 2").is_none());
 
-        // Limite 2 (o ComboBox é o padrão do egui; o estado basta) e Run All (⌘⇧↩): o 1º trunca,
+        // Limite 2 (o ComboBox é o padrão do egui; o estado basta) e Executar tudo (⌘⇧↩): o 1º trunca,
         // o 2º erra, o 3º não roda.
         harness
             .state_mut()
@@ -2430,10 +2423,10 @@ mod tests {
         assert!(q.results[1].result.is_err());
         assert_eq!(q.active_result, 1);
         harness.get_by_label_contains("syntax error");
-        harness.get_by_label("Query 1").click_accesskit();
+        harness.get_by_label("Resultado 1").click_accesskit();
         harness.step();
         harness.step();
-        harness.get_by_label_contains("2 rows ·");
+        harness.get_by_label_contains("2 linhas ·");
         harness.get_by_label_contains("truncado em 2");
 
         // ⌘-clique no número da linha 2: JSON no painel direito (modificador por evento, clique
@@ -2457,7 +2450,7 @@ mod tests {
         assert!(harness.state().side_panel_open);
         harness.get_by_label_contains("\"n\": \"2\"");
 
-        // Beautify (⌘I) formata o buffer inteiro.
+        // Formatar (⌘I) formata o buffer inteiro.
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::I);
         harness.step();
         harness.step();
@@ -2575,11 +2568,16 @@ mod tests {
             harness.query_by_label_contains("Fechar a aba ").is_none(),
             "⌘W com SQL rodando"
         );
-        harness.get_by_label("Cancelar").click_accesskit();
+        harness
+            .get_by_label(&format!("{} Cancelar", crate::fonts::icon::STOP))
+            .click_accesskit();
         wait_for(&mut harness, "cancelada", |app| {
             query(app).is_some_and(|q| !q.running)
         });
         harness.get_by_label("Execução cancelada");
+        let open_tx = format!("{} Transação aberta", crate::fonts::icon::WARNING);
+        let aborted_tx =
+            "A transação foi abortada. Execute ROLLBACK antes de continuar.".to_owned();
         // "transação aberta" por banco: BEGIN sem fim acende o aviso; COMMIT apaga. Cada bloco zera
         // `results` antes do ⌘↩: a espera "um resultado e parado" só vale com o resultado novo (com o
         // da execução anterior ainda lá, ela voltava antes de o driver responder sob carga).
@@ -2599,7 +2597,7 @@ mod tests {
         wait_for(&mut harness, "begin", |app| {
             query(app).is_some_and(|q| !q.running && q.results.len() == 1)
         });
-        harness.get_by_label("transação aberta");
+        harness.get_by_label(&open_tx);
         // Erro dentro da transação: o servidor a abortou e o COMMIT vai desfazer tudo; a barra avisa
         // (revisão de 22/10/2026). COMMIT (que no servidor vira ROLLBACK) fecha e limpa o aviso.
         {
@@ -2618,13 +2616,11 @@ mod tests {
         wait_for(&mut harness, "erro na transação", |app| {
             query(app).is_some_and(|q| !q.running && q.results.len() == 1)
         });
-        harness.get_by_label("transação abortada");
-        assert!(harness.query_by_label("transação aberta").is_none());
-        // ROLLBACK TO SAVEPOINT recupera a transação (6ª revisão): o aviso volta a "aberta".
-        for (sql, running_label) in [
-            ("rollback to savepoint a", "transação aberta"),
-            ("select erro", "transação abortada"),
-        ] {
+        // Abortada, a transação segue aberta: a etiqueta fica e a faixa do ROLLBACK aparece.
+        harness.get_by_label(&aborted_tx);
+        harness.get_by_label(&open_tx);
+        // ROLLBACK TO SAVEPOINT recupera a transação (6ª revisão): a faixa some e a etiqueta fica.
+        for (sql, aborted) in [("rollback to savepoint a", false), ("select erro", true)] {
             {
                 let q = harness
                     .state_mut()
@@ -2641,9 +2637,13 @@ mod tests {
             wait_for(&mut harness, sql, |app| {
                 query(app).is_some_and(|q| !q.running && q.results.len() == 1)
             });
-            harness.get_by_label(running_label);
+            harness.get_by_label(&open_tx);
+            assert_eq!(
+                harness.query_by_label(&aborted_tx).is_some(),
+                aborted,
+                "{sql}"
+            );
         }
-        assert!(harness.query_by_label("transação aberta").is_none());
         // COMMIT da transação abortada: o servidor faz ROLLBACK e responde OK; a aba avisa.
         {
             let q = harness
@@ -2662,8 +2662,8 @@ mod tests {
             query(app).is_some_and(|q| !q.running && q.results.len() == 1)
         });
         harness.step();
-        assert!(harness.query_by_label("transação aberta").is_none());
-        assert!(harness.query_by_label("transação abortada").is_none());
+        assert!(harness.query_by_label(&open_tx).is_none());
+        assert!(harness.query_by_label(&aborted_tx).is_none());
         harness.get_by_label_contains("o COMMIT virou ROLLBACK");
         // Um SqlResult em voo de uma aba que não está rodando (banco fechado e reaberto, aba
         // fechada) não mexe na transação nem nos resultados (revisão de 22/10/2026).
@@ -2684,8 +2684,8 @@ mod tests {
         harness.step();
         assert!(!harness.state().workspaces[&(id.clone(), "loja".to_owned())].open_transaction);
         assert_eq!(query(harness.state()).unwrap().results.len(), 1);
-        assert!(harness.query_by_label("transação aberta").is_none());
-        // Run Current com o tokenizador perdido e `;` depois: não roda (levaria o DROP junto).
+        assert!(harness.query_by_label(&open_tx).is_none());
+        // Executar com o tokenizador perdido e `;` depois: não roda (levaria o DROP junto).
         {
             let q = harness
                 .state_mut()
@@ -2726,8 +2726,8 @@ mod tests {
         harness.step();
         harness.step();
         assert_eq!(
-            query(harness.state()).map(|q| q.title),
-            Some("SQL Query 2".into())
+            query(harness.state()).map(|q| q.title(PT)),
+            Some("Consulta 2".into())
         );
     }
 
@@ -2864,17 +2864,17 @@ mod tests {
         harness.step();
         let q = query(harness.state()).unwrap();
         assert_eq!(
-            (q.title.as_str(), q.buffer.as_str()),
-            ("SQL Query 1", "select 1")
+            (q.title(PT).as_str(), q.buffer.as_str()),
+            ("Consulta 1", "select 1")
         );
         assert!(q.results.is_empty());
-        harness.get_by_label("SQL Query 2");
+        harness.get_by_label("Consulta 2");
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
         harness.step();
         harness.step();
         assert_eq!(
-            query(harness.state()).map(|q| q.title),
-            Some("SQL Query 3".into())
+            query(harness.state()).map(|q| q.title(PT)),
+            Some("Consulta 3".into())
         );
         // ⌘W na aba vazia fecha direto e não deixa arquivo; a da esquerda (2) assume; na aba com
         // texto pergunta, e "Descartar e fechar" apaga o arquivo.
@@ -2883,8 +2883,8 @@ mod tests {
         harness.step();
         assert!(!file.with_file_name("3.sql").exists());
         assert_eq!(
-            query(harness.state()).map(|q| q.title),
-            Some("SQL Query 2".into())
+            query(harness.state()).map(|q| q.title(PT)),
+            Some("Consulta 2".into())
         );
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::W);
         harness.step();
@@ -2901,8 +2901,8 @@ mod tests {
         harness.step();
         harness.step();
         assert_eq!(
-            query(harness.state()).map(|q| q.title),
-            Some("SQL Query 4".into())
+            query(harness.state()).map(|q| q.title(PT)),
+            Some("Consulta 4".into())
         );
     }
 
@@ -2998,9 +2998,7 @@ mod tests {
         app.autosave_unfocused_queries(&ctx);
         let q = app.workspaces[&key].tabs[0].query().unwrap();
         assert!(
-            q.notice
-                .as_deref()
-                .is_some_and(|n| n.contains("não foi possível salvar")),
+            matches!(q.notice, Some(QueryNotice::SaveFailed(_))),
             "{:?}",
             q.notice
         );
@@ -3009,15 +3007,11 @@ mod tests {
             .unwrap()
             .query_mut()
             .unwrap()
-            .notice = Some("outro aviso".into());
+            .notice = Some(QueryNotice::NothingToRun);
         app.autosave_unfocused_queries(&ctx);
         assert_eq!(
-            app.workspaces[&key].tabs[0]
-                .query()
-                .unwrap()
-                .notice
-                .as_deref(),
-            Some("outro aviso"),
+            app.workspaces[&key].tabs[0].query().unwrap().notice,
+            Some(QueryNotice::NothingToRun),
             "tentou de novo com o mesmo texto"
         );
         // Texto mudou: tenta de novo (e falha de novo, com o aviso).
@@ -3033,8 +3027,8 @@ mod tests {
                 .query()
                 .unwrap()
                 .notice
-                .as_deref()
-                .is_some_and(|n| n.contains("não foi possível salvar"))
+                .as_ref()
+                .is_some_and(|n| matches!(n, QueryNotice::SaveFailed(_)))
         );
         // Aba restaurada, texto apagado, ⌘W: fecha direto, mas apagar o arquivo falha e o erro não
         // pode sumir com a aba (vai ao aviso do app). O alvo é um diretório chamado `1.sql`: `remove_file`
@@ -3056,7 +3050,7 @@ mod tests {
         assert!(
             app.notice
                 .as_deref()
-                .is_some_and(|n| n.contains("não foi possível salvar")),
+                .is_some_and(|n| n.contains("Não foi possível salvar Consulta 1: ")),
             "{:?}",
             app.notice
         );
@@ -3101,7 +3095,7 @@ mod tests {
             q.buffer,
             "INSERT INTO \"public\".\"pedido\" (\"id\", \"cliente\", \"status\")\nVALUES (0, '', '');\n"
         );
-        assert_eq!((q.title.as_str(), q.cursor), ("SQL Query 1", 0));
+        assert_eq!((q.title(PT).as_str(), q.cursor), ("Consulta 1", 0));
         assert!(harness.state().workspaces[&key].pending_sql.is_none());
         harness.step();
         let editor = crate::editor::editor_id(&key, q.id);
@@ -3117,7 +3111,7 @@ mod tests {
         harness.step();
 
         // DELETE com as colunas já carregadas: na mesma aba, no fim, linha em branco antes, cursor no
-        // DELETE, que é o statement sob o cursor (Run Current rodaria só ele).
+        // DELETE, que é o statement sob o cursor (Executar rodaria só ele).
         harness.get_by_label(&table("pedido")).click_secondary();
         harness.step();
         harness.get_by_label("DELETE").click_accesskit();
@@ -3191,8 +3185,8 @@ mod tests {
             query(harness.state())
                 .unwrap()
                 .notice
-                .as_deref()
-                .is_some_and(|n| n.contains("public.v_pedido") && n.contains("permission denied")),
+                .as_ref()
+                .is_some_and(|n| matches!(n, QueryNotice::Server(m) if m.contains("public.v_pedido") && m.contains("permission denied"))),
             "{:?}",
             query(harness.state()).unwrap().notice
         );
@@ -3263,6 +3257,10 @@ mod tests {
         type_text(&mut harness, "sel");
         assert_eq!(labels(harness.state()), ["select"]);
         harness.get_by_label("select");
+        // O rodapé do popup diz as teclas (tela 14).
+        harness.get_by_label("↑↓ navegar");
+        harness.get_by_label("↩ / tab aceitar");
+        harness.get_by_label("esc fechar");
         harness.key_press(egui::Key::Enter);
         harness.step();
         harness.step();
@@ -4351,5 +4349,181 @@ mod tests {
         // Outra conexão em foco: o diálogo do banco ativo não está na tela.
         app.focus = Some("c2".into());
         assert!(!app.table_dialog_open());
+    }
+
+    fn query_harness() -> (
+        Harness<'static, App<FakeDriver>>,
+        tokio::runtime::Runtime,
+        crate::app::DbKey,
+    ) {
+        let (mut app, rt, key) = connected_app();
+        app.open_query_tab(&key);
+        let mut harness = wide_harness(app);
+        harness.step();
+        harness.step();
+        (harness, rt, key)
+    }
+
+    fn set_query(harness: &mut Harness<'_, App<FakeDriver>>, key: &crate::app::DbKey, sql: &str) {
+        let q = harness
+            .state_mut()
+            .workspaces
+            .get_mut(key)
+            .and_then(|ws| ws.query_mut())
+            .unwrap();
+        q.buffer = sql.into();
+        q.cursor = sql.chars().count();
+        q.results.clear();
+        harness.step();
+    }
+
+    fn run_and_wait(harness: &mut Harness<'_, App<FakeDriver>>, key: &crate::app::DbKey) {
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Enter);
+        wait_for(harness, "resultado", |app| {
+            app.workspaces[key]
+                .query()
+                .is_some_and(|q| !q.running && q.results.len() == 1)
+        });
+    }
+
+    /// AC-012: a faixa do ROLLBACK só aparece com a transação abortada, e o botão roda `ROLLBACK`
+    /// pela execução do editor, que fecha a transação.
+    #[test]
+    fn rollback_so_com_a_transacao_abortada_e_roda_rollback() {
+        let (mut harness, _rt, key) = query_harness();
+        let button = "Executar ROLLBACK";
+        let open_tx = format!("{} Transação aberta", crate::fonts::icon::WARNING);
+        set_query(&mut harness, &key, "begin");
+        run_and_wait(&mut harness, &key);
+        assert!(harness.state().workspaces[&key].open_transaction);
+        harness.get_by_label(&open_tx);
+        assert!(
+            harness.query_by_label(button).is_none(),
+            "transação aberta sem erro é só aviso"
+        );
+        set_query(&mut harness, &key, "select erro");
+        run_and_wait(&mut harness, &key);
+        assert!(harness.state().workspaces[&key].transaction_aborted);
+        harness.get_by_label(button).click_accesskit();
+        wait_for(&mut harness, "ROLLBACK", |app| {
+            app.workspaces[&key].query().is_some_and(|q| {
+                !q.running && q.results.len() == 1 && q.results[0].sql == "ROLLBACK"
+            })
+        });
+        let ws = &harness.state().workspaces[&key];
+        assert!(!ws.open_transaction && !ws.transaction_aborted);
+        assert!(harness.query_by_label(button).is_none());
+        assert!(harness.query_by_label(&open_tx).is_none());
+    }
+
+    /// Tela 14: durante a execução só Cancelar fica ligado; o tempo e o progresso aparecem; o aviso
+    /// de cancelada sai pelo Fechar da faixa.
+    #[test]
+    fn barra_do_editor_durante_a_execucao_so_cancelar() {
+        use egui_kittest::kittest::NodeT;
+        let (mut harness, _rt, key) = query_harness();
+        let stop = format!("{} Cancelar", crate::fonts::icon::STOP);
+        set_query(&mut harness, &key, "select 1");
+        assert!(harness.get_by_label(&stop).accesskit_node().is_disabled());
+        assert!(
+            !harness
+                .get_by_label("Executar")
+                .accesskit_node()
+                .is_disabled()
+        );
+        set_query(&mut harness, &key, "select sleep");
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Enter);
+        wait_for(&mut harness, "rodando", |app| {
+            app.workspaces[&key].query().is_some_and(|q| q.running)
+        });
+        for label in ["Executar", "Executar tudo", "Formatar"] {
+            assert!(
+                harness.get_by_label(label).accesskit_node().is_disabled(),
+                "{label}"
+            );
+        }
+        assert!(!harness.get_by_label(&stop).accesskit_node().is_disabled());
+        harness.get_by_label_contains("Executando · ");
+        harness.get_by_label("Executando a consulta 1 de 1");
+        harness.get_by_label(&stop).click_accesskit();
+        wait_for(&mut harness, "cancelada", |app| {
+            app.workspaces[&key].query().is_some_and(|q| !q.running)
+        });
+        harness.get_by_label("Execução cancelada");
+        harness.get_by_label("Fechar").click_accesskit();
+        harness.step();
+        harness.step();
+        assert_eq!(
+            harness.state().workspaces[&key].query().unwrap().notice,
+            None
+        );
+        assert!(harness.query_by_label("Execução cancelada").is_none());
+    }
+
+    /// AC-004 no editor: barra, rodapé, resultados e avisos em inglês; o aviso troca de idioma com
+    /// ele na tela.
+    #[test]
+    fn editor_sql_em_ingles() {
+        let (mut harness, _rt, key) = query_harness();
+        harness.state_mut().lang = hy_dbplus_engine::Language::En;
+        harness.step();
+        harness.step();
+        for label in [
+            "Query 1",
+            "Run",
+            "Run all",
+            "Format",
+            "Limit",
+            "No results yet",
+            "Line 1, column 1",
+            "Saved automatically when you leave the editor",
+        ] {
+            harness.get_by_label(label);
+        }
+        set_query(&mut harness, &key, "select 3");
+        run_and_wait(&mut harness, &key);
+        harness.get_by_label("Result 1");
+        harness.get_by_label_contains("3 rows · ");
+        set_query(&mut harness, &key, "update t set a = 1");
+        run_and_wait(&mut harness, &key);
+        harness.get_by_label_contains("OK, 3 rows affected · ");
+        set_query(&mut harness, &key, "select erro");
+        run_and_wait(&mut harness, &key);
+        harness.get_by_label_contains("failed in ");
+        harness
+            .state_mut()
+            .workspaces
+            .get_mut(&key)
+            .and_then(|ws| ws.query_mut())
+            .unwrap()
+            .notice = Some(QueryNotice::Incomplete);
+        harness.step();
+        harness.get_by_label("Incomplete statement (unclosed string, $$ or comment)");
+        harness.state_mut().lang = hy_dbplus_engine::Language::PtBr;
+        harness.step();
+        harness.step();
+        harness.get_by_label("Statement incompleto (string, $$ ou comentário sem fechar)");
+        harness.get_by_label_contains("falhou em ");
+    }
+
+    /// O aviso de statement incompleto aparece depois de rodar: o `SqlStarted` limpava o aviso da
+    /// aba e ele sumia antes de ser desenhado (achado do revisor, fase E).
+    #[test]
+    fn statement_incompleto_avisa_depois_de_rodar() {
+        let (mut harness, _rt, key) = query_harness();
+        set_query(&mut harness, &key, "select 'abc");
+        run_and_wait(&mut harness, &key);
+        assert_eq!(
+            harness.state().workspaces[&key].query().unwrap().notice,
+            Some(QueryNotice::Incomplete)
+        );
+        harness.get_by_label("Statement incompleto (string, $$ ou comentário sem fechar)");
+        // A execução seguinte, completa, limpa o aviso.
+        set_query(&mut harness, &key, "select 1");
+        run_and_wait(&mut harness, &key);
+        assert_eq!(
+            harness.state().workspaces[&key].query().unwrap().notice,
+            None
+        );
     }
 }

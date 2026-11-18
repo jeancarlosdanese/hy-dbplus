@@ -1,5 +1,5 @@
 //! A barra de abas do banco ativo (FEAT-008, desenho da FEAT-015): uma aba por tabela aberta,
-//! rótulo `schema.tabela` (só `tabela` no schema atual), e as abas "SQL Query N" (FEAT-010, "+" ou
+//! rótulo `schema.tabela` (só `tabela` no schema atual), e as abas "Consulta N" (FEAT-010, "+" ou
 //! ⌘T), cada uma com o ícone do tipo; × em cada aba e ⌘W na ativa; fechar uma aba com edição
 //! pendente ou com texto passa pela confirmação. O ponto âmbar marca pendência (ou SQL em execução).
 
@@ -39,7 +39,7 @@ where
             let pending =
                 t.table().is_some_and(|t| t.has_changes()) || t.query().is_some_and(|q| q.running);
             (
-                t.title(current_schema.as_deref()),
+                t.title(current_schema.as_deref(), tr),
                 pending,
                 t.busy(),
                 t.query().is_some(),

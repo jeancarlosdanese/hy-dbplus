@@ -22,9 +22,9 @@ egui_phosphor::subset! {
     pub mod icons {
         use regular::{
             ARROWS_LEFT_RIGHT, ARROW_CLOCKWISE, ARROW_COUNTER_CLOCKWISE, CARET_DOWN, CARET_LEFT, CARET_RIGHT, CARET_UP,
-            CHECK, CLOCK, CODE, COPY, DATABASE, EYE, FAST_FORWARD, FUNCTION, KEY, LINK,
+            CHECK, CLOCK, CODE, COLUMNS, COPY, DATABASE, EYE, FAST_FORWARD, FOLDER_SIMPLE, FUNCTION, KEY, LINK,
             MAGIC_WAND, MAGNIFYING_GLASS, PENCIL_SIMPLE, PLAY, PLUGS, PLUGS_CONNECTED, PLUS,
-            SIDEBAR_SIMPLE, STOP, TABLE, TRASH, WARNING, WARNING_CIRCLE, X,
+            SIDEBAR_SIMPLE, STOP, TABLE, TAG, TEXT_AA, TRASH, WARNING, WARNING_CIRCLE, X,
         };
     }
 }
@@ -69,6 +69,20 @@ pub mod icon {
     pub const ERROR: &str = r::WARNING_CIRCLE;
     pub const OK: &str = r::CHECK;
     pub const HISTORY: &str = r::CLOCK;
+    pub const COLUMN: &str = r::COLUMNS;
+    pub const KEYWORD: &str = r::TEXT_AA;
+    pub const ALIAS: &str = r::TAG;
+    pub const SCHEMA: &str = r::FOLDER_SIMPLE;
+
+    /// O ícone de cada tipo de tabela, o mesmo na árvore e no autocomplete.
+    pub fn table_kind(kind: hy_dbplus_engine::TableKind) -> &'static str {
+        use hy_dbplus_engine::TableKind;
+        match kind {
+            TableKind::View | TableKind::MaterializedView => VIEW,
+            TableKind::Foreign => FOREIGN_TABLE,
+            TableKind::Table => TABLE,
+        }
+    }
 }
 
 // O corte dos ícones precisa ficar muito abaixo da fonte inteira (~490 KB): conferido na compilação.

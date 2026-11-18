@@ -182,6 +182,53 @@ texts! {
     include => "Include", "Include";
     parameters => "Parâmetros", "Parameters";
     ddl_subtitle => "Montado a partir do catálogo. Só leitura.", "Built from the catalog. Read-only.";
+    // Editor SQL (fase E).
+    run => "Executar", "Run";
+    run_all => "Executar tudo", "Run all";
+    format_sql => "Formatar", "Format";
+    run_hint => "Executa o statement sob o cursor", "Runs the statement under the cursor";
+    run_all_hint => "Executa todos os statements, parando no primeiro erro",
+        "Runs every statement, stopping at the first error";
+    open_transaction => "Transação aberta", "Open transaction";
+    open_transaction_hint => "O último BEGIN ainda não teve COMMIT nem ROLLBACK",
+        "The last BEGIN has no COMMIT or ROLLBACK yet";
+    transaction_aborted => "A transação foi abortada. Execute ROLLBACK antes de continuar.",
+        "The transaction was aborted. Run ROLLBACK before continuing.";
+    run_rollback => "Executar ROLLBACK", "Run ROLLBACK";
+    this_query => "a consulta", "the query";
+    nothing_running => "Nada em execução", "Nothing is running";
+    limit => "Limite", "Limit";
+    no_limit => "Sem limite", "No limit";
+    saved_on_leave => "Salva sozinha ao sair do editor", "Saved automatically when you leave the editor";
+    results => "Resultados", "Results";
+    no_results_title => "Nenhum resultado ainda", "No results yet";
+    completion_loading => "Carregando colunas…", "Loading columns…";
+    hint_accept => "aceitar", "accept";
+    hint_close => "fechar", "close";
+    kind_column => "coluna", "column";
+    kind_alias => "alias", "alias";
+    kind_keyword => "palavra-chave", "keyword";
+    kind_table => "tabela", "table";
+    kind_view => "view", "view";
+    kind_schema => "schema", "schema";
+    kind_function => "função", "function";
+    kind_materialized_view => "view materializada", "materialized view";
+    kind_foreign_table => "tabela estrangeira", "foreign table";
+    kind_key => "chave", "key";
+    notice_cancelled => "Execução cancelada", "Run cancelled";
+    notice_other_running => "Outra execução ainda roda neste banco; aguarde ou cancele",
+        "Another run is still going on this database; wait for it or cancel it";
+    notice_already_running => "Já há uma execução em curso; aguarde ou cancele",
+        "A run is already in progress; wait for it or cancel it";
+    notice_nothing_to_run => "Nada para executar", "Nothing to run";
+    notice_commit_running => "Há uma gravação em curso neste banco; aguarde o resultado",
+        "Changes are being committed on this database; wait for the result";
+    notice_incomplete => "Statement incompleto (string, $$ ou comentário sem fechar)",
+        "Incomplete statement (unclosed string, $$ or comment)";
+    notice_incomplete_split => "Statement incompleto (string, $$ ou comentário sem fechar) com `;` depois: o editor não sabe onde ele termina. Corrija, tire o `;` ou use Executar tudo",
+        "Incomplete statement (unclosed string, $$ or comment) followed by `;`: the editor can't tell where it ends. Fix it, remove the `;` or use Run all";
+    notice_commit_undone => "A transação estava abortada: o COMMIT virou ROLLBACK, nada foi gravado",
+        "The transaction was aborted: COMMIT became ROLLBACK, nothing was saved";
     // Seletor de idioma.
     /// A dica do seletor PT | EN.
     language_hint => "Idioma da interface", "Interface language";
@@ -380,6 +427,109 @@ impl Tr {
                 format!("Nenhuma linha selecionada. {command}-clique numa linha do resultado.")
             }
             Language::En => format!("No row selected. {command}-click a row in the result."),
+        }
+    }
+
+    /// O título da aba SQL: "Consulta 1".
+    pub fn query_title(self, n: u64) -> String {
+        match self.0 {
+            Language::PtBr => format!("Consulta {n}"),
+            Language::En => format!("Query {n}"),
+        }
+    }
+
+    /// "Não foi possível salvar Consulta 1: …" (o erro do sistema vem como o sistema devolve).
+    pub fn save_query_failed(self, title: &str, error: &str) -> String {
+        match self.0 {
+            Language::PtBr => format!("Não foi possível salvar {title}: {error}"),
+            Language::En => format!("Could not save {title}: {error}"),
+        }
+    }
+
+    /// "Executando · 3,4 s".
+    pub fn running_for(self, seconds: f32) -> String {
+        let value = format!("{seconds:.1}");
+        match self.0 {
+            Language::PtBr => format!("Executando · {} s", value.replace('.', ",")),
+            Language::En => format!("Running · {value} s"),
+        }
+    }
+
+    /// "Executando a consulta 2 de 3".
+    pub fn running_query(self, n: u64, total: u64) -> String {
+        match self.0 {
+            Language::PtBr => format!("Executando a consulta {n} de {total}"),
+            Language::En => format!("Running query {n} of {total}"),
+        }
+    }
+
+    /// A sub-aba de um resultado: "Resultado 2".
+    pub fn result_tab(self, n: u64) -> String {
+        match self.0 {
+            Language::PtBr => format!("Resultado {n}"),
+            Language::En => format!("Result {n}"),
+        }
+    }
+
+    /// "5 linhas · 12 ms".
+    pub fn result_rows(self, rows: u64, ms: u128) -> String {
+        format!("{} · {ms} ms", self.rows(rows))
+    }
+
+    /// "truncado em 500".
+    pub fn truncated_at(self, n: u64) -> String {
+        match self.0 {
+            Language::PtBr => format!("truncado em {}", self.number(n)),
+            Language::En => format!("truncated at {}", self.number(n)),
+        }
+    }
+
+    /// "falhou em 3 ms".
+    pub fn failed_in(self, ms: u128) -> String {
+        match self.0 {
+            Language::PtBr => format!("falhou em {ms} ms"),
+            Language::En => format!("failed in {ms} ms"),
+        }
+    }
+
+    /// "OK, 3 linhas afetadas · 12 ms"; sem contagem, "OK · 12 ms".
+    pub fn affected_rows(self, n: Option<u64>, ms: u128) -> String {
+        match (n, self.0) {
+            (None, _) => format!("OK · {ms} ms"),
+            (Some(n), Language::PtBr) => format!(
+                "OK, {} afetada{} · {ms} ms",
+                self.rows(n),
+                if n == 1 { "" } else { "s" }
+            ),
+            (Some(n), Language::En) => format!("OK, {} affected · {ms} ms", self.rows(n)),
+        }
+    }
+
+    /// O limite de linhas do editor: "500 linhas"; sem limite, "Sem limite".
+    pub fn limit_rows(self, limit: Option<usize>) -> String {
+        match limit {
+            Some(n) => self.rows(n as u64),
+            None => self.no_limit().to_owned(),
+        }
+    }
+
+    /// "Linha 6, coluna 43".
+    pub fn line_column(self, line: usize, column: usize) -> String {
+        match self.0 {
+            Language::PtBr => format!("Linha {line}, coluna {column}"),
+            Language::En => format!("Line {line}, column {column}"),
+        }
+    }
+
+    /// O estado vazio dos resultados, com os atalhos da plataforma.
+    pub fn no_results_hint(self, run: &str, run_all: &str) -> String {
+        match self.0 {
+            Language::PtBr => {
+                format!("{run} executa o statement sob o cursor; {run_all} executa todos.")
+            }
+            Language::En => {
+                format!("{run} runs the statement under the cursor; {run_all} runs them all.")
+            }
         }
     }
 

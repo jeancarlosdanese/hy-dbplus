@@ -322,7 +322,7 @@ where
                         .resizable(true)
                         .sense(egui::Sense::click())
                         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                        .column(TableColumn::exact(48.0));
+                        .column(TableColumn::exact(crate::grid::NUMBER_WIDTH));
                     for _ in &rows.columns {
                         builder =
                             builder.column(TableColumn::initial(140.0).at_least(60.0).clip(true));
