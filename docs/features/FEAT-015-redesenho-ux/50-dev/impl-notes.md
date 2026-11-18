@@ -3,8 +3,8 @@
 # Notas de implementação: FEAT-015
 
 > Protótipo aprovado pelo Jean em 17/11/2026 ("pode seguir"), como desenhado: ambiente em etiqueta e faixa fina.
-> Aceite e plano aprovados no mesmo dia ("pode seguir"). Fases A (e461e98) e B (1406e00) commitadas. Fase C
-> implementada de ponta a ponta, a pedido do Jean, sem commit.
+> Aceite e plano aprovados no mesmo dia ("pode seguir"). Fases A (e461e98), B (1406e00) e C (43b7515)
+> commitadas. Fase D implementada em 18/11/2026, sem commit.
 
 ## Decisões de implementação
 
@@ -116,7 +116,41 @@ telas nos dois idiomas. Não há passo do mantenedor além da conferência visua
 
 Objetivo: aba Dados, edição, painel de registro, gravação, Estrutura, Índices e DDL (telas 7 a 12).
 
-- [ ] D.0 Detalhar os passos da fase.
+- [x] D.0 Detalhar os passos da fase (17/11/2026).
+- [x] D.1 Barra da aba de tabela (telas 7 a 12), em cima do conteúdo: segmentado Dados | Estrutura | Índices
+  (`widgets::segmented`), `schema.tabela` em destaque com "1.284 linhas · 312 kB" (milhar pelo idioma),
+  comentário da tabela na dica, aviso "só leitura (sem chave primária)" como etiqueta, e o recarregar por ícone
+  (⌘R, travado com pendência; refaz a página atual pelo `load_data_page` que já existe). Em Estrutura, o botão
+  "Ver DDL" na mesma barra.
+- [x] D.2 Rodapé da aba Dados (tela 7 e 8): sem pendência, a dica "Duplo clique edita a célula"; com pendência, o
+  chip âmbar "2 alterações, 1 exclusão", "Descartar ⌘Z" (fantasma) e "Revisar e gravar ⌘S" (principal). À direita,
+  "Linhas por página" 100/500/1000, "1–100 de 1.284" e ‹ › por ícone, travados com pendência. Saem "+ Row",
+  "Filters" e "Columns" (AC-014). "Apagar linhas" (⌫) fica como botão fantasma só com linha selecionada em tabela
+  editável, para o mouse não perder o caminho.
+- [x] D.3 Grade (telas 7 e 8): cabeçalho com o ícone de chave na chave primária, o tipo pequeno embaixo do nome e
+  a seta de ordenação por ícone; número alinhado à direita pelo tipo do catálogo; NULL em itálico apagado; célula
+  pendente com o fundo e o texto âmbar, que vencem a seleção (AC-006, regra numa função pura com teste); linha
+  marcada para apagar riscada, no vermelho do tema; campo de edição com a borda do destaque.
+- [x] D.4 Painel de registro (tela 8): cabeçalho "Linha 3" (ou "3 linhas") com o segmentado Campos | JSON; cada
+  campo com nome, tipo apagado à direita, etiqueta "alterado" e o valor pendente em âmbar; chave primária só
+  leitura; "Definir NULL" e "Reverter campo"; "Múltiplos valores", "marcada para apagar", "mostrar tudo" e
+  "Copiar" no catálogo. Na aba SQL, o JSON da linha com "Copiar".
+- [x] D.5 Diálogo de gravação (tela 9) por `widgets::dialog_full`: título "Gravar 2 alterações e 1 exclusão em
+  pedidos" com plural nos dois idiomas (AC-007); subtítulo com a etiqueta do ambiente e "Roda numa transação: ou
+  grava tudo, ou não grava nada."; o SQL em bloco mono com as cores de sintaxe do tema e o comando que falhou em
+  vermelho; erro do servidor em `widgets::banner`; rodapé "Copiar SQL" à esquerda, Cancelar e "Gravar no banco
+  ⌘↩". Durante a gravação, Esc, clique fora e os botões não fecham (AC-008); o `dialog_full` ganha esse modo.
+- [x] D.6 Estrutura e Índices (telas 10 e 11): seções "Colunas" (#, Coluna, Tipo, Aceita nulo, Padrão,
+  Comentário, com o ícone de chave) e "Restrições" (Nome, Tipo por extenso, Colunas, Definição); "Índices" (Nome,
+  Método, Único, Colunas, Condição, Comentário); "sim/não" e tipos de restrição no catálogo; rodapé "6 colunas ·
+  3 restrições" e "3 índices"; carregando, erro com "Tentar de novo" e vazio pelos componentes. Saem "+ Column" e
+  "Triggers" (AC-014).
+- [x] D.7 DDL (tela 12) por `widgets::dialog_full`: título "DDL: public.pedidos", subtítulo "Montado a partir do
+  catálogo. Só leitura.", código mono com as cores de sintaxe, Fechar e "Copiar" (principal).
+- [x] D.8 Textos: `LOCK_HINT`, `READ_ONLY_HINT` e os literais de data, record, commit, structure e index passam
+  para o catálogo nos dois idiomas. Testes: rótulos novos nos testes antigos; AC-006 (pendência vence a seleção),
+  AC-007 (título com plural nos dois idiomas), AC-008 (gravação em curso não fecha por Esc nem por clique fora),
+  AC-014 (nenhum dos cinco botões mortos), ⌘R recarrega e fica travado com pendência, tela de dados em inglês.
 
 ### Fase E: editor SQL
 
@@ -162,6 +196,21 @@ e a linha "Padrão visual e protótipos" do `CLAUDE.md` atualizados.
   conexão), põe na sub-aba Data e abre a caixa de gravação. Só aparece com pendência de tabela (não para texto de
   SQL nem para célula aberta sem outra pendência). Na conexão, o botão vermelho diz "Descartar e desconectar".
 - **Aba Structure:** o 🔑 da lista de colunas da Structure fica para a fase D.
+- **D.1, recarregar só em Dados:** o protótipo mostra o ícone também em Estrutura e Índices; lá o catálogo já se
+  recarrega pela árvore, e o ícone fica só na sub-aba Dados.
+- **D.1, comentário e tamanhos:** o comentário da tabela e os tamanhos de dados e de índices passaram para a dica do
+  nome e do resumo; a barra mostra só "linhas · tamanho total". A dica "grave ou descarte antes" também saiu da
+  linha de cima e ficou só na dica dos controles travados.
+- **D.2, "Apagar linhas":** continua como botão fantasma, só com linha selecionada em tabela que edita.
+- **D.5, atalho no botão:** o `DialogAction` ganhou o atalho à direita (`⌘↩`) e o `dialog_full` ganhou o modo
+  ocupado. O nome acessível dos botões com atalho é só o rótulo, para os testes não dependerem da plataforma.
+- **D.5, comando que falhou:** em vez de pintar o comando dentro do bloco de SQL, ele aparece em vermelho sob a
+  faixa do erro, como no protótipo do editor.
+- **D.7, Copiar no DDL:** é a ação principal e não fecha o diálogo; Fechar e Esc fecham.
+- **Aviso de página descartada** (`DROPPED_HINT`, `app.rs`): ainda em português; vem de dentro do estado, sem o
+  idioma, e entra na varredura de textos da fase F.
+- **Editor SQL:** o realce do editor ainda usa as cores antigas; as cores de sintaxe do tema já valem para a
+  gravação e o DDL, e o editor muda na fase E.
 - **B.4, texto do remover:** o protótipo diz que as consultas salvas da conexão ficam no disco, mas desde a FEAT-011
   remover a conexão apaga também as consultas dela. O texto do diálogo segue o comportamento: "A senha guardada no
   Keychain e as consultas salvas desta conexão também são apagadas."
@@ -198,6 +247,8 @@ e a linha "Padrão visual e protótipos" do `CLAUDE.md` atualizados.
 | B, 2ª | delta das correções | 1 baixo (nome e endereço longos passavam sob os botões) | corrigido (largura limitada e truncamento), teste provado contra o código antigo; sem nova passada |
 | C, 1ª | `git diff HEAD` (fase C) e os ajustes do 1406e00 sem passada (barra de rolagem, reserva Hack, ícone da faixa, rolagem da paleta) | 2 baixos (trocar o idioma fechava as tabelas abertas na árvore, porque o id do grupo vinha do rótulo traduzido; textos substituídos ficaram no catálogo, escondidos pelo `allow(dead_code)`) | ambos corrigidos: id fixo nos grupos, com teste provado contra o código sem ele; cinco textos mortos removidos e o teste da reserva Hack ajustado aos símbolos em uso (▲▼ do grid) |
 | C, 2ª | delta das correções | nenhum | fase liberada |
+| D, 1ª | `git diff HEAD` (fase D) | 2 médios (⌘↩ gravava com a paleta ou a confirmação de fechar por cima; ⌘R com célula aberta recarregava e perdia o digitado); 5 baixos (recarregar não pedia os tamanhos; array de `numeric` alinhado como número; `ConstraintKind::label` sem chamador; `lock_detail` sem uso; montagem das partes repetida em três funções) | todos corrigidos. Ao testar o primeiro, apareceu outro: com a paleta sobre a gravação, um Esc fechava as duas. ⌘K, ⌘T e ⌘W agora não agem com a gravação ou o DDL abertos. Testes provados contra o código sem cada conserto |
+| D, 2ª | delta das correções | 2 baixos (a guarda dos atalhos olhava o banco ativo mesmo com outra conexão em foco e travava ⌘K, ⌘T e ⌘W sem diálogo na tela; comentário de `retry_data` fora do lugar) | ambos corrigidos, o primeiro com teste provado contra o código sem o filtro; sem nova passada, como a skill manda para baixo do delta |
 
 ## Testes
 
@@ -245,6 +296,20 @@ Fase C (17/11/2026), por teste:
   ícone do painel abre o painel; o "+" da faixa abre a paleta; a paleta fecha por Esc e por clique fora (AC-008).
 - Workspace em inglês.
 - Trocar PT | EN com uma tabela aberta na árvore mantém as colunas à mostra (falha sem o id fixo do grupo).
+
+Fase D (18/11/2026), por teste:
+- Os testes antigos da grade, da edição, da gravação, da Estrutura, dos Índices e do DDL passaram para os rótulos
+  novos e seguem verdes.
+- Pendência e exclusão pintam a célula por cima da cor de seleção, nos dois temas (AC-006); números alinham à
+  direita pelo tipo.
+- Título da gravação com contagem e plural nos dois idiomas (AC-007); gravação em curso não fecha por Esc, clique
+  fora nem Cancelar, e parada fecha pelos dois sem descartar (AC-008).
+- Nenhum "+ Row", "Filters", "Columns", "+ Column", "Triggers" nem "em breve" em Dados, Estrutura e Índices
+  (AC-014).
+- ⌘R e o ícone recarregam a mesma página; com pendência, nenhum dos dois recarrega.
+- Aba de tabela e gravação em inglês.
+- Com a gravação aberta, ⌘K, ⌘T e ⌘W não abrem nada e só ⌘↩ grava; ⌘R não recarrega com célula aberta e pede
+  de novo os tamanhos (os dois testes falham sem o conserto).
 - Portão completo verde.
 - Portão completo verde e `cargo deny check advisories` ok.
 
@@ -256,6 +321,7 @@ Fase C (17/11/2026), por teste:
 - Fase B no app: visual das telas 1 a 4 nos dois temas e idiomas, foco do teclado com o campo de busca ativo, e o
   "Testar conexão" contra um servidor real. Conferência do Jean.
 - Fase C no app: visual das telas 5, 6 e 16 nos dois temas e idiomas; a faixa de ambiente com cada tag.
+- Fase D no app: visual das telas 7 a 12 nos dois temas e idiomas; ⌘↩ gravando contra o banco local.
 
 ## Segurança (fechamento)
 
