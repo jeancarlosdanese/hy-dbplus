@@ -1,5 +1,6 @@
 //! Tarefas de build e verificação do hy-dbplus, via `cargo xtask <comando>` (alias em
-//! `.cargo/config.toml`): `layers` (M0) e `bundle` (FEAT-014, o `.app` e o `.dmg` do macOS).
+//! `.cargo/config.toml`): `layers` (M0), `bundle` (FEAT-014, o `.app` e o `.dmg` do macOS) e
+//! `version` (FEAT-016, sobe a versão do produto; o `bump` da entrega).
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -7,6 +8,7 @@ use std::process::{Command, ExitCode};
 
 mod bundle;
 mod layers;
+mod version;
 
 type Task = fn(&[OsString]) -> Result<(), String>;
 
@@ -21,6 +23,11 @@ const COMMANDS: &[(&str, &str, Task)] = &[
         "bundle",
         "Monta target/bundle/hy-dbplus.app e o .dmg (macOS; --universal, --no-dmg)",
         run_bundle,
+    ),
+    (
+        "version",
+        "Sobe a versão em VERSION, Cargo.toml e Cargo.lock (<x.y.z>); --check <tag> confere a tag",
+        run_version,
     ),
 ];
 
@@ -116,6 +123,50 @@ fn run_bundle(args: &[OsString]) -> Result<(), String> {
     bundle::run(args, &root()?, &target_dir(&meta)?, &app_version(&meta)?)
 }
 
+/// Os pacotes do workspace (o `cargo metadata --no-deps` só lista os membros).
+fn workspace_members(meta: &serde_json::Value) -> Result<Vec<String>, String> {
+    let names: Vec<String> = meta
+        .get("packages")
+        .and_then(|p| p.as_array())
+        .map(|packages| {
+            packages
+                .iter()
+                .filter_map(|p| p.get("name").and_then(|n| n.as_str()))
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    if names.is_empty() {
+        return Err("metadata sem os pacotes do workspace".into());
+    }
+    Ok(names)
+}
+
+fn run_version(args: &[OsString]) -> Result<(), String> {
+    let meta = metadata()?;
+    let root = root()?;
+    // Com a versão nova gravada, o lock tem de bater com os manifestos sem o Cargo resolver nada;
+    // se não bater, `version::run` devolve os originais.
+    let verify = || -> Result<(), String> {
+        let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+        let out = Command::new(cargo)
+            .args(["metadata", "--format-version", "1", "--locked", "--offline"])
+            .current_dir(&root)
+            .output()
+            .map_err(|e| format!("não consegui rodar o cargo metadata: {e}"))?;
+        if out.status.success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "o cargo metadata --locked --offline recusou a versão nova (o lock não confere \
+                 com os manifestos, ou falta no cache do cargo algum pacote; a causa vem abaixo):\n{}",
+                String::from_utf8_lossy(&out.stderr)
+            ))
+        }
+    };
+    version::run(args, &root, &workspace_members(&meta)?, &verify)
+}
+
 fn run_layers(_: &[OsString]) -> Result<(), String> {
     let crates = layers::from_metadata(&metadata()?)?;
     println!("Camadas (docs/BRIEF.md §5)\n");
@@ -184,6 +235,14 @@ mod tests {
         let meta = serde_json::json!({"target_directory": "/x/target"});
         assert_eq!(target_dir(&meta).unwrap(), PathBuf::from("/x/target"));
         assert!(target_dir(&serde_json::json!({})).is_err());
+        assert_eq!(
+            workspace_members(&serde_json::json!({"packages": [
+                {"name": "xtask"}, {"name": "hy-dbplus"}
+            ]}))
+            .unwrap(),
+            ["xtask", "hy-dbplus"]
+        );
+        assert!(workspace_members(&serde_json::json!({"packages": []})).is_err());
     }
 
     #[cfg(unix)]
