@@ -157,7 +157,13 @@ fn write(path: &Path, text: &str) -> Result<(), String> {
 
 /// O pacote do sistema atual. `--universal` e `--no-dmg` são só do macOS. `target_dir` vem do
 /// `cargo metadata` (respeita `CARGO_TARGET_DIR`).
-pub fn run(args: &[OsString], root: &Path, target_dir: &Path, version: &str) -> Result<(), String> {
+pub fn run(
+    args: &[OsString],
+    root: &Path,
+    target_dir: &Path,
+    version: &str,
+    homepage: &str,
+) -> Result<(), String> {
     match std::env::consts::OS {
         "macos" => macos(args, root, target_dir, version),
         os @ ("linux" | "windows") => {
@@ -168,7 +174,7 @@ pub fn run(args: &[OsString], root: &Path, target_dir: &Path, version: &str) -> 
                 ));
             }
             if os == "linux" {
-                crate::package::linux(root, target_dir, version)
+                crate::package::linux(root, target_dir, version, homepage)
             } else {
                 crate::package::windows(root, target_dir, version)
             }

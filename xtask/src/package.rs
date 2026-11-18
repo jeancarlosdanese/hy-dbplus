@@ -16,8 +16,6 @@ use crate::bundle::{APP_NAME, BUNDLE_ID, cargo, sh, sh_live};
 
 /// O binário da CLI (`apps/hy-dbplus-cli`).
 pub const CLI_NAME: &str = "hy-dbplus-cli";
-/// Página do projeto (`repository` do workspace).
-pub const HOMEPAGE: &str = "https://github.com/jeancarlosdanese/hy-dbplus";
 /// Bibliotecas que o app carrega no Linux: libc e o runtime do Rust; GL e EGL pelo `glow` e pelo
 /// `glutin` (`libwayland-egl` no Wayland); teclado, Wayland e X11 pelo `winit` (`libX11`,
 /// `libX11-xcb`, `libXcursor`, `libXi`, `libxkbcommon` e `libxkbcommon-x11`). As de GL, Wayland e X11
@@ -53,18 +51,19 @@ pub fn deb_arch(rust_arch: &str) -> Result<&'static str, String> {
     }
 }
 
-/// O `DEBIAN/control`. `installed_kb`: o tamanho instalado, em KiB.
-pub fn deb_control(version: &str, arch: &str, installed_kb: u64) -> String {
+/// O `DEBIAN/control`. `installed_kb`: o tamanho instalado, em KiB; `homepage`: o `repository` do
+/// workspace (vem do `cargo metadata`, sem cópia aqui).
+pub fn deb_control(version: &str, arch: &str, installed_kb: u64, homepage: &str) -> String {
     format!(
         "Package: {APP_NAME}\n\
          Version: {version}\n\
          Section: database\n\
          Priority: optional\n\
          Architecture: {arch}\n\
-         Maintainer: Hyberica <{HOMEPAGE}>\n\
+         Maintainer: Hyberica <{homepage}>\n\
          Installed-Size: {installed_kb}\n\
          Depends: {DEB_DEPENDS}\n\
-         Homepage: {HOMEPAGE}\n\
+         Homepage: {homepage}\n\
          Description: cliente PostgreSQL desktop, leve e simples\n \
          Navega dados e escreve SQL com autocomplete; inclui a CLI hy-dbplus-cli.\n"
     )
@@ -153,7 +152,13 @@ fn set_mode(_: &Path, _: u32) -> Result<(), String> {
 /// A árvore do `.deb` em `root` (recriada): `DEBIAN/control`, os binários em `usr/bin`, o atalho, o
 /// ícone e a licença em `usr/share/doc/hy-dbplus/copyright`. Pastas 0755, binários 0755, o resto
 /// 0644 (o `dpkg-deb --root-owner-group` põe tudo como root).
-pub fn deb_tree(root: &Path, inputs: &Inputs, version: &str, arch: &str) -> Result<(), String> {
+pub fn deb_tree(
+    root: &Path,
+    inputs: &Inputs,
+    version: &str,
+    arch: &str,
+    homepage: &str,
+) -> Result<(), String> {
     fresh_dir(root)?;
     let bin = root.join("usr/bin");
     let apps = root.join("usr/share/applications");
@@ -179,7 +184,7 @@ pub fn deb_tree(root: &Path, inputs: &Inputs, version: &str, arch: &str) -> Resu
     }
     write(
         &debian.join("control"),
-        &deb_control(version, arch, size.div_ceil(1024)),
+        &deb_control(version, arch, size.div_ceil(1024), homepage),
         0o644,
     )?;
     Ok(())
@@ -269,7 +274,7 @@ fn inputs(root: &Path, app: PathBuf, cli: PathBuf) -> Result<Inputs, String> {
 }
 
 /// Linux: build → árvore do `.deb` → `dpkg-deb` → pasta do `.tar.gz` → `tar`.
-pub fn linux(root: &Path, target_dir: &Path, version: &str) -> Result<(), String> {
+pub fn linux(root: &Path, target_dir: &Path, version: &str, homepage: &str) -> Result<(), String> {
     let arch = std::env::consts::ARCH;
     let (label, deb_arch) = (arch_label(arch)?, deb_arch(arch)?);
     for tool in ["dpkg-deb", "tar"] {
@@ -287,7 +292,7 @@ pub fn linux(root: &Path, target_dir: &Path, version: &str) -> Result<(), String
     let deb_root = bundle_dir
         .join("deb")
         .join(format!("{APP_NAME}_{version}_{deb_arch}"));
-    deb_tree(&deb_root, &inputs, version, deb_arch)?;
+    deb_tree(&deb_root, &inputs, version, deb_arch, homepage)?;
     let deb = bundle_dir.join(artifact_name(version, "linux", label, "deb"));
     sh(
         "dpkg-deb --build",
@@ -303,7 +308,10 @@ pub fn linux(root: &Path, target_dir: &Path, version: &str) -> Result<(), String
     let tarball = bundle_dir.join(artifact_name(version, "linux", label, "tar.gz"));
     sh(
         "tar",
+        // Dono root em toda entrada (GNU tar): extraído com sudo, nada fica do usuário que montou
+        // (achado do revisor; o .deb tem o mesmo pelo --root-owner-group).
         Command::new("tar")
+            .args(["--owner=0", "--group=0", "--numeric-owner"])
             .arg("-czf")
             .arg(&tarball)
             .arg("-C")
@@ -390,14 +398,15 @@ mod tests {
 
     #[test]
     fn control_do_deb() {
-        let control = deb_control("0.2.0", "amd64", 12345);
+        let control = deb_control("0.2.0", "amd64", 12345, "https://example.org/hy");
         for line in [
             "Package: hy-dbplus\n",
             "Version: 0.2.0\n",
             "Architecture: amd64\n",
             "Installed-Size: 12345\n",
             "Depends: libc6, libgcc-s1, libgl1, libegl1, libwayland-client0, libwayland-egl1, libx11-6, libx11-xcb1, libxcursor1, libxi6, libxkbcommon0, libxkbcommon-x11-0\n",
-            "Homepage: https://github.com/jeancarlosdanese/hy-dbplus\n",
+            "Homepage: https://example.org/hy\n",
+            "Maintainer: Hyberica <https://example.org/hy>\n",
         ] {
             assert!(control.contains(line), "{line:?} em\n{control}");
         }
@@ -433,7 +442,7 @@ mod tests {
         let inputs = fake_inputs(&dir);
         let root = dir.join("pkg");
         fs::create_dir_all(root.join("sobra")).unwrap();
-        deb_tree(&root, &inputs, "0.2.0", "amd64").unwrap();
+        deb_tree(&root, &inputs, "0.2.0", "amd64", "https://example.org/hy").unwrap();
         assert!(!root.join("sobra").exists(), "a árvore não foi recriada");
         let files = [
             "DEBIAN/control",

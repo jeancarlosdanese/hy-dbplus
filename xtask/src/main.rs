@@ -108,6 +108,16 @@ fn target_dir(meta: &serde_json::Value) -> Result<PathBuf, String> {
 
 /// A versão do app no workspace (`version.workspace = true`), pelo `cargo metadata`.
 fn app_version(meta: &serde_json::Value) -> Result<String, String> {
+    app_field(meta, "version")
+}
+
+/// O `repository` do app (herdado do workspace): a página do projeto no `.deb`.
+fn app_repository(meta: &serde_json::Value) -> Result<String, String> {
+    app_field(meta, "repository")
+}
+
+/// Um campo de texto do pacote do app no `cargo metadata`.
+fn app_field(meta: &serde_json::Value, field: &str) -> Result<String, String> {
     meta.get("packages")
         .and_then(|p| p.as_array())
         .and_then(|packages| {
@@ -115,14 +125,20 @@ fn app_version(meta: &serde_json::Value) -> Result<String, String> {
                 .iter()
                 .find(|p| p.get("name").and_then(|n| n.as_str()) == Some(bundle::APP_NAME))
         })
-        .and_then(|p| p.get("version").and_then(|v| v.as_str()))
+        .and_then(|p| p.get(field).and_then(|v| v.as_str()))
         .map(str::to_owned)
-        .ok_or_else(|| format!("metadata sem a versão do pacote {}", bundle::APP_NAME))
+        .ok_or_else(|| format!("metadata sem `{field}` do pacote {}", bundle::APP_NAME))
 }
 
 fn run_bundle(args: &[OsString]) -> Result<(), String> {
     let meta = metadata()?;
-    bundle::run(args, &root()?, &target_dir(&meta)?, &app_version(&meta)?)
+    bundle::run(
+        args,
+        &root()?,
+        &target_dir(&meta)?,
+        &app_version(&meta)?,
+        &app_repository(&meta)?,
+    )
 }
 
 /// Os pacotes do workspace (o `cargo metadata --no-deps` só lista os membros).
@@ -230,9 +246,11 @@ mod tests {
     fn a_versao_do_app_vem_do_metadata() {
         let meta = serde_json::json!({"packages": [
             {"name": "xtask", "version": "0.1.0"},
-            {"name": "hy-dbplus", "version": "1.2.3"}
+            {"name": "hy-dbplus", "version": "1.2.3", "repository": "https://example.org/hy"}
         ]});
         assert_eq!(app_version(&meta).unwrap(), "1.2.3");
+        assert_eq!(app_repository(&meta).unwrap(), "https://example.org/hy");
+        assert!(app_repository(&serde_json::json!({"packages": [{"name": "hy-dbplus"}]})).is_err());
         assert!(app_version(&serde_json::json!({"packages": []})).is_err());
         let meta = serde_json::json!({"target_directory": "/x/target"});
         assert_eq!(target_dir(&meta).unwrap(), PathBuf::from("/x/target"));
