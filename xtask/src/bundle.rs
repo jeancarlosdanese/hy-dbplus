@@ -1,8 +1,12 @@
-//! `cargo xtask bundle` (FEAT-014): monta `target/bundle/hy-dbplus.app` a partir do build release,
+//! `cargo xtask bundle`: o pacote do sistema em que roda. No Linux e no Windows, o `.deb`, o `.tar.gz`
+//! e o `.zip` de [`crate::package`] (FEAT-016); no macOS, este módulo (FEAT-014), descrito abaixo.
+//!
+//! macOS: monta `target/bundle/hy-dbplus.app` a partir do build release,
 //! com o ícone (`packaging/icon.svg` → PNGs com alfa pelo AppKit via `packaging/render-icon.js` →
 //! `.icns`), o `Info.plist` e a assinatura, e gera o `.dmg` com o `.app` e o atalho para
 //! `/Applications`. Só ferramentas do macOS (`osascript`, `iconutil`, `codesign`, `hdiutil`,
-//! `xcrun`); fora dele o comando recusa com erro claro.
+//! `xcrun`); num sistema sem pacote (nem macOS, nem Linux, nem Windows) o comando recusa com erro
+//! claro.
 //!
 //! Assinatura: `HY_DBPLUS_SIGN_IDENTITY` (padrão `-`, ad hoc: o Gatekeeper pede botão direito →
 //! Abrir na primeira vez). Com uma identidade Developer ID, assina com hardened runtime e
@@ -10,7 +14,7 @@
 //! no Keychain), notariza e grampeia. Nenhuma das duas variáveis carrega segredo.
 //!
 //! As partes puras (`plist`, `iconset_entries`, `layout`, `parse_args`) são testadas sem as
-//! ferramentas; `run` as encadeia.
+//! ferramentas; `macos` as encadeia, e `run` escolhe pelo sistema.
 
 use std::ffi::OsString;
 use std::fs;
@@ -151,16 +155,33 @@ fn write(path: &Path, text: &str) -> Result<(), String> {
     fs::write(path, text).map_err(|e| format!("não consegui gravar {}: {e}", path.display()))
 }
 
-/// O comando inteiro: build → iconset → `.app` → assinatura → `.dmg` (→ notarização). `target_dir`
-/// vem do `cargo metadata` (respeita `CARGO_TARGET_DIR`).
+/// O pacote do sistema atual. `--universal` e `--no-dmg` são só do macOS. `target_dir` vem do
+/// `cargo metadata` (respeita `CARGO_TARGET_DIR`).
 pub fn run(args: &[OsString], root: &Path, target_dir: &Path, version: &str) -> Result<(), String> {
-    let options = parse_args(args)?;
-    if !cfg!(target_os = "macos") {
-        return Err(
-            "o bundle só é montado no macOS (precisa de osascript, iconutil, codesign e hdiutil)"
-                .into(),
-        );
+    match std::env::consts::OS {
+        "macos" => macos(args, root, target_dir, version),
+        os @ ("linux" | "windows") => {
+            if let Some(arg) = args.first() {
+                return Err(format!(
+                    "argumento `{}` não se aplica no {os} (--universal e --no-dmg são do macOS)",
+                    arg.to_string_lossy()
+                ));
+            }
+            if os == "linux" {
+                crate::package::linux(root, target_dir, version)
+            } else {
+                crate::package::windows(root, target_dir, version)
+            }
+        }
+        other => Err(format!(
+            "sem pacote para o sistema `{other}` (macOS, Linux e Windows)"
+        )),
     }
+}
+
+/// O `.app` e o `.dmg` (FEAT-014): build → iconset → `.app` → assinatura → `.dmg` (→ notarização).
+fn macos(args: &[OsString], root: &Path, target_dir: &Path, version: &str) -> Result<(), String> {
+    let options = parse_args(args)?;
     for tool in ["osascript", "iconutil", "codesign", "hdiutil", "xcrun"] {
         if !on_path(tool) {
             return Err(format!(
@@ -192,12 +213,13 @@ pub fn run(args: &[OsString], root: &Path, target_dir: &Path, version: &str) -> 
     sign(&app, &identity)?;
     println!("app: {}", app.display());
     if options.dmg {
+        // Sem --universal, a arquitetura da máquina (antes o nome dizia arm64 mesmo num Mac Intel).
         let arch = if options.universal {
             "universal"
         } else {
-            "arm64"
+            crate::package::arch_label(std::env::consts::ARCH)?
         };
-        let dmg = bundle_dir.join(format!("{APP_NAME}-{version}-{arch}.dmg"));
+        let dmg = bundle_dir.join(crate::package::artifact_name(version, "macos", arch, "dmg"));
         make_dmg(&bundle_dir, &app, &dmg)?;
         if !ad_hoc {
             sign(&dmg, &identity)?;
@@ -217,13 +239,13 @@ pub fn run(args: &[OsString], root: &Path, target_dir: &Path, version: &str) -> 
     Ok(())
 }
 
-fn on_path(tool: &str) -> bool {
+pub(crate) fn on_path(tool: &str) -> bool {
     std::env::var_os("PATH")
         .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(tool).is_file()))
 }
 
 /// Roda um comando demorado com a saída no terminal (o build e a notarização levam minutos).
-fn sh_live(what: &str, cmd: &mut Command) -> Result<(), String> {
+pub(crate) fn sh_live(what: &str, cmd: &mut Command) -> Result<(), String> {
     let status = cmd
         .status()
         .map_err(|e| format!("{what}: não consegui rodar: {e}"))?;
@@ -235,7 +257,7 @@ fn sh_live(what: &str, cmd: &mut Command) -> Result<(), String> {
 }
 
 /// Roda um comando e falha com a saída de erro dele.
-fn sh(what: &str, cmd: &mut Command) -> Result<(), String> {
+pub(crate) fn sh(what: &str, cmd: &mut Command) -> Result<(), String> {
     let out = cmd
         .output()
         .map_err(|e| format!("{what}: não consegui rodar: {e}"))?;
@@ -250,7 +272,7 @@ fn sh(what: &str, cmd: &mut Command) -> Result<(), String> {
     ))
 }
 
-fn cargo() -> Command {
+pub(crate) fn cargo() -> Command {
     Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
 }
 

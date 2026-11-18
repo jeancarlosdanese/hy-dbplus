@@ -1,5 +1,6 @@
 //! Tarefas de build e verificação do hy-dbplus, via `cargo xtask <comando>` (alias em
-//! `.cargo/config.toml`): `layers` (M0), `bundle` (FEAT-014, o `.app` e o `.dmg` do macOS) e
+//! `.cargo/config.toml`): `layers` (M0), `bundle` (FEAT-014 e FEAT-016, o pacote do sistema: `.dmg`,
+//! `.deb` e `.tar.gz`, `.zip`) e
 //! `version` (FEAT-016, sobe a versão do produto; o `bump` da entrega).
 
 use std::ffi::OsString;
@@ -8,6 +9,7 @@ use std::process::{Command, ExitCode};
 
 mod bundle;
 mod layers;
+mod package;
 mod version;
 
 type Task = fn(&[OsString]) -> Result<(), String>;
@@ -21,7 +23,7 @@ const COMMANDS: &[(&str, &str, Task)] = &[
     ),
     (
         "bundle",
-        "Monta target/bundle/hy-dbplus.app e o .dmg (macOS; --universal, --no-dmg)",
+        "Pacote do sistema em target/bundle/: .dmg (macOS; --universal, --no-dmg), .deb e .tar.gz (Linux), .zip (Windows)",
         run_bundle,
     ),
     (
