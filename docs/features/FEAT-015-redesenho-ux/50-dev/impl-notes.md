@@ -3,8 +3,8 @@
 # Notas de implementação: FEAT-015
 
 > Protótipo aprovado pelo Jean em 17/11/2026 ("pode seguir"), como desenhado: ambiente em etiqueta e faixa fina.
-> Aceite e plano aprovados no mesmo dia ("pode seguir"). Fases A (e461e98), B (1406e00) e C (43b7515)
-> commitadas. Fase D implementada em 18/11/2026, sem commit.
+> Aceite e plano aprovados no mesmo dia ("pode seguir"). Fases A (e461e98), B (1406e00), C (43b7515) e D
+> (6c01cc4) e E (e11c7f3) commitadas.
 
 ## Decisões de implementação
 
@@ -156,7 +156,29 @@ Objetivo: aba Dados, edição, painel de registro, gravação, Estrutura, Índic
 
 Objetivo: barra do editor, autocomplete, resultados, erro e ROLLBACK (telas 13 a 15).
 
-- [ ] E.0 Detalhar os passos da fase.
+- [x] E.0 Detalhar os passos da fase (18/11/2026).
+- [x] E.1 Barra do editor (tela 13): Executar (principal, ⌘↩), Executar tudo (⌘⇧↩), Cancelar (só ligado durante a
+      execução) e Formatar (⌘I), com o atalho no botão; durante a execução, spinner e "Executando · 3,4 s"; à
+      direita a etiqueta âmbar "Transação aberta" com a dica e "Limite" com "500 linhas" ou "Sem limite".
+- [x] E.2 Editor: cores de sintaxe do tema (`Colors::of`), números de linha no fundo do painel com borda, fundo de
+      campo, statement sob o cursor com fundo e traço de destaque à esquerda; rodapé com "Linha 6, coluna 43" e
+      "Salva sozinha ao sair do editor" (o app já salva a consulta quando o editor perde o foco).
+- [x] E.3 Autocomplete (tela 14): ícone por tipo, nome em fonte fixa, tipo e detalhe à direita traduzidos, item
+      escolhido em destaque suave e rodapé com as teclas (↑↓ navegar, ↩ ou tab aceitar, esc fechar); "carregando
+      colunas…" no catálogo.
+- [x] E.4 Resultados: sub-abas "Resultado N" com ícone de ok ou de erro; à direita "5 linhas · 12 ms", "truncado
+      em 500" ou "falhou em 3 ms"; "OK, 3 linhas afetadas" traduzido; sem resultado, estado vazio com os atalhos
+      da plataforma; executando, "Executando a consulta 2 de 3" (o `total` do `SqlStarted`, hoje ignorado).
+- [x] E.5 Erro e transação (tela 15): erro em faixa vermelha com o comando em bloco de SQL; transação abortada
+      ganha a faixa âmbar "A transação foi abortada. Execute ROLLBACK antes de continuar." com "Executar
+      ROLLBACK", que roda `ROLLBACK` no banco (AC-012); transação aberta é só aviso âmbar, nunca vermelho.
+- [x] E.6 Avisos do editor no catálogo: o `notice` da aba de SQL deixa de ser texto em português e vira um tipo
+      traduzido pelo idioma ativo (cancelada, outra execução em curso, nada para executar, statement incompleto,
+      gravação em curso, COMMIT que virou ROLLBACK, falha ao salvar, erro do SQL gerado); aparece em faixa de aviso
+      sob a barra, com fechar.
+- [x] E.7 Testes e revisão: rótulos novos na suíte; testes novos para o ROLLBACK (só com a transação abortada, e
+      roda `ROLLBACK`), a etiqueta âmbar da transação aberta, a barra durante a execução, o editor em inglês e o
+      rodapé do autocomplete; portão `--full`; revisor.
 
 ### Fase F: fechamento
 
@@ -209,8 +231,21 @@ e a linha "Padrão visual e protótipos" do `CLAUDE.md` atualizados.
 - **D.7, Copiar no DDL:** é a ação principal e não fecha o diálogo; Fechar e Esc fecham.
 - **Aviso de página descartada** (`DROPPED_HINT`, `app.rs`): ainda em português; vem de dentro do estado, sem o
   idioma, e entra na varredura de textos da fase F.
-- **Editor SQL:** o realce do editor ainda usa as cores antigas; as cores de sintaxe do tema já valem para a
-  gravação e o DDL, e o editor muda na fase E.
+- **Editor SQL:** o realce do editor usava as cores antigas até a fase E; agora usa as cores de sintaxe do tema,
+  como a gravação e o DDL.
+- **E.5, faixa do ROLLBACK:** como no protótipo, fica sob o erro quando a sub-aba que falhou está ativa; com outra
+  sub-aba ativa, sobe para o alto do painel, para não sumir enquanto a transação estiver abortada. A etiqueta
+  "Transação aberta" continua na barra com a transação abortada (ela segue aberta no servidor), como na tela 15.
+- **E.3, detalhe da sugestão:** o motor de autocomplete (`crates/sql`) devolvia o detalhe pronto em português
+  ("tabela · public", "integer · chave"). Agora devolve só dados (tipo, schema, assinatura) e marca a chave e o
+  tipo de tabela; a UI monta o texto no idioma, sem repetir o tipo.
+- **E.6, título da aba SQL:** "SQL Query N" era um campo gravado em português e inglês misturados; virou
+  "Consulta N" e "Query N", calculado na hora pelo idioma (`QueryTab::title`). Entrou nesta fase porque é o texto
+  do editor que aparece na aba e nas confirmações.
+- **E.6, avisos:** os avisos viram faixa âmbar sob a barra (falha ao salvar e erro do SQL gerado em vermelho), com
+  Fechar. O texto do "gravação em curso" deixou de dizer "Commit" em português.
+- **E.4, coluna "#":** a largura passou a ser uma só (`grid::NUMBER_WIDTH`, 48) no grid de dados e no de
+  resultados; o brief apontava 48 num e 44 no outro.
 - **B.4, texto do remover:** o protótipo diz que as consultas salvas da conexão ficam no disco, mas desde a FEAT-011
   remover a conexão apaga também as consultas dela. O texto do diálogo segue o comportamento: "A senha guardada no
   Keychain e as consultas salvas desta conexão também são apagadas."
@@ -249,6 +284,8 @@ e a linha "Padrão visual e protótipos" do `CLAUDE.md` atualizados.
 | C, 2ª | delta das correções | nenhum | fase liberada |
 | D, 1ª | `git diff HEAD` (fase D) | 2 médios (⌘↩ gravava com a paleta ou a confirmação de fechar por cima; ⌘R com célula aberta recarregava e perdia o digitado); 5 baixos (recarregar não pedia os tamanhos; array de `numeric` alinhado como número; `ConstraintKind::label` sem chamador; `lock_detail` sem uso; montagem das partes repetida em três funções) | todos corrigidos. Ao testar o primeiro, apareceu outro: com a paleta sobre a gravação, um Esc fechava as duas. ⌘K, ⌘T e ⌘W agora não agem com a gravação ou o DDL abertos. Testes provados contra o código sem cada conserto |
 | D, 2ª | delta das correções | 2 baixos (a guarda dos atalhos olhava o banco ativo mesmo com outra conexão em foco e travava ⌘K, ⌘T e ⌘W sem diálogo na tela; comentário de `retry_data` fora do lugar) | ambos corrigidos, o primeiro com teste provado contra o código sem o filtro; sem nova passada, como a skill manda para baixo do delta |
+| E, 1ª | `git diff HEAD` (fase E) | 2 médios (detalhe do autocomplete em português no app em inglês e com o tipo repetido; o aviso de statement incompleto era apagado pelo `SqlStarted` e nunca aparecia, defeito anterior à fase); 5 baixos (traço do statement com a faixa do texto antigo ao digitar; `theme::error_color` sem uso; nomes antigos em comentários; margens e medidas soltas; Status da FEAT desatualizado e faixa do ROLLBACK acima do erro) | todos corrigidos; testes do detalhe traduzido e do aviso de incompleto, este provado contra o código sem o conserto |
+| E, 2ª | delta das correções | 1 baixo (a escolha do ícone por tipo de tabela ficou copiada na árvore e no autocomplete) | corrigido: `fonts::icon::table_kind` usado pelos dois; sem nova passada, como a skill manda para baixo do delta |
 
 ## Testes
 
@@ -313,6 +350,18 @@ Fase D (18/11/2026), por teste:
 - Portão completo verde.
 - Portão completo verde e `cargo deny check advisories` ok.
 
+Fase E (18/11/2026), por teste:
+- Os testes antigos do editor, do autocomplete, do SQL gerado e das consultas salvas passaram para os rótulos e para
+  o aviso tipado, e seguem verdes.
+- A faixa do ROLLBACK só aparece com a transação abortada, e o botão roda `ROLLBACK` e fecha a transação (AC-012;
+  falha sem a condição e sem a chamada).
+- Durante a execução só Cancelar fica ligado; tempo e "Executando a consulta 1 de 1" aparecem; o aviso de cancelada
+  fecha pelo Fechar da faixa.
+- Editor em inglês: barra, rodapé, estado vazio, resultados, linhas afetadas, "failed in" e o aviso, que troca de
+  idioma com ele na tela.
+- Rodapé do autocomplete com as teclas; detalhe da sugestão no idioma, sem repetir o tipo.
+- O aviso de statement incompleto aparece depois de rodar e some na execução seguinte (falha sem o conserto).
+
 **Não conferido:**
 - Nitidez da Inter em 12 e 13 px e o visual geral no app: a captura de tela não tem permissão nesta sessão. Fica
   para a conferência do Jean.
@@ -322,6 +371,8 @@ Fase D (18/11/2026), por teste:
   "Testar conexão" contra um servidor real. Conferência do Jean.
 - Fase C no app: visual das telas 5, 6 e 16 nos dois temas e idiomas; a faixa de ambiente com cada tag.
 - Fase D no app: visual das telas 7 a 12 nos dois temas e idiomas; ⌘↩ gravando contra o banco local.
+- Fase E no app: visual das telas 13 a 15 nos dois temas e idiomas (cor âmbar da etiqueta, traço do statement
+  atual, popup); ROLLBACK contra o banco local.
 
 ## Segurança (fechamento)
 
