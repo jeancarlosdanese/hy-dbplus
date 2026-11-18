@@ -49,18 +49,24 @@ where
     let mut focus: Option<usize> = None;
     let mut close: Option<usize> = None;
     let mut new_query = false;
-    if ui.input_mut(|i| i.consume_shortcut(&new_query_shortcut())) {
+    let dialog_open = app.table_dialog_open();
+    if !dialog_open
+        && app.confirm_close.is_none()
+        && app.palette.is_none()
+        && ui.input_mut(|i| i.consume_shortcut(&new_query_shortcut()))
+    {
         new_query = true;
     }
     // ⌘W vale sem campo em foco ou com o foco no editor de SQL da aba ativa (o que se perderia
     // passa pela confirmação, ver `Tab::would_lose_work`); noutro campo (busca da árvore, Form) é
-    // dele. Não com a paleta aberta nem com algo rodando.
+    // dele. Não com a paleta, a gravação ou o DDL abertos nem com algo rodando.
     let active_running = active.and_then(|i| labels.get(i)).is_some_and(|l| l.2);
     let editor_id = ws.query().map(|q| crate::editor::editor_id(key, q.id));
     let focused = ui.ctx().memory(|m| m.focused());
     let focus_ok = focused.is_none() || (focused.is_some() && focused == editor_id);
     if app.confirm_close.is_none()
         && app.palette.is_none()
+        && !dialog_open
         && focus_ok
         && !active_running
         && ui.input_mut(|i| i.consume_shortcut(&close_tab_shortcut()))

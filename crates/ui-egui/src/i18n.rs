@@ -119,6 +119,69 @@ texts! {
     review_and_commit => "Revisar e gravar", "Review and commit";
     discard_and_close => "Descartar e fechar", "Discard and close";
     discard_and_disconnect => "Descartar e desconectar", "Discard and disconnect";
+    // Aba de tabela (FEAT-015 fase D).
+    view_data => "Dados", "Data";
+    view_structure => "Estrutura", "Structure";
+    view_indexes => "Índices", "Indexes";
+    reload => "Recarregar", "Reload";
+    view_ddl => "Ver DDL", "View DDL";
+    read_only_tag => "só leitura: sem chave primária", "read-only: no primary key";
+    lock_hint => "Grave ou descarte as alterações antes", "Commit or discard the changes first";
+    lock_detail => "Ordenar, paginar, recarregar e trocar de tabela esperam a gravação ou o descarte",
+        "Sorting, paging, reloading and switching tables wait for the commit or the discard";
+    double_click_hint => "Duplo clique edita a célula", "Double-click to edit a cell";
+    discard => "Descartar", "Discard";
+    delete_rows => "Apagar linhas", "Delete rows";
+    delete_rows_hint => "Marca as linhas selecionadas para apagar; de novo desmarca",
+        "Marks the selected rows for deletion; again to unmark";
+    rows_per_page => "Linhas por página", "Rows per page";
+    previous_page => "Página anterior", "Previous page";
+    next_page => "Próxima página", "Next page";
+    // Painel de registro.
+    no_row_selected => "Nenhuma linha selecionada", "No row selected";
+    fields => "Campos", "Fields";
+    marked_for_deletion => "marcada para apagar", "marked for deletion";
+    changed => "alterado", "changed";
+    multiple_values => "Múltiplos valores", "Multiple values";
+    set_null => "Definir NULL", "Set NULL";
+    set_null_hint => "Põe NULL nas linhas selecionadas", "Sets NULL on the selected rows";
+    revert_field => "Reverter campo", "Revert field";
+    show_all => "mostrar tudo", "show all";
+    show_less => "mostrar menos", "show less";
+    copy => "Copiar", "Copy";
+    // Gravação.
+    commit_subtitle => "Roda numa transação: ou grava tudo, ou não grava nada.",
+        "Runs in one transaction: everything is written, or nothing is.";
+    copy_sql => "Copiar SQL", "Copy SQL";
+    commit_to_database => "Gravar no banco", "Commit to database";
+    committing => "Gravando…", "Committing…";
+    // Estrutura e Índices.
+    columns_title => "Colunas", "Columns";
+    constraints_title => "Restrições", "Constraints";
+    definition => "Definição", "Definition";
+    no_constraints => "Nenhuma restrição.", "No constraints.";
+    column => "Coluna", "Column";
+    data_type => "Tipo", "Type";
+    nullable => "Aceita nulo", "Nullable";
+    default_value => "Padrão", "Default";
+    comment => "Comentário", "Comment";
+    name => "Nome", "Name";
+    yes => "sim", "yes";
+    no => "não", "no";
+    primary_key => "Chave primária", "Primary key";
+    foreign_key => "Chave estrangeira", "Foreign key";
+    unique_constraint => "Única", "Unique";
+    check_constraint => "Check", "Check";
+    exclusion_constraint => "Exclusão", "Exclusion";
+    loading_structure => "Carregando estrutura…", "Loading structure…";
+    loading_indexes => "Carregando índices…", "Loading indexes…";
+    no_indexes => "Nenhum índice.", "No indexes.";
+    method => "Método", "Method";
+    unique => "Único", "Unique";
+    condition => "Condição", "Condition";
+    include => "Include", "Include";
+    parameters => "Parâmetros", "Parameters";
+    ddl_subtitle => "Montado a partir do catálogo. Só leitura.", "Built from the catalog. Read-only.";
     // Seletor de idioma.
     /// A dica do seletor PT | EN.
     language_hint => "Idioma da interface", "Interface language";
@@ -196,13 +259,7 @@ impl Tr {
 
     /// "Há 2 alterações e 1 exclusão que ainda não foram gravadas. Se fechar, elas se perdem."
     pub fn pending_body(self, updates: u64, deletes: u64) -> String {
-        let mut parts = Vec::new();
-        if updates > 0 {
-            parts.push(self.changes(updates));
-        }
-        if deletes > 0 {
-            parts.push(self.deletions(deletes));
-        }
+        let parts = self.change_parts(updates, deletes);
         let many = updates + deletes > 1;
         match self.0 {
             Language::PtBr => {
@@ -229,6 +286,100 @@ impl Tr {
         match self.0 {
             Language::PtBr => "Uma célula está em edição. Se fechar, o valor digitado se perde.",
             Language::En => "A cell is being edited. Closing discards the typed value.",
+        }
+    }
+
+    /// ["2 alterações", "1 exclusão"]: só as partes que não são zero.
+    fn change_parts(self, updates: u64, deletes: u64) -> Vec<String> {
+        let mut parts = Vec::new();
+        if updates > 0 {
+            parts.push(self.changes(updates));
+        }
+        if deletes > 0 {
+            parts.push(self.deletions(deletes));
+        }
+        parts
+    }
+
+    /// "1.284 linhas · 312 kB".
+    pub fn table_summary(self, rows: u64, size: &str) -> String {
+        format!("{} · {size}", self.rows(rows))
+    }
+
+    /// O contador do rodapé: "1–100 de 1.284"; sem o total ainda, "…" no lugar dele.
+    pub fn page_range(self, first: u64, last: u64, total: Option<u64>) -> String {
+        let total = total.map_or_else(|| "…".to_owned(), |t| self.number(t));
+        let of = match self.0 {
+            Language::PtBr => "de",
+            Language::En => "of",
+        };
+        if last == 0 {
+            format!("0 {of} {total}")
+        } else {
+            format!("{}–{} {of} {total}", self.number(first), self.number(last))
+        }
+    }
+
+    /// "2 selecionadas de 100 linhas".
+    pub fn selected_rows(self, selected: u64, shown: u64) -> String {
+        match self.0 {
+            Language::PtBr => format!(
+                "{} selecionada{} de {}",
+                self.number(selected),
+                if selected == 1 { "" } else { "s" },
+                self.rows(shown)
+            ),
+            Language::En => format!("{} selected of {}", self.number(selected), self.rows(shown)),
+        }
+    }
+
+    /// O chip das pendências: "2 alterações, 1 exclusão".
+    pub fn pending_chip(self, updates: u64, deletes: u64) -> String {
+        let parts = self.change_parts(updates, deletes);
+        parts.join(", ")
+    }
+
+    /// "Linha 3".
+    pub fn row_title(self, n: u64) -> String {
+        match self.0 {
+            Language::PtBr => format!("Linha {}", self.number(n)),
+            Language::En => format!("Row {}", self.number(n)),
+        }
+    }
+
+    /// "Gravar 2 alterações e 1 exclusão em pedidos".
+    pub fn commit_title(self, updates: u64, deletes: u64, table: &str) -> String {
+        let parts = self.change_parts(updates, deletes);
+        match self.0 {
+            Language::PtBr => format!("Gravar {} em {table}", parts.join(" e ")),
+            Language::En => format!("Commit {} to {table}", parts.join(" and ")),
+        }
+    }
+
+    /// "6 colunas · 3 restrições".
+    pub fn structure_summary(self, columns: u64, constraints: u64) -> String {
+        format!(
+            "{} · {}",
+            self.count(columns, ("coluna", "colunas"), ("column", "columns")),
+            self.count(
+                constraints,
+                ("restrição", "restrições"),
+                ("constraint", "constraints")
+            )
+        )
+    }
+
+    pub fn indexes_count(self, n: u64) -> String {
+        self.count(n, ("índice", "índices"), ("index", "indexes"))
+    }
+
+    /// "Nenhuma linha selecionada. ⌘-clique numa linha do resultado."
+    pub fn no_row_selected_sql(self, command: &str) -> String {
+        match self.0 {
+            Language::PtBr => {
+                format!("Nenhuma linha selecionada. {command}-clique numa linha do resultado.")
+            }
+            Language::En => format!("No row selected. {command}-click a row in the result."),
         }
     }
 
@@ -303,6 +454,15 @@ pub fn shortcut_label(ctx: &egui::Context, sc: &KeyboardShortcut) -> String {
     shortcut(sc, ctx.os() == egui::os::OperatingSystem::Mac)
 }
 
+/// A tecla de comando para texto: "⌘" no macOS e "Ctrl" fora dele.
+pub fn command_label(ctx: &egui::Context) -> &'static str {
+    if ctx.os() == egui::os::OperatingSystem::Mac {
+        "⌘"
+    } else {
+        "Ctrl"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -328,6 +488,28 @@ mod tests {
         assert_eq!(EN.rows(1_234_567), "1,234,567 rows");
         assert_eq!(PT.changes(3), "3 alterações");
         assert_eq!(PT.deletions(2), "2 exclusões");
+        assert_eq!(PT.pending_chip(2, 1), "2 alterações, 1 exclusão");
+        assert_eq!(EN.pending_chip(0, 3), "3 deletions");
+        assert_eq!(
+            PT.commit_title(2, 1, "pedidos"),
+            "Gravar 2 alterações e 1 exclusão em pedidos"
+        );
+        assert_eq!(
+            PT.commit_title(1, 0, "pedidos"),
+            "Gravar 1 alteração em pedidos"
+        );
+        assert_eq!(
+            EN.commit_title(1, 2, "pedidos"),
+            "Commit 1 change and 2 deletions to pedidos"
+        );
+        assert_eq!(EN.commit_title(2, 0, "t"), "Commit 2 changes to t");
+        assert_eq!(PT.page_range(1, 100, Some(1284)), "1–100 de 1.284");
+        assert_eq!(EN.page_range(1, 100, None), "1–100 of …");
+        assert_eq!(PT.page_range(0, 0, Some(0)), "0 de 0");
+        assert_eq!(PT.selected_rows(1, 3), "1 selecionada de 3 linhas");
+        assert_eq!(PT.selected_rows(2, 3), "2 selecionadas de 3 linhas");
+        assert_eq!(PT.structure_summary(6, 1), "6 colunas · 1 restrição");
+        assert_eq!(EN.indexes_count(1), "1 index");
         assert_eq!(EN.deletions(1), "1 deletion");
         assert_eq!(
             PT.pending_body(2, 1),

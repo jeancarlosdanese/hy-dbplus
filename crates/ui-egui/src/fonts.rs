@@ -51,6 +51,7 @@ pub mod icon {
     pub const PREVIOUS: &str = r::CARET_LEFT;
     pub const NEXT: &str = r::CARET_RIGHT;
     pub const UP: &str = r::CARET_UP;
+    pub const DOWN: &str = r::CARET_DOWN;
     pub const RUN: &str = r::PLAY;
     pub const RUN_ALL: &str = r::FAST_FORWARD;
     pub const STOP: &str = r::STOP;

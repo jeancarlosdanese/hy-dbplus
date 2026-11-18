@@ -631,7 +631,9 @@ where
                 label: tr.save(),
                 kind: ButtonKind::Primary,
                 enabled: true,
+                shortcut: None,
             }),
+            busy: false,
         },
         |ui| {
             let error = form.error;
@@ -962,7 +964,9 @@ where
                 label: tr.remove_connection(),
                 kind: ButtonKind::Danger,
                 enabled: true,
+                shortcut: None,
             }),
+            busy: false,
         },
         |ui| {
             ui.add(

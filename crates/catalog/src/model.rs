@@ -58,18 +58,6 @@ pub enum ConstraintKind {
     Exclusion,
 }
 
-impl ConstraintKind {
-    pub fn label(self) -> &'static str {
-        match self {
-            ConstraintKind::PrimaryKey => "primary key",
-            ConstraintKind::Unique => "unique",
-            ConstraintKind::Check => "check",
-            ConstraintKind::ForeignKey => "foreign key",
-            ConstraintKind::Exclusion => "exclusion",
-        }
-    }
-}
-
 /// Para onde uma chave estrangeira aponta e o que faz em UPDATE e DELETE (`no action`,
 /// `restrict`, `cascade`, `set null`, `set default`).
 #[derive(Debug, Clone, PartialEq, Eq)]

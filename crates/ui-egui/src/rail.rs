@@ -188,7 +188,9 @@ where
                 label: discard,
                 kind: widgets::ButtonKind::Danger,
                 enabled: true,
+                shortcut: None,
             }),
+            busy: false,
         },
         |ui| {
             ui.add(egui::Label::new(egui::RichText::new(&body).color(tokens.text_muted)).wrap());

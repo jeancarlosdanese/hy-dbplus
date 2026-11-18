@@ -1,5 +1,5 @@
-//! O painel de registro (lado direito da aba Data): as linhas selecionadas em **Form** (nome, tipo e
-//! valor por campo; "Múltiplos valores" onde a seleção difere) ou em **JSON** (tipos pelo catálogo,
+//! O painel de registro (lado direito da aba Dados, tela 8): as linhas selecionadas em **Campos**
+//! (nome, tipo e valor por campo; "Múltiplos valores" onde a seleção difere) ou em **JSON** (tipos pelo catálogo,
 //! montado pelo engine). Com chave primária (FEAT-007) cada campo do Form é editável, com **NULL** e
 //! **Reverter**; o valor digitado vale para todas as linhas selecionadas. Os valores mostrados são os
 //! pendentes, quando há.
@@ -7,7 +7,8 @@
 use hy_dbplus_engine::{Column, Driver, record};
 
 use crate::app::{App, DbKey, PanelMode, TabView};
-use crate::theme;
+use crate::fonts::icon;
+use crate::{i18n, theme, widgets};
 
 /// Valor maior que isto aparece truncado no Form (só leitura) até "mostrar tudo".
 const PREVIEW_CHARS: usize = 300;
@@ -18,6 +19,7 @@ where
     D::Conn: 'static,
 {
     let tokens = theme::current(ui.ctx());
+    let tr = app.tr();
     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
     let editable = app.editable(key);
     let Some(ws) = app.workspaces.get(key) else {
@@ -38,19 +40,20 @@ where
             });
         match selected {
             None => {
+                let hint = tr.no_row_selected_sql(i18n::command_label(ui.ctx()));
                 ui.centered_and_justified(|ui| {
-                    ui.label(
-                        egui::RichText::new("Nenhuma linha selecionada (⌘-clique no resultado)")
-                            .color(tokens.text_muted),
-                    );
+                    ui.label(egui::RichText::new(hint).color(tokens.text_muted));
                 });
             }
             Some((columns, row)) => {
                 let types: Vec<Option<String>> = vec![None; columns.len()];
                 let json = record::to_json(&columns, &types, &[row.as_slice()]);
-                if ui.button("Copiar").clicked() {
+                if widgets::button(ui, widgets::ButtonKind::Normal, Some(icon::COPY), tr.copy())
+                    .clicked()
+                {
                     ui.ctx().copy_text(json.clone());
                 }
+                ui.add_space(theme::space::S);
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.add(egui::Label::new(egui::RichText::new(json).monospace()).wrap());
                 });
@@ -62,12 +65,12 @@ where
     // Em Structure e Index o grid não está na tela: nada de Form editável sobre uma linha invisível.
     if tab.view != TabView::Data {
         ui.centered_and_justified(|ui| {
-            ui.label(egui::RichText::new("Nenhuma linha selecionada").color(tokens.text_muted));
+            ui.label(egui::RichText::new(tr.no_row_selected()).color(tokens.text_muted));
         });
         return;
     }
     let Some(rows) = tab.rows.as_ref() else {
-        ui.label(egui::RichText::new("Carregando…").color(tokens.text_muted));
+        widgets::loading(ui, tr.loading());
         return;
     };
     let indexes: Vec<usize> = tab
@@ -78,7 +81,7 @@ where
         .collect();
     if indexes.is_empty() {
         ui.centered_and_justified(|ui| {
-            ui.label(egui::RichText::new("Nenhuma linha selecionada").color(tokens.text_muted));
+            ui.label(egui::RichText::new(tr.no_row_selected()).color(tokens.text_muted));
         });
         return;
     }
@@ -109,54 +112,65 @@ where
     };
     let columns: Vec<Option<&Column>> = ws.catalog_columns(&tab.schema, &tab.table, &rows.columns);
     let title = match indexes.len() {
-        1 => format!(
-            "Linha {}",
-            tab.page.offset + indexes.first().copied().unwrap_or(0) as u64 + 1
-        ),
-        n => format!("{n} linhas"),
+        1 => tr.row_title(tab.page.offset + indexes.first().copied().unwrap_or(0) as u64 + 1),
+        n => tr.rows(n as u64),
     };
     let mut mode = app.panel_mode;
     let mut toggled_field: Option<String> = None;
     let mut field_edits: Vec<(String, Option<String>)> = Vec::new();
     let mut reverts: Vec<String> = Vec::new();
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(title).strong());
+        ui.label(
+            egui::RichText::new(title)
+                .family(crate::fonts::strong(ui.ctx()))
+                .color(tokens.text),
+        );
         if all_deleted {
             ui.label(
-                egui::RichText::new("marcada para apagar")
-                    .small()
-                    .color(theme::error_color(ui.ctx())),
+                egui::RichText::new(tr.marked_for_deletion())
+                    .size(theme::text_size::SMALL)
+                    .color(tokens.danger),
             );
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.selectable_value(&mut mode, PanelMode::Json, "JSON");
-            ui.selectable_value(&mut mode, PanelMode::Form, "Form");
+            widgets::segmented(
+                ui,
+                &mut mode,
+                &[(PanelMode::Form, tr.fields()), (PanelMode::Json, "JSON")],
+            );
         });
     });
-    ui.separator();
+    ui.add_space(theme::space::S);
     match mode {
         PanelMode::Form => {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for (i, name) in rows.columns.iter().enumerate() {
                     let pending_any = indexes.iter().any(|row| tab.is_pending(*row, name));
+                    let column = columns.get(i).copied().flatten();
+                    let primary = column.is_some_and(|c| c.is_primary_key);
                     ui.horizontal(|ui| {
+                        let shown = if primary {
+                            format!("{} {name}", icon::KEY)
+                        } else {
+                            name.clone()
+                        };
                         ui.label(
-                            egui::RichText::new(name)
-                                .small()
-                                .strong()
+                            egui::RichText::new(shown)
+                                .size(theme::text_size::SMALL)
+                                .family(crate::fonts::strong(ui.ctx()))
                                 .color(tokens.text_muted),
                         );
                         if pending_any {
-                            ui.label(egui::RichText::new("alterado").small().color(tokens.accent));
+                            widgets::pending_chip(ui, tr.changed());
                         }
-                        if let Some(column) = columns.get(i).copied().flatten() {
+                        if let Some(column) = column {
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
                                     ui.label(
                                         egui::RichText::new(&column.data_type)
-                                            .small()
-                                            .color(tokens.text_muted),
+                                            .size(theme::text_size::SMALL)
+                                            .color(tokens.text_faint),
                                     );
                                 },
                             );
@@ -176,7 +190,7 @@ where
                             String::new()
                         };
                         let hint = if !same {
-                            "Múltiplos valores"
+                            tr.multiple_values()
                         } else if first.is_none() {
                             "NULL"
                         } else {
@@ -188,29 +202,50 @@ where
                                 .font(egui::TextStyle::Monospace)
                                 .desired_rows(1)
                                 .desired_width(f32::INFINITY)
+                                .background_color(if pending_any {
+                                    tokens.pending
+                                } else {
+                                    tokens.field
+                                })
+                                .text_color(if pending_any {
+                                    tokens.pending_ink
+                                } else {
+                                    tokens.text
+                                })
                                 .hint_text(hint),
                         );
                         if field.changed() {
                             field_edits.push((name.clone(), Some(text)));
                         }
                         ui.horizontal(|ui| {
-                            if ui
-                                .add_enabled(
-                                    !same || first.is_some(),
-                                    egui::Button::new("NULL").small(),
-                                )
-                                .on_hover_text("Põe NULL nas linhas selecionadas")
-                                .clicked()
+                            if widgets::button_enabled(
+                                ui,
+                                !same || first.is_some(),
+                                widgets::ButtonKind::Ghost,
+                                None,
+                                tr.set_null(),
+                                "",
+                            )
+                            .on_hover_text(tr.set_null_hint())
+                            .clicked()
                             {
                                 field_edits.push((name.clone(), None));
                             }
-                            if pending_any && ui.small_button("Reverter").clicked() {
+                            if pending_any
+                                && widgets::button(
+                                    ui,
+                                    widgets::ButtonKind::Ghost,
+                                    Some(icon::UNDO),
+                                    tr.revert_field(),
+                                )
+                                .clicked()
+                            {
                                 reverts.push(name.clone());
                             }
                         });
                     } else if !same {
                         ui.label(
-                            egui::RichText::new("Múltiplos valores")
+                            egui::RichText::new(tr.multiple_values())
                                 .italics()
                                 .color(tokens.text_muted),
                         );
@@ -220,7 +255,7 @@ where
                                 ui.label(
                                     egui::RichText::new("NULL")
                                         .italics()
-                                        .color(tokens.text_muted),
+                                        .color(tokens.text_faint),
                                 );
                             }
                             Some(value) => {
@@ -235,9 +270,9 @@ where
                                 if long
                                     && ui
                                         .small_button(if expanded {
-                                            "mostrar menos"
+                                            tr.show_less()
                                         } else {
-                                            "mostrar tudo"
+                                            tr.show_all()
                                         })
                                         .clicked()
                                 {
@@ -246,7 +281,7 @@ where
                             }
                         }
                     }
-                    ui.add_space(6.0);
+                    ui.add_space(theme::space::M);
                 }
             });
         }
@@ -257,9 +292,12 @@ where
                 .collect();
             let slices: Vec<&[Option<String>]> = all_values.iter().map(Vec::as_slice).collect();
             let json = record::to_json(&rows.columns, &types, &slices);
-            if ui.button("Copiar").clicked() {
+            if widgets::button(ui, widgets::ButtonKind::Normal, Some(icon::COPY), tr.copy())
+                .clicked()
+            {
                 ui.ctx().copy_text(json.clone());
             }
+            ui.add_space(theme::space::S);
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.add(egui::Label::new(egui::RichText::new(json).monospace()).wrap());
             });

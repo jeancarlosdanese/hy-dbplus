@@ -30,7 +30,10 @@ where
         app.view = View::Connections;
         return;
     };
-    if ui.input_mut(|input| input.consume_shortcut(&palette::shortcut())) {
+    if !app.table_dialog_open()
+        && app.confirm_close.is_none()
+        && ui.input_mut(|input| input.consume_shortcut(&palette::shortcut()))
+    {
         palette::toggle(app);
     }
     let active = app.active.clone().filter(|k| k.0 == id);

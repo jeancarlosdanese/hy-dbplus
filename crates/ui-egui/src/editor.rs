@@ -507,6 +507,18 @@ fn cursor_chars_of(buffer: &str, at: usize) -> usize {
     buffer.get(..at).map_or(0, |s| s.chars().count())
 }
 
+/// SQL só leitura com as cores do tema (gravação, DDL): o mesmo realce do editor, sem cursor.
+pub(crate) fn highlighted(
+    text: &str,
+    font: &egui::FontId,
+    tokens: &theme::Tokens,
+) -> egui::text::LayoutJob {
+    let colors = Colors::of(tokens);
+    let mut job = layout(&Analysis::new(text), font, &colors, None);
+    job.wrap.max_width = f32::INFINITY;
+    job
+}
+
 struct Colors {
     keyword: egui::Color32,
     string: egui::Color32,
@@ -514,6 +526,19 @@ struct Colors {
     comment: egui::Color32,
     text: egui::Color32,
     current: egui::Color32,
+}
+
+impl Colors {
+    fn of(tokens: &theme::Tokens) -> Self {
+        Self {
+            keyword: tokens.syntax_keyword,
+            string: tokens.syntax_string,
+            number: tokens.syntax_number,
+            comment: tokens.syntax_comment,
+            text: tokens.text,
+            current: tokens.hover,
+        }
+    }
 }
 
 /// O `LayoutJob` do buffer: cada span da análise com a sua cor, o resto na cor do texto, e o

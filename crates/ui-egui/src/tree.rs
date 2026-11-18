@@ -59,7 +59,7 @@ where
                     icon::REFRESH,
                     tr.reload_catalog(),
                     None,
-                    crate::data::LOCK_HINT,
+                    tr.lock_hint(),
                 )
                 .clicked()
                 {
@@ -933,9 +933,13 @@ mod tests {
                 .is_some_and(|ws| ws.data().is_some_and(|d| d.stats.is_some()))
         });
         harness.get_by_label("public.pedido");
-        harness.get_by_label("1-3 of 250 rows");
-        // Tamanhos e comentário numa linha acima do grid (o painel começa fechado).
-        harness.get_by_label_contains("250 rows · total 24 kB");
+        harness.get_by_label("1–3 de 250");
+        // Linhas e tamanho na barra da aba; o comentário na dica do nome (o painel começa fechado).
+        harness.get_by_label("250 linhas · 24 kB");
+        harness.get_by_label("public.pedido").hover();
+        for _ in 0..60 {
+            harness.step();
+        }
         harness.get_by_label("pedidos");
         let names = |app: &App<FakeDriver>| -> Vec<String> {
             app.workspace_of(&id)
@@ -963,7 +967,9 @@ mod tests {
                         .is_some_and(|o| o.direction == Direction::Asc)
             })
         });
-        harness.get_by_label("nome ▲").click();
+        harness
+            .get_by_label(&format!("nome {}", crate::fonts::icon::UP))
+            .click();
         wait_for(&mut harness, "desc", |app| {
             app.workspace_of(&id).unwrap().data().is_some_and(|d| {
                 !d.loading
@@ -977,14 +983,14 @@ mod tests {
 
         // Próxima página: offset 100.
         // Botão no rodapé: a ação do AccessKit (o clique por ponteiro não alcança o rodapé no harness).
-        harness.get_by_label("›").click_accesskit();
+        harness.get_by_label("Próxima página").click_accesskit();
         wait_for(&mut harness, "página 2", |app| {
             app.workspace_of(&id)
                 .unwrap()
                 .data()
                 .is_some_and(|d| !d.loading && d.page.offset == 100)
         });
-        harness.get_by_label("101-103 of 250 rows");
+        harness.get_by_label("101–103 de 250");
 
         // Selecionar a primeira linha mostra os campos no painel direito.
         harness.get_by_label("101").click_accesskit();
@@ -1008,7 +1014,7 @@ mod tests {
             harness.get_all_by_label("integer").count() >= 2,
             "tipo da coluna no cabeçalho e no Form"
         );
-        harness.get_by_label("1 of 3 rows selected");
+        harness.get_by_label("1 selecionada de 3 linhas");
         // ⌘-clique na terceira linha: duas selecionadas; campo igual mostra o valor, diferente "Múltiplos valores".
         harness
             .input_mut()
@@ -1022,7 +1028,7 @@ mod tests {
             .push(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
         harness.step();
         assert_eq!(selected(harness.state()), [0, 2]);
-        harness.get_by_label("2 of 3 rows selected");
+        harness.get_by_label("2 selecionadas de 3 linhas");
         harness.get_by_label("2 linhas");
         // A tabela tem chave primária: o Form é editável, um campo por coluna (FEAT-007); os campos
         // que diferem (id, nome) ficam vazios com a dica "Múltiplos valores", o igual (status) traz "ok".
@@ -1047,7 +1053,9 @@ mod tests {
         harness.step();
         harness.get_by_label_contains("\"id\": 1");
         harness.get_by_label_contains("\"status\": \"ok\"");
-        harness.get_by_label("Copiar").click_accesskit();
+        harness
+            .get_by_label(&format!("{} Copiar", crate::fonts::icon::COPY))
+            .click_accesskit();
         harness.step();
         // O botão da barra esconde e mostra o painel.
         harness
@@ -1173,11 +1181,15 @@ mod tests {
             "pendente: {nome:?}"
         );
         harness.get_by_label("1 alteração");
-        // Com pendência, ordenar não faz nada e a dica aparece.
+        // Com pendência, ordenar não faz nada e a dica aparece no cabeçalho.
         harness.get_by_label("nome").click();
         harness.step();
+        harness.get_by_label("nome").hover();
+        for _ in 0..60 {
+            harness.step();
+        }
         assert!(tab(harness.state()).page.order.is_none());
-        harness.get_by_label(crate::data::LOCK_HINT);
+        harness.get_by_label(crate::i18n::Tr(hy_dbplus_engine::Language::PtBr).lock_hint());
 
         // Selecionar a linha 3 e ⌫: marcada para apagar.
         harness.get_all_by_label("3").next().unwrap().click();
@@ -1187,18 +1199,18 @@ mod tests {
         harness.step();
         harness.step();
         assert!(tab(harness.state()).deleted.contains(&2));
-        harness.get_by_label("2 alterações");
+        harness.get_by_label("1 alteração, 1 exclusão");
 
         // Commit mostra o SQL exato; Executar manda o lote e recarrega.
-        harness.get_by_label("Commit").click_accesskit();
+        harness.get_by_label("Revisar e gravar").click_accesskit();
         harness.step();
         harness.step();
-        harness.get_by_label("1 updates, 1 deletes");
+        harness.get_by_label("Gravar 1 alteração e 1 exclusão em pedido");
         harness.get_by_label_contains("UPDATE \"public\".\"pedido\" SET \"nome\" = E'");
         harness
             .get_by_label_contains("DELETE FROM \"public\".\"pedido\" WHERE (\"id\") IN ((E'3'));");
         let before = queries.load(Ordering::SeqCst);
-        harness.get_by_label("Executar").click_accesskit();
+        harness.get_by_label("Gravar no banco").click_accesskit();
         wait_for(&mut harness, "ChangesApplied", |app| {
             app.workspace_of(&id)
                 .unwrap()
@@ -1214,7 +1226,7 @@ mod tests {
             queries.load(Ordering::SeqCst) >= before + 3,
             "página e stats recarregados"
         );
-        assert!(harness.query_by_label("2 alterações").is_none());
+        assert!(harness.query_by_label("1 alteração, 1 exclusão").is_none());
 
         // Erro do servidor: a caixa mostra, nada foi gravado e a pendência continua; Cancelar fecha.
         double_click(&mut harness, "a");
@@ -1228,21 +1240,25 @@ mod tests {
         harness.step();
         harness.get_by_label("1 alteração");
         // Fora da sub-aba Data, ⌘S não abre o Commit (nem é consumido); de volta em Data, abre.
-        harness.get_by_label("Structure").click_accesskit();
+        harness.get_by_label("Estrutura").click_accesskit();
         harness.step();
         harness.step();
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::S);
         harness.step();
         harness.step();
-        assert!(harness.query_by_label("1 updates, 0 deletes").is_none());
-        harness.get_by_label("Data").click_accesskit();
+        assert!(
+            harness
+                .query_by_label("Gravar 1 alteração em pedido")
+                .is_none()
+        );
+        harness.get_by_label("Dados").click_accesskit();
         harness.step();
         harness.step();
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::S);
         harness.step();
         harness.step();
-        harness.get_by_label("1 updates, 0 deletes");
-        harness.get_by_label("Executar").click_accesskit();
+        harness.get_by_label("Gravar 1 alteração em pedido");
+        harness.get_by_label("Gravar no banco").click_accesskit();
         wait_for(&mut harness, "ChangesFailed", |app| {
             app.workspace_of(&id)
                 .unwrap()
@@ -1302,14 +1318,16 @@ mod tests {
         let t = tab(harness.state());
         assert!(t.pending.get(&1).is_some_and(|m| m.contains_key("nome")));
         harness.get_by_label("alterado");
-        harness.get_by_label("Reverter").click_accesskit();
+        harness
+            .get_by_label(&format!("{} Reverter campo", crate::fonts::icon::UNDO))
+            .click_accesskit();
         harness.step();
         harness.step();
         assert!(!tab(harness.state()).has_changes());
 
         // Tabela sem chave primária: aviso, e o duplo clique não abre nada.
         open(&mut harness, &view("v_pedido"), "v_pedido");
-        harness.get_by_label(crate::data::READ_ONLY_HINT);
+        harness.get_by_label(crate::i18n::Tr(hy_dbplus_engine::Language::PtBr).read_only_tag());
         double_click(&mut harness, "a");
         assert!(tab(harness.state()).editing.is_none());
     }
@@ -2228,7 +2246,7 @@ mod tests {
             })
         });
         let before = queries.load(Ordering::SeqCst);
-        harness.get_by_label("Structure").click_accesskit();
+        harness.get_by_label("Estrutura").click_accesskit();
         wait_for(&mut harness, "StructureLoaded", |app| {
             app.workspace_of(&id)
                 .is_some_and(|ws| ws.data().is_some_and(|d| d.structure.is_some()))
@@ -2238,14 +2256,17 @@ mod tests {
             before + 4,
             "cabeçalho, colunas, restrições, índices"
         );
-        // A aba Structure ainda usa o 🔑 (o desenho dela é da fase D).
-        harness.get_by_label("🔑 id");
+        harness.get_by_label(&key_col("id"));
         harness.get_by_label("character varying(80)");
         harness.get_by_label("pedido_cliente_fkey");
-        harness
-            .get_by_label_contains("→ public.cliente(id) on update no action / on delete cascade");
+        harness.get_by_label_contains(&format!(
+            "{} public.cliente(id) on update no action / on delete cascade",
+            crate::fonts::icon::FOREIGN_KEY
+        ));
         // DDL: caixa com o CREATE TABLE, Copiar e Fechar.
-        harness.get_by_label("DDL").click_accesskit();
+        harness
+            .get_by_label(&format!("{} Ver DDL", crate::fonts::icon::SQL))
+            .click_accesskit();
         harness.step();
         harness.step();
         harness.get_by_label_contains("CREATE TABLE \"public\".\"pedido\"");
@@ -2257,7 +2278,7 @@ mod tests {
         harness.step();
         assert!(harness.query_by_label_contains("CREATE TABLE").is_none());
         // Index: do cache (sem query nova), com include, condição e parâmetros.
-        harness.get_by_label("Index").click_accesskit();
+        harness.get_by_label("Índices").click_accesskit();
         harness.step();
         harness.step();
         harness.get_by_label("pedido_obs_idx");
@@ -2266,17 +2287,17 @@ mod tests {
         harness.get_by_label("parcial");
         assert_eq!(queries.load(Ordering::SeqCst), before + 4);
         // Data de volta: o grid continua como estava.
-        harness.get_by_label("Data").click_accesskit();
+        harness.get_by_label("Dados").click_accesskit();
         harness.step();
         harness.step();
-        harness.get_by_label("1-3 of 250 rows");
+        harness.get_by_label("1–3 de 250");
 
         // Painel direito em Structure não mostra o Form: linha selecionada, mas grid escondido.
         harness.get_all_by_label("1").next().unwrap().click();
         harness.step();
         harness.step();
         harness.get_by_label("Linha 1");
-        harness.get_by_label("Structure").click_accesskit();
+        harness.get_by_label("Estrutura").click_accesskit();
         harness.step();
         harness.step();
         harness.get_by_label("Nenhuma linha selecionada");
@@ -2298,7 +2319,7 @@ mod tests {
             app.workspace_of(&id)
                 .is_some_and(|ws| ws.data().is_some_and(|d| d.structure.is_some()))
         });
-        harness.get_by_label("🔑 id");
+        harness.get_by_label(&key_col("id"));
         assert!(
             harness
                 .query_by_label_contains("permission denied")
@@ -2313,7 +2334,7 @@ mod tests {
                     .is_some_and(|d| d.table == "v_pedido" && !d.loading)
             })
         });
-        harness.get_by_label("Structure").click_accesskit();
+        harness.get_by_label("Estrutura").click_accesskit();
         wait_for(&mut harness, "estrutura da view", |app| {
             app.workspace_of(&id)
                 .is_some_and(|ws| ws.data().is_some_and(|d| d.structure.is_some()))
@@ -3959,7 +3980,12 @@ mod tests {
         assert!(tab_of(harness.state(), &key).has_changes());
         // Revisar e gravar: nada fecha e a gravação da aba abre.
         close(&mut harness);
-        harness.get_by_label("Revisar e gravar").click_accesskit();
+        // O último: o do diálogo (o rodapé da aba também tem um).
+        harness
+            .get_all_by_label("Revisar e gravar")
+            .last()
+            .unwrap()
+            .click_accesskit();
         harness.step();
         harness.step();
         assert!(harness.state().confirm_close.is_none());
@@ -4058,5 +4084,272 @@ mod tests {
         harness.run();
         harness.get_by_label(&key_col("id"));
         harness.get_by_label("Hide columns");
+    }
+
+    // ---- Aba de tabela (FEAT-015 fase D) ----
+
+    /// O app conectado com `public.pedido` aberta e carregada (página, tamanhos e colunas).
+    fn pedido_harness() -> (
+        Harness<'static, App<FakeDriver>>,
+        tokio::runtime::Runtime,
+        crate::app::DbKey,
+    ) {
+        let (mut app, rt, key) = connected_app();
+        app.open_table(&key, "public", "pedido");
+        let mut harness = wide_harness(app);
+        wait_for(&mut harness, "pedido carregada", |app| {
+            app.workspaces.get(&key).is_some_and(|ws| {
+                ws.data()
+                    .is_some_and(|d| d.rows.is_some() && d.stats.is_some() && !d.loading)
+                    && ws
+                        .columns
+                        .contains_key(&("public".to_owned(), "pedido".to_owned()))
+            })
+        });
+        harness.step();
+        (harness, rt, key)
+    }
+
+    fn set_pending(harness: &mut Harness<'_, App<FakeDriver>>, key: &crate::app::DbKey) {
+        if let Some(tab) = harness
+            .state_mut()
+            .workspaces
+            .get_mut(key)
+            .and_then(|ws| ws.data_mut())
+        {
+            tab.pending
+                .insert(0, [("nome".to_owned(), Some("x".to_owned()))].into());
+        }
+        harness.step();
+        harness.step();
+    }
+
+    #[test]
+    fn recarregar_pede_a_mesma_pagina_e_trava_com_pendencia() {
+        let (mut harness, _rt, key) = pedido_harness();
+        // Cada página que chega é um `Arc` novo: recarregar troca o ponteiro.
+        let rows = |app: &App<FakeDriver>| tab_of(app, &key).rows.unwrap();
+        let page = tab_of(harness.state(), &key).page;
+        let before = rows(harness.state());
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::R);
+        wait_for(&mut harness, "⌘R recarregou", |app| {
+            !Arc::ptr_eq(&rows(app), &before) && !tab_of(app, &key).loading
+        });
+        assert_eq!(tab_of(harness.state(), &key).page, page, "a mesma página");
+        // O ícone faz o mesmo.
+        let before = rows(harness.state());
+        harness.get_by_label("Recarregar").click_accesskit();
+        wait_for(&mut harness, "ícone recarregou", |app| {
+            !Arc::ptr_eq(&rows(app), &before) && !tab_of(app, &key).loading
+        });
+        // Com pendência, nada recarrega (nem a tecla nem o ícone).
+        set_pending(&mut harness, &key);
+        let before = rows(harness.state());
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::R);
+        harness.get_by_label("Recarregar").click_accesskit();
+        for _ in 0..20 {
+            harness.step();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(Arc::ptr_eq(&rows(harness.state()), &before));
+        assert!(tab_of(harness.state(), &key).requested.is_none());
+        assert!(tab_of(harness.state(), &key).has_changes());
+    }
+
+    #[test]
+    fn nenhum_botao_morto_em_dados_e_estrutura() {
+        let (mut harness, _rt, key) = pedido_harness();
+        let dead = [
+            "+ Row", "Filters", "Columns", "+ Column", "Triggers", "Delete",
+        ];
+        let check = |harness: &Harness<'_, App<FakeDriver>>| {
+            for label in dead {
+                assert!(harness.query_by_label(label).is_none(), "{label}");
+            }
+            assert!(harness.query_by_label_contains("em breve").is_none());
+            assert!(
+                harness
+                    .query_by_label_contains("não disponível nesta versão")
+                    .is_none()
+            );
+        };
+        check(&harness);
+        harness.get_by_label("Estrutura").click_accesskit();
+        wait_for(&mut harness, "estrutura", |app| {
+            tab_of(app, &key).structure.is_some()
+        });
+        harness.step();
+        check(&harness);
+        harness.get_by_label("Índices").click_accesskit();
+        harness.step();
+        harness.step();
+        check(&harness);
+    }
+
+    #[test]
+    fn gravacao_em_curso_nao_fecha_por_esc_clique_fora_nem_cancelar() {
+        let (mut harness, _rt, key) = pedido_harness();
+        set_pending(&mut harness, &key);
+        let commit = |running: bool| crate::app::CommitDialog {
+            sql: vec!["UPDATE \"public\".\"pedido\" SET \"nome\" = 'x' WHERE \"id\" = 1".into()],
+            updates: 1,
+            running,
+            ..Default::default()
+        };
+        let put = |harness: &mut Harness<'_, App<FakeDriver>>, dialog| {
+            if let Some(tab) = harness
+                .state_mut()
+                .workspaces
+                .get_mut(&key)
+                .and_then(|ws| ws.data_mut())
+            {
+                tab.commit = Some(dialog);
+            }
+            harness.step();
+            harness.step();
+        };
+        let outside = |harness: &mut Harness<'_, App<FakeDriver>>| {
+            let pos = egui::pos2(10.0, 790.0);
+            harness.hover_at(pos);
+            for pressed in [true, false] {
+                harness.event(egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+            harness.step();
+            harness.step();
+        };
+        put(&mut harness, commit(true));
+        harness.get_by_label("Gravar 1 alteração em pedido");
+        harness.get_by_label("Gravando…");
+        harness.key_press(egui::Key::Escape);
+        harness.step();
+        outside(&mut harness);
+        harness.get_by_label("Cancelar").click_accesskit();
+        harness.step();
+        harness.step();
+        assert!(
+            tab_of(harness.state(), &key).commit.is_some(),
+            "a gravação em curso fechou"
+        );
+        // Parada: Esc fecha, e clique fora também.
+        put(&mut harness, commit(false));
+        harness.key_press(egui::Key::Escape);
+        harness.step();
+        harness.step();
+        assert!(tab_of(harness.state(), &key).commit.is_none());
+        put(&mut harness, commit(false));
+        outside(&mut harness);
+        assert!(tab_of(harness.state(), &key).commit.is_none());
+        assert!(
+            tab_of(harness.state(), &key).has_changes(),
+            "fechar não descarta"
+        );
+    }
+
+    #[test]
+    fn aba_de_tabela_em_ingles() {
+        let (mut harness, _rt, key) = pedido_harness();
+        harness.state_mut().lang = hy_dbplus_engine::Language::En;
+        harness.step();
+        harness.step();
+        harness.get_by_label("Data");
+        harness.get_by_label("Structure");
+        harness.get_by_label("Indexes");
+        harness.get_by_label("Rows per page");
+        harness.get_by_label("Double-click to edit a cell");
+        harness.get_by_label("250 rows · 24 kB");
+        set_pending(&mut harness, &key);
+        harness.get_by_label("1 change");
+        harness.get_by_label("Review and commit").click_accesskit();
+        harness.step();
+        harness.step();
+        harness.get_by_label("Commit 1 change to pedido");
+        harness.get_by_label("Commit to database");
+        harness.get_by_label(&format!("{} Copy SQL", crate::fonts::icon::COPY));
+    }
+
+    #[test]
+    fn com_a_gravacao_aberta_so_cmd_enter_age() {
+        let (mut harness, _rt, key) = pedido_harness();
+        set_pending(&mut harness, &key);
+        harness.state_mut().open_commit(&key);
+        harness.step();
+        harness.step();
+        harness.get_by_label("Gravar 1 alteração em pedido");
+        // Com a gravação aberta, ⌘K, ⌘T e ⌘W não abrem nada por cima nem trocam a aba debaixo
+        // (com a paleta sobre a gravação, um Esc fechava as duas).
+        let tabs = harness.state().workspaces[&key].tabs.len();
+        for k in [egui::Key::K, egui::Key::T, egui::Key::W] {
+            harness.key_press_modifiers(egui::Modifiers::COMMAND, k);
+            harness.step();
+            harness.step();
+        }
+        assert!(harness.state().palette.is_none(), "⌘K abriu a paleta");
+        assert!(
+            harness.state().confirm_close.is_none(),
+            "⌘W pediu para fechar"
+        );
+        assert_eq!(
+            harness.state().workspaces[&key].tabs.len(),
+            tabs,
+            "⌘T abriu aba"
+        );
+        let tab = tab_of(harness.state(), &key);
+        assert!(tab.commit.as_ref().is_some_and(|d| !d.running));
+        assert!(tab.has_changes());
+        // Com a gravação no topo, ⌘↩ grava.
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Enter);
+        wait_for(&mut harness, "gravou", |app| {
+            !tab_of(app, &key).has_changes()
+        });
+    }
+
+    #[test]
+    fn recarregar_nao_age_com_celula_aberta_e_pede_os_tamanhos() {
+        let (mut harness, _rt, key) = pedido_harness();
+        // Os tamanhos voltam do banco: um total errado no estado é corrigido pelo recarregar.
+        if let Some(stats) = harness
+            .state_mut()
+            .workspaces
+            .get_mut(&key)
+            .and_then(|ws| ws.data_mut())
+            .and_then(|t| t.stats.as_mut())
+        {
+            stats.row_count = 1;
+        }
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::R);
+        wait_for(&mut harness, "tamanhos de novo", |app| {
+            tab_of(app, &key).stats.is_some_and(|s| s.row_count == 250)
+        });
+        // Célula aberta, sem Enter: ⌘R não recarrega nem descarta o que se digitou.
+        harness.state_mut().start_edit(&key, 0, 1);
+        harness.step();
+        harness.step();
+        let rows = tab_of(harness.state(), &key).rows.unwrap();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::R);
+        for _ in 0..20 {
+            harness.step();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let tab = tab_of(harness.state(), &key);
+        assert!(tab.requested.is_none(), "recarregou com a célula aberta");
+        assert!(Arc::ptr_eq(&tab.rows.unwrap(), &rows));
+        assert!(tab.editing.is_some());
+    }
+
+    #[test]
+    fn dialogo_de_outra_conexao_nao_trava_os_atalhos() {
+        let (mut app, key) = app_with_editable_table();
+        if let Some(tab) = app.workspaces.get_mut(&key).and_then(|ws| ws.data_mut()) {
+            tab.ddl_open = true;
+        }
+        assert!(app.table_dialog_open());
+        // Outra conexão em foco: o diálogo do banco ativo não está na tela.
+        app.focus = Some("c2".into());
+        assert!(!app.table_dialog_open());
     }
 }

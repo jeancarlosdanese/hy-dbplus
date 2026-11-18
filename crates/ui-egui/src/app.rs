@@ -1458,6 +1458,35 @@ where
             .load_page(id, database, schema, table, page);
     }
 
+    /// Há um diálogo da aba de tabela aberto (gravação ou DDL) no banco ativo. Com ele, os atalhos
+    /// do workspace (⌘K, ⌘T, ⌘W) não agem: abririam outro modal por cima ou trocariam a aba debaixo
+    /// dele (achado do revisor: com a paleta sobre a gravação, um Esc fechava as duas). Só conta o
+    /// banco ativo da conexão em foco, o único cujo diálogo está na tela.
+    pub(crate) fn table_dialog_open(&self) -> bool {
+        self.active
+            .as_ref()
+            .filter(|k| Some(&k.0) == self.focus.as_ref())
+            .and_then(|key| self.workspaces.get(key))
+            .and_then(|ws| ws.data())
+            .is_some_and(|tab| tab.commit.is_some() || tab.ddl_open)
+    }
+
+    /// Recarregar (⌘R): a mesma página e os tamanhos de novo (o total do rodapé e a próxima página
+    /// dependem deles). Com pendência, nada sai (`load_tab_page` trava).
+    pub(crate) fn reload_data(&mut self, key: &DbKey) {
+        let Some(tab) = self.workspaces.get(key).and_then(|ws| ws.data()) else {
+            return;
+        };
+        if tab.has_changes() {
+            return;
+        }
+        let (schema, table, page) = (tab.schema.clone(), tab.table.clone(), tab.page.clone());
+        self.load_data_page(key, page);
+        self.deps
+            .sessions
+            .load_stats(&key.0, &key.1, &schema, &table);
+    }
+
     /// Repete a página pedida (ou a atual) e, se os tamanhos ainda não vieram, os stats.
     pub(crate) fn retry_data(&mut self, key: &DbKey) {
         let Some(ws) = self.workspaces.get(key) else {

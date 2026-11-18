@@ -53,6 +53,33 @@ pub fn button_enabled(
     .on_disabled_hover_text(disabled_hint)
 }
 
+/// Botão com o atalho à direita, apagado ("Revisar e gravar  ⌘S"). O nome acessível é só o
+/// rótulo: o atalho muda com a plataforma.
+pub fn button_shortcut(
+    ui: &mut Ui,
+    enabled: bool,
+    kind: ButtonKind,
+    icon: Option<&str>,
+    label: &str,
+    shortcut: &str,
+    disabled_hint: &str,
+) -> Response {
+    let t = theme::current(ui.ctx());
+    let ink = match kind {
+        ButtonKind::Primary => t.accent_ink,
+        ButtonKind::Danger => danger_ink(&t),
+        ButtonKind::Normal | ButtonKind::Ghost => t.text_faint,
+    };
+    let button = styled_button(&t, fonts::strong(ui.ctx()), kind, icon, label).right_text(
+        RichText::new(shortcut)
+            .size(text_size::SMALL)
+            .color(ink.gamma_multiply(0.75)),
+    );
+    ui.add_enabled(enabled, button)
+        .on_disabled_hover_text(disabled_hint)
+        .with_accessible_label(label)
+}
+
 fn styled_button<'a>(
     t: &Tokens,
     strong: egui::FontFamily,
@@ -280,6 +307,8 @@ pub struct DialogAction<'a> {
     pub label: &'a str,
     pub kind: ButtonKind,
     pub enabled: bool,
+    /// O atalho mostrado à direita do rótulo (ex.: "⌘↩"); quem chama trata a tecla.
+    pub shortcut: Option<&'a str>,
 }
 
 /// Diálogo modal centralizado com fundo escurecido: título, conteúdo e rodapé com Cancelar e a
@@ -301,6 +330,7 @@ pub fn dialog(
             width: 380.0,
             cancel,
             action,
+            busy: false,
         },
         body,
         |_| {},
@@ -318,6 +348,8 @@ pub struct DialogParts<'a> {
     pub width: f32,
     pub cancel: &'a str,
     pub action: Option<DialogAction<'a>>,
+    /// Algo roda (gravação): Esc, clique fora e os botões não fecham nem confirmam.
+    pub busy: bool,
 }
 
 /// [`dialog`] com subtítulo, largura e o lado esquerdo do rodapé (ex.: "Testar conexão").
@@ -334,6 +366,7 @@ pub fn dialog_full(
         width,
         cancel,
         action,
+        busy,
     } = parts;
     let t = theme::current(ctx);
     let mut outcome = DialogOutcome::Open;
@@ -365,21 +398,33 @@ pub fn dialog_full(
             ui.horizontal(|ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if let Some(action) = action {
-                        let confirm = ui.add_enabled(
-                            action.enabled,
-                            styled_button(
-                                &t,
-                                fonts::strong(ui.ctx()),
+                        let enabled = action.enabled && !busy;
+                        let confirm = match action.shortcut {
+                            Some(shortcut) => button_shortcut(
+                                ui,
+                                enabled,
                                 action.kind,
                                 None,
                                 action.label,
+                                shortcut,
+                                "",
                             ),
-                        );
+                            None => ui.add_enabled(
+                                enabled,
+                                styled_button(
+                                    &t,
+                                    fonts::strong(ui.ctx()),
+                                    action.kind,
+                                    None,
+                                    action.label,
+                                ),
+                            ),
+                        };
                         if confirm.clicked() {
                             outcome = DialogOutcome::Confirm;
                         }
                     }
-                    if button(ui, ButtonKind::Normal, None, cancel).clicked() {
+                    if button_enabled(ui, !busy, ButtonKind::Normal, None, cancel, "").clicked() {
                         outcome = DialogOutcome::Cancel;
                     }
                     ui.with_layout(
@@ -389,10 +434,50 @@ pub fn dialog_full(
                 });
             });
         });
-    if outcome == DialogOutcome::Open && response.should_close() {
+    if outcome == DialogOutcome::Open && response.should_close() && !busy {
         outcome = DialogOutcome::Cancel;
     }
     outcome
+}
+
+/// Bloco de SQL só leitura (gravação, DDL): fundo de campo, borda, mono com o realce do tema e
+/// rolagem nas duas direções até `max_height`.
+pub fn sql_block(ui: &mut Ui, id_salt: &str, sql: &str, max_height: f32) {
+    let t = theme::current(ui.ctx());
+    let font = egui::TextStyle::Monospace.resolve(ui.style());
+    egui::Frame::new()
+        .fill(t.field)
+        .stroke(Stroke::new(1.0, t.border))
+        .corner_radius(CornerRadius::same(radius::CONTROL))
+        .inner_margin(space::M as i8)
+        .show(ui, |ui| {
+            egui::ScrollArea::both()
+                .id_salt(id_salt)
+                .max_height(max_height)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    let job = crate::editor::highlighted(sql, &font, &t);
+                    ui.add(egui::Label::new(job).selectable(true));
+                });
+        });
+}
+
+/// O chip âmbar das pendências ("2 alterações, 1 exclusão").
+pub fn pending_chip(ui: &mut Ui, text: &str) -> Response {
+    let t = theme::current(ui.ctx());
+    egui::Frame::new()
+        .fill(t.pending)
+        .corner_radius(CornerRadius::same(radius::CONTROL))
+        .inner_margin(egui::Margin::symmetric(8, 2))
+        .show(ui, |ui| {
+            ui.label(
+                RichText::new(text)
+                    .size(text_size::SMALL)
+                    .family(fonts::strong(ui.ctx()))
+                    .color(t.pending_ink),
+            )
+        })
+        .inner
 }
 
 #[cfg(test)]
@@ -420,6 +505,7 @@ mod tests {
                             label: "Remover",
                             kind: ButtonKind::Danger,
                             enabled: true,
+                            shortcut: None,
                         }),
                         |ui| {
                             ui.label("Corpo");
