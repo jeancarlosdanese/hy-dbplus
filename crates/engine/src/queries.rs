@@ -11,7 +11,7 @@ use crate::EngineError;
 use crate::session::QueryTabId;
 use crate::store::{config_dir_from, create_private_dir, remove_if_exists, write_private};
 
-/// Uma aba SQL salva: o número da aba (`SQL Query n`, arquivo `n.sql`) e o texto.
+/// Uma aba SQL salva: o número da aba (`Consulta n`, arquivo `n.sql`) e o texto.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SavedQuery {
     pub id: QueryTabId,

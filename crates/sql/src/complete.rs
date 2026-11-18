@@ -44,12 +44,17 @@ pub enum ItemKind {
 }
 
 /// Uma sugestão: o texto que entra no lugar do prefixo (com aspas quando o nome precisa) e o
-/// detalhe para a lista (tipo da coluna, schema da tabela, assinatura da função).
+/// detalhe para a lista, só com dados do banco (tipo da coluna, schema da tabela, assinatura da
+/// função, tabela do alias): as palavras ("tabela", "chave") são da interface, que as traduz.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Item {
     pub label: String,
     pub kind: ItemKind,
     pub detail: String,
+    /// Coluna da chave primária.
+    pub primary_key: bool,
+    /// Tabela, view, view materializada ou tabela estrangeira.
+    pub table_kind: Option<TableKind>,
 }
 
 /// O que a visão não tem e o engine pode carregar: as colunas de uma tabela do statement ou os
@@ -220,7 +225,9 @@ pub fn complete(analysis: &Analysis, cursor: usize, catalog: &CatalogView) -> Op
             items.push(Item {
                 label: ident(&s.name),
                 kind: ItemKind::Schema,
-                detail: "schema".into(),
+                detail: String::new(),
+                primary_key: false,
+                table_kind: None,
             });
         }
     } else {
@@ -231,6 +238,8 @@ pub fn complete(analysis: &Analysis, cursor: usize, catalog: &CatalogView) -> Op
                     label: ident(alias),
                     kind: ItemKind::Alias,
                     detail: format!("{}.{}", r.schema, r.table),
+                    primary_key: false,
+                    table_kind: None,
                 });
             }
         }
@@ -239,6 +248,8 @@ pub fn complete(analysis: &Analysis, cursor: usize, catalog: &CatalogView) -> Op
                 label: keyword_case(k, prefix),
                 kind: ItemKind::Keyword,
                 detail: String::new(),
+                primary_key: false,
+                table_kind: None,
             });
         }
         if let Some((tables, functions)) =
@@ -250,6 +261,8 @@ pub fn complete(analysis: &Analysis, cursor: usize, catalog: &CatalogView) -> Op
                     label: ident(&f.name),
                     kind: ItemKind::Function,
                     detail: format!("({}) → {}", f.arguments, f.returns),
+                    primary_key: false,
+                    table_kind: None,
                 });
             }
         }
@@ -302,11 +315,9 @@ fn push_columns(items: &mut Vec<Item>, catalog: &CatalogView, schema: &str, tabl
             items.push(Item {
                 label: ident(&c.name),
                 kind: ItemKind::Column,
-                detail: if c.is_primary_key {
-                    format!("{} · chave", c.data_type)
-                } else {
-                    c.data_type.clone()
-                },
+                detail: c.data_type.clone(),
+                primary_key: c.is_primary_key,
+                table_kind: None,
             });
         }
     }
@@ -319,20 +330,16 @@ fn push_tables(items: &mut Vec<Item>, tables: &[Table], with_schema: bool) {
         } else {
             ItemKind::Table
         };
-        let what = match t.kind {
-            TableKind::Table => "tabela",
-            TableKind::View => "view",
-            TableKind::MaterializedView => "view materializada",
-            TableKind::Foreign => "tabela estrangeira",
-        };
         items.push(Item {
             label: ident(&t.name),
             kind,
             detail: if with_schema {
-                format!("{what} · {}", t.schema)
+                t.schema.clone()
             } else {
-                what.to_owned()
+                String::new()
             },
+            primary_key: false,
+            table_kind: Some(t.kind),
         });
     }
 }
@@ -546,7 +553,8 @@ mod tests {
         let c = at("select * from cl|", &f.view()).unwrap();
         assert_eq!(c.replace, 14..16);
         assert_eq!(labels(&c), ["clientes"]);
-        assert_eq!(c.items[0].detail, "tabela · public");
+        assert_eq!(c.items[0].detail, "public");
+        assert_eq!(c.items[0].table_kind, Some(TableKind::Table));
         let c = at("select * from |", &f.view()).unwrap();
         assert_eq!(c.replace, 14..14);
         assert_eq!(
@@ -589,7 +597,9 @@ mod tests {
         let f = fixture();
         let c = at("select c.| from clientes c", &f.view()).unwrap();
         assert_eq!(labels(&c), ["id", "nome", "\"order\""]);
-        assert_eq!(c.items[0].detail, "integer · chave");
+        assert_eq!(c.items[0].detail, "integer");
+        assert!(c.items[0].primary_key);
+        assert!(!c.items[1].primary_key);
         assert_eq!(c.replace, 9..9);
         let c = at(
             "select c.no| from clientes as c join pedido p on p.cliente_id = c.id",
@@ -607,7 +617,7 @@ mod tests {
         assert_eq!(labels(&c), ["id", "cliente_id"]);
         let c = at("select * from public.|", &f.view()).unwrap();
         assert_eq!(labels(&c), ["clientes", "pedido", "v_pedido", "\"Loja\""]);
-        assert_eq!(c.items[0].detail, "tabela");
+        assert_eq!(c.items[0].detail, "");
         // Schema conhecido sem objetos carregados: pede ao engine.
         let c = at("select * from app.|", &f.view()).unwrap();
         assert!(c.items.is_empty());

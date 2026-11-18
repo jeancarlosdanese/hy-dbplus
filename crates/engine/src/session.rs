@@ -24,6 +24,7 @@ use hy_dbplus_driver::{
     Secret, TextRows,
 };
 
+use crate::error::ChangeError;
 use crate::store::{Connection, ConnectionId};
 
 /// O que o engine conta à UI.
@@ -161,17 +162,31 @@ pub enum Event {
         deleted: u64,
     },
     /// O lote não gravou nada: SQL recusado (sem chave primária ou chave incompleta), statement
-    /// com erro ou contagem de linhas diferente da esperada. `error` é o texto para mostrar (de
-    /// `EditError` ou `DriverError`, sem segredo); `position` é o statement que falhou, a partir
+    /// com erro ou contagem de linhas diferente da esperada. `error` é o motivo tipado (sem
+    /// segredo), que a interface escreve no idioma dela; `position` é o statement que falhou, a partir
     /// de 1, quando o erro é de um statement (a caixa de Commit o destaca no SQL).
     ChangesFailed {
         connection: ConnectionId,
         database: String,
         schema: String,
         table: String,
-        error: String,
+        error: ChangeError,
         position: Option<usize>,
     },
+    /// Fim do "Testar conexão" (FEAT-015): a versão do servidor e o tempo até ela, ou o erro. Não
+    /// abre sessão: `connection` é só a etiqueta que quem pediu usou para reconhecer a resposta.
+    TestFinished {
+        connection: ConnectionId,
+        result: Result<TestOk, DriverError>,
+    },
+}
+
+/// O teste de conexão que deu certo.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TestOk {
+    pub server_version: String,
+    /// Do pedido até a versão do servidor, em milissegundos.
+    pub elapsed_ms: u64,
 }
 
 /// O que uma página pede: ordenação opcional, tamanho e deslocamento (`LIMIT/OFFSET`).
@@ -214,7 +229,8 @@ impl Event {
             | Event::SqlBusy { connection, .. }
             | Event::DatabaseClosed { connection, .. }
             | Event::ChangesApplied { connection, .. }
-            | Event::ChangesFailed { connection, .. } => connection,
+            | Event::ChangesFailed { connection, .. }
+            | Event::TestFinished { connection, .. } => connection,
         }
     }
 }
@@ -383,6 +399,36 @@ where
                 }
             };
             if sent {
+                repaint();
+            }
+        });
+    }
+
+    /// "Testar conexão" (FEAT-015): conecta num cliente à parte, lê a versão e fecha. Não toca a
+    /// sessão aberta com o mesmo id, nem guarda configuração ou senha: o resultado sai em
+    /// [`Event::TestFinished`] com a etiqueta `id`.
+    pub fn test_connection(&self, id: ConnectionId, config: ConnectionConfig, password: Secret) {
+        let driver = Arc::clone(&self.driver);
+        let events = self.events.clone();
+        let repaint = Arc::clone(&self.repaint);
+        self.runtime.spawn(async move {
+            let started = std::time::Instant::now();
+            let result = async {
+                let conn = driver.connect(&config, &password).await?;
+                let server_version = conn.server_version().await?;
+                Ok(TestOk {
+                    server_version,
+                    elapsed_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                })
+            }
+            .await;
+            if events
+                .send(Event::TestFinished {
+                    connection: id,
+                    result,
+                })
+                .is_ok()
+            {
                 repaint();
             }
         });
@@ -995,7 +1041,7 @@ where
                     database,
                     schema,
                     table,
-                    error: error.to_string(),
+                    error: ChangeError::Edit(error),
                     position: None,
                 });
                 return;
@@ -1044,7 +1090,7 @@ where
                         database: database.clone(),
                         schema: schema.clone(),
                         table: table.clone(),
-                        error: error.to_string(),
+                        error: ChangeError::Driver(error),
                         position,
                     })
                 }
@@ -1557,6 +1603,44 @@ mod tests {
     }
 
     #[test]
+    fn testar_conexao_devolve_versao_e_tempo_sem_abrir_sessao() {
+        let h = setup();
+        let c = conn();
+        h.sessions
+            .test_connection(c.id.clone(), c.config.clone(), Secret::new("ok"));
+        let event = next(&h.rx);
+        assert!(
+            matches!(&event, Event::TestFinished { connection, result: Ok(ok) }
+                if connection == &c.id && ok.server_version == "15.15" && ok.elapsed_ms >= 20),
+            "{event:?}"
+        );
+        assert!(!h.sessions.is_open(&c.id));
+        assert!(h.rx.try_recv().is_err(), "teste não emite outro evento");
+    }
+
+    #[test]
+    fn testar_conexao_com_erro_nao_expoe_a_senha_e_nao_derruba_a_sessao_aberta() {
+        let h = setup();
+        let c = conn();
+        connected(&h, &c);
+        h.sessions
+            .test_connection(c.id.clone(), c.config.clone(), Secret::new("errada"));
+        let event = next(&h.rx);
+        assert!(
+            matches!(
+                &event,
+                Event::TestFinished {
+                    result: Err(DriverError::Auth { .. }),
+                    ..
+                }
+            ),
+            "{event:?}"
+        );
+        assert!(!format!("{event:?}").contains("errada"));
+        assert!(h.sessions.is_open(&c.id), "a sessão aberta continua");
+    }
+
+    #[test]
     fn desconectar_fecha_e_avisa_so_se_estava_aberta() {
         let h = setup();
         let c = conn();
@@ -1947,7 +2031,9 @@ mod tests {
             panic!("{event:?}")
         };
         assert!(
-            error.starts_with("statement 1 do lote falhou e nada foi gravado: invalid input"),
+            error
+                .to_string()
+                .starts_with("statement 1 do lote falhou e nada foi gravado: invalid input"),
             "{error}"
         );
         assert_eq!(*position, Some(1));
@@ -1981,7 +2067,7 @@ mod tests {
             .apply_changes(&c.id, "loja", "public", "pedido", &no_key);
         let event = next(&h.rx);
         assert!(
-            matches!(&event, Event::ChangesFailed { error, .. } if error.contains("chave primária")),
+            matches!(&event, Event::ChangesFailed { error, .. } if matches!(error, ChangeError::Edit(EditError::NoPrimaryKey))),
             "{event:?}"
         );
         assert_eq!(

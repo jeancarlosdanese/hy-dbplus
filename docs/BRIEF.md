@@ -32,7 +32,9 @@ Princípios:
 ## 3. Referência de telas (TablePlus)
 
 Capturas feitas em 2026-10-21 no TablePlus 27.0.2, conexão `pg-localhost`,
-num banco de desenvolvimento local. Servem como especificação visual e funcional.
+num banco de desenvolvimento local. Servem como especificação funcional. O desenho e os rótulos das telas do app
+são os do protótipo da FEAT-015 (`docs/features/FEAT-015-redesenho-ux/20-prototipos/`); as notas com FEAT
+descrevem o comportamento do app com esses rótulos.
 
 ### 3.1 Lista de conexões
 - Lista vertical com ícone do tipo de banco (Pg, Ms, Re, Sl, Mg), nome,
@@ -58,14 +60,16 @@ num banco de desenvolvimento local. Servem como especificação visual e funcion
 - Grid com cabeçalho por coluna, número da linha, valores monoespaçados.
 - Colunas com **FK** mostram seta para navegar ao registro referenciado.
 - Rodapé: abas **Data / Structure / Index**, `+ Row`, contador
-  `1-24 of 24 rows`, **Filters**, **Columns**, paginação.
+  `1-24 of 24 rows`, **Filters**, **Columns**, paginação. No app (FEAT-015), **Dados / Estrutura / Índices**
+  ficam na barra da aba e o rodapé tem o contador e a paginação; `+ Row`, Filters e Columns só entram quando
+  tiverem ação (filtros no M7).
 - Tamanhos (`total_size`, `data_size`, `index_size`), contagem e `comment` da tabela numa linha acima do
   grid (FEAT-006; o painel não os repete).
 - Painel direito, recolhido por padrão: abre ao selecionar a primeira linha e mostra os campos dela em
   **Form** (nome, tipo, valor) ou **JSON** com botão Copiar; seleção múltipla mostra "Múltiplos valores"
   nos campos que diferem (FEAT-006).
 - Edição (FEAT-007, só tabela com chave primária): duplo clique na célula ou campo do Form deixa a mudança
-  pendente; ⌫ marca a seleção para apagar; **Commit** (⌘S) mostra o SQL exato e roda tudo numa transação;
+  pendente; ⌫ marca a seleção para apagar; **Revisar e gravar** (⌘S) mostra o SQL exato e roda tudo numa transação;
   **Descartar** (⌘Z) limpa. Com pendência, ordenar, paginar e recarregar ficam travados.
 - Vários bancos e abas (FEAT-008): faixa à esquerda com os bancos abertos (conexão + banco, cor do
   ambiente; ⌘K abre mais um; × fecha); cada tabela aberta é uma aba do banco, com página, seleção e
@@ -75,8 +79,9 @@ num banco de desenvolvimento local. Servem como especificação visual e funcion
 - Somente leitura no MVP (FEAT-009): colunas `#`, nome (🔑 na chave), tipo, nulo, default (identidade e
   gerada), comentário; restrições (chave primária, únicas, checks, chaves estrangeiras apontando para a
   tabela referenciada); view mostra a definição.
-- Rodapé: `+ Column` e **Triggers** desabilitados; **DDL** abre o `CREATE TABLE` montado pelo catálogo
-  (particionada e estrangeira com aviso; sem `PARTITION BY`, collation e sequências).
+- **Ver DDL**, na barra da aba, abre o `CREATE TABLE` montado pelo catálogo (particionada e estrangeira com
+  aviso; sem `PARTITION BY`, collation e sequências). `+ Column` e **Triggers** não aparecem no app (sem ação no
+  MVP; FEAT-015).
 - Editar **Name**, **Primary**, tipo e chave fica para depois do MVP.
 
 ### 3.6 Aba Index
@@ -84,15 +89,16 @@ num banco de desenvolvimento local. Servem como especificação visual e funcion
   `condition`, `include`, `storage_parameters`, `comment`.
 
 ### 3.7 Editor SQL
-- Aba própria ao lado das abas de tabela (`<tabela> | SQL Query N`; **+ SQL** ou ⌘T), uma por banco,
-  quantas quiser (FEAT-010).
+- Aba própria ao lado das abas de tabela (**Consulta N**; **+** ou ⌘T), uma por banco, quantas quiser
+  (FEAT-010).
 - Syntax highlight, numeração de linhas, várias queries no mesmo buffer; o statement sob o cursor fica
   destacado.
 - Barra de status `linha, coluna`.
-- Controles: limite de linhas (**No limit**, 100, 500, 1000; por leitura, sem envolver o SQL em
-  `LIMIT`), **Beautify ⌘I**, **Run Current ⌘↩** (a query sob o cursor), **Run All ⌘⇧↩** (para no
-  primeiro erro), **Cancelar**; aviso "transação aberta" depois de um `BEGIN` sem fim.
-- Resultado em sub-abas `Query N` abaixo do editor: grid só leitura, `OK, N linhas afetadas` ou o erro;
+- Controles: limite de linhas (**Sem limite**, 100, 500, 1000; por leitura, sem envolver o SQL em
+  `LIMIT`), **Formatar ⌘I**, **Executar ⌘↩** (a query sob o cursor), **Executar tudo ⌘⇧↩** (para no
+  primeiro erro), **Cancelar**; etiqueta "transação aberta" depois de um `BEGIN` sem fim, e **Executar
+  ROLLBACK** com a transação abortada (FEAT-015).
+- Resultado em sub-abas **Resultado N** abaixo do editor: grid só leitura, `OK, N linhas afetadas` ou o erro;
   ⌘-clique numa linha mostra o JSON no painel direito.
 - **Autocomplete** de palavras-chave, tabelas, colunas e aliases (M6, FEAT-012); histórico persistido (M7).
 - **Queries salvas** (FEAT-011): cada aba SQL num arquivo em `~/.config/hy-dbplus/queries/<conexão>/<banco>/<n>.sql`, salvo ao perder o foco e ao fechar (fechar o banco ou desconectar com texto não pergunta: salva), restaurado ao abrir o banco com o mesmo número; "Descartar e fechar" de uma aba apaga.
@@ -111,10 +117,10 @@ qualquer statement.
 | 5 | Painel lateral com tamanhos, comentário e campos da linha selecionada | 3.4 |
 | 6 | Aba Structure (somente leitura) com colunas, tipos, nulabilidade, default, check e DDL | 3.5 |
 | 7 | Aba Index (somente leitura) | 3.6 |
-| 8 | Editor SQL em abas: highlight, Run Current, Run All, limite de linhas, Beautify, resultado em grid, histórico | 3.7 |
+| 8 | Editor SQL em abas: highlight, Executar, Executar tudo, limite de linhas, Formatar, resultado em grid, histórico | 3.7 |
 | 9 | Autocomplete por schema: keywords, tabelas, colunas, aliases do statement atual | 3.7 |
 | 10 | Navegação por FK no grid (clique na seta abre o registro referenciado) | 3.4 |
-| 11 | Tema claro e escuro | todas |
+| 11 | Tema claro e escuro; interface em português e inglês (FEAT-015) | todas |
 | 12 | CLI headless: `connections list`, `query`, `tables`; servidor MCP opt-in | — |
 
 ### Fora do MVP (próximas versões)
@@ -153,9 +159,9 @@ hy-dbplus/
 | `driver` | Trait `Driver` (conectar) e `Connection` (ping, versão, listar bancos; query em texto e lote numa transação; stream de linhas e cancelamento no M5). Implementação `postgres` no MVP. | `tokio`, `tokio-postgres`, `rustls` |
 | `catalog` | Modelo neutro (`Schema`, `Table`, `Column`, `Index`, `ForeignKey`, `Function`) e carregadores por driver a partir de `pg_catalog`/`information_schema`. O cache do catálogo (por conexão e banco, com invalidação manual) mora no `engine`. | `driver` |
 | `sql` | Divisão do buffer em statements com posição; statement sob o cursor; formatação; motor de autocomplete (contexto do cursor × catálogo). | `sqlparser`, `sqlformat`, `catalog` |
-| `engine` | API usada por todos os frontends: `Session`, `Workspace` (abas), `ConnectionStore` (arquivo TOML + Keychain), histórico de queries, eventos assíncronos para a UI. | `driver`, `catalog`, `sql`, `keyring`, `serde`, `toml` |
+| `engine` | API usada por todos os frontends: `Session`, `Workspace` (abas), `ConnectionStore` (arquivo TOML + Keychain), `PreferenceStore` (`preferences.toml`, só o idioma), histórico de queries, eventos assíncronos para a UI. | `driver`, `catalog`, `sql`, `keyring`, `serde`, `toml` |
 | `automation` | Lista de tools (`connections.list`, `query.run`, `catalog.tables`, …) com schema JSON, usada pela CLI e exposta como servidor MCP opt-in. | `engine`, `serde_json` |
-| `ui-egui` | Widgets: lista de conexões, árvore, grid, abas, editor SQL com autocomplete, painel lateral, temas. Testável com `egui_kittest`. | `egui`, `eframe`, `egui_extras`, `engine` |
+| `ui-egui` | Widgets: lista de conexões, árvore, grid, abas, editor SQL com autocomplete, painel lateral, temas. Sistema visual em `theme.rs` (tokens de cor por papel, espaçamento, tipos, raios, alturas), `fonts.rs` (Inter, JetBrains Mono, ícones Phosphor), `widgets.rs` (botões, faixas, diálogos, estados) e textos em `i18n.rs` (pt-BR e en, inclusive as mensagens de erro do engine e do driver). Testável com `egui_kittest`. | `egui`, `eframe`, `egui_extras`, `egui-phosphor`, `sys-locale`, `engine`, `sql` |
 
 Regras de engenharia (never panic, layering, async fora da UI, segredos, Rust only, dependências) e o
 portão de qualidade têm um dono só: o [CLAUDE.md](../CLAUDE.md) da raiz. Este brief não as repete.
@@ -169,7 +175,7 @@ portão de qualidade têm um dono só: o [CLAUDE.md](../CLAUDE.md) da raiz. Este
 | Async | `tokio` | runtime único, criado pelo app |
 | PostgreSQL | `tokio-postgres` + `rustls` | sem `libpq`, binário estático |
 | Parser SQL | `sqlparser` | dialeto PostgreSQL; usado para split e autocomplete |
-| Formatação SQL | `sqlformat` | Beautify |
+| Formatação SQL | `sqlformat` | Formatar (⌘I) |
 | Credenciais | `keyring` | Keychain no macOS, Credential Manager no Windows, Secret Service no Linux |
 | Config | `serde` + `toml` | `~/.config/hy-dbplus/connections.toml` |
 | Testes de UI | `egui_kittest` | screenshots e interação headless |
@@ -213,6 +219,7 @@ como a FEAT-001.
 | 4 | Web (WASM) | **Ignorar.** O navegador não abre conexão TCP com o banco; uma versão web exigiria um servidor intermediário, contra o princípio de ferramenta simples e local. | 2026-10-21 |
 | 5 | Plataformas | **macOS** é o alvo principal. **Linux** e **Windows** são builds secundários na CI, mesmo código via `egui`. | 2026-10-21 |
 | 6 | Edição de dados | **Update e Delete entram no MVP** (FEAT-007): só tabelas com chave primária; edições pendentes no grid, confirmadas em lote numa transação com o SQL à vista; Delete sobre a seleção, com confirmação. `+ Row` continua fora. | 2026-10-22 |
+| 7 | Sistema visual e idioma | **FEAT-015**: tokens de cor por papel (destaque azul-petróleo; pendência âmbar, separada da seleção; ambiente em etiqueta e faixa fina), escala de espaço 4/8/12/16/24 (32 na margem da tela de conexões; 2 de folga interna em controle pequeno), Inter na interface e JetBrains Mono em dados e SQL, ícones Phosphor, diálogos modais com o padrão único. Interface em pt-BR e en pelo idioma do sistema, com o seletor PT \| EN; nenhum texto de tela fora do catálogo. Protótipo de referência: `docs/features/FEAT-015-redesenho-ux/20-prototipos/prototipo.html`. | 2026-11-17 |
 
 ## 10. Próximos passos
 

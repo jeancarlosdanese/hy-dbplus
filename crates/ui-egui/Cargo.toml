@@ -17,6 +17,8 @@ hy-dbplus-sql = { workspace = true }
 egui = { workspace = true }
 egui_extras = { workspace = true }
 eframe = { workspace = true }
+egui-phosphor = { workspace = true }
+sys-locale = { workspace = true }
 
 [dev-dependencies]
 # Runtime para o teste de cadeia completa (formulário, store, conectar, evento).

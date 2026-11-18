@@ -102,8 +102,11 @@ delta, gravidade) e o critério de conclusão ficam na skill `process:quality` (
   declarar algo pronto ou pedir a entrega, a IA roda `scripts/quality-gate.sh --full`.
 - **Segunda camada:** `.githooks/pre-commit` e `.githooks/pre-merge-commit` conferem o que vai de fato no
   commit e no merge. Ativar uma vez por clone, pelo Jean: `git config core.hooksPath .githooks`.
-- **Padrão visual e protótipos:** não se aplica: app desktop em `egui`, sem pasta de protótipos; o padrão das
-  telas é o `crates/ui-egui/src/theme.rs` e o BRIEF.
+- **Padrão visual e protótipos:** app desktop em `egui`; o padrão das telas são os tokens de
+  `crates/ui-egui/src/theme.rs`, os componentes de `widgets.rs`, os ícones de `fonts.rs` e o catálogo de textos
+  `i18n.rs` (pt-BR e en). Nenhuma cor, espaçamento ou texto de tela fora deles. Protótipo de referência (HTML,
+  fora do build): `docs/features/FEAT-015-redesenho-ux/20-prototipos/prototipo.html`; tela nova ganha protótipo
+  na pasta `20-prototipos/` da sua FEAT.
 - **Formulários:** o padrão de formulários do plugin (backend que normaliza, front que mascara) não se aplica:
   não há backend web. Siglas sempre em maiúsculas: nenhuma. Exceções: nenhuma.
 - **FEATs** (skills `process:feat-new`, `feat-run` e `feat-close`; item sem valor segue o padrão do plugin):

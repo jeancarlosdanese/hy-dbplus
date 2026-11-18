@@ -1,21 +1,72 @@
-//! A aba Data (tela 3.4): grid virtualizado da página atual, rodapé com abas, contador, paginação e,
-//! desde a FEAT-007, a edição: duplo clique na célula abre o campo (Enter confirma, Esc cancela),
-//! célula pendente ganha fundo de destaque, ⌫ marca as linhas selecionadas para apagar (riscadas), o
-//! chip "N alterações" leva a Commit (⌘S) e Descartar (⌘Z). Com pendência, ordenar, paginar e recarregar
-//! ficam travados. Só tabela com chave primária edita; sem ela, aviso na linha de tamanhos.
+//! A aba de tabela (telas 7 a 12 do protótipo da FEAT-015). Barra no alto com Dados | Estrutura |
+//! Índices, `schema.tabela`, linhas e tamanho, e o recarregar (⌘R); na sub-aba Dados, o grid
+//! virtualizado da página e o rodapé com a dica de edição ou as pendências e a paginação. Edição
+//! (FEAT-007): duplo clique abre o campo (Enter confirma, Esc cancela), a célula pendente fica âmbar
+//! mesmo na linha selecionada, ⌫ marca as linhas selecionadas para apagar (riscadas), "Revisar e
+//! gravar" (⌘S) abre a gravação e "Descartar" (⌘Z) esquece. Com pendência, ordenar, paginar e
+//! recarregar ficam travados. Só tabela com chave primária edita.
 
 use egui_extras::{Column as TableColumn, TableBuilder};
 use hy_dbplus_engine::{Direction, Driver, Order, Page};
 
 use crate::app::{App, DbKey, TabView};
-use crate::theme;
-
+use crate::fonts::icon;
 use crate::grid::ROW_HEIGHT;
+use crate::theme::{self, Tokens};
+use crate::{i18n, widgets};
 
 pub const PAGE_SIZES: [u32; 3] = [100, 500, 1000];
-/// Dica dos controles travados por edição pendente.
-pub const LOCK_HINT: &str = "Commit ou descarte as alterações antes";
-pub const READ_ONLY_HINT: &str = "sem chave primária: só leitura";
+
+/// ⌘R: recarrega a página atual.
+pub fn reload_shortcut() -> egui::KeyboardShortcut {
+    egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::R)
+}
+
+/// Fundo e cor do texto de uma célula. Pendência e exclusão pintam a célula por cima da cor de
+/// seleção da linha: a alteração não some quando a linha é selecionada (AC-006).
+pub(crate) fn cell_colors(
+    t: &Tokens,
+    pending: bool,
+    deleted: bool,
+) -> (Option<egui::Color32>, egui::Color32) {
+    if deleted {
+        (Some(t.danger_soft), t.danger)
+    } else if pending {
+        (Some(t.pending), t.pending_ink)
+    } else {
+        (None, t.text)
+    }
+}
+
+/// Tipo do PostgreSQL que se alinha à direita (números).
+pub(crate) fn is_numeric_type(data_type: &str) -> bool {
+    let ty = data_type.trim().to_ascii_lowercase();
+    if ty.ends_with("[]") {
+        return false;
+    }
+    let base = ty.split('(').next().unwrap_or_default().trim();
+    matches!(
+        base,
+        "smallint"
+            | "integer"
+            | "bigint"
+            | "int"
+            | "int2"
+            | "int4"
+            | "int8"
+            | "numeric"
+            | "decimal"
+            | "real"
+            | "double precision"
+            | "float4"
+            | "float8"
+            | "money"
+            | "oid"
+            | "smallserial"
+            | "serial"
+            | "bigserial"
+    )
+}
 
 /// O centro da janela quando há uma tabela aberta.
 pub fn show<D>(app: &mut App<D>, ui: &mut egui::Ui, key: &DbKey)
@@ -24,6 +75,7 @@ where
     D::Conn: 'static,
 {
     let tokens = theme::current(ui.ctx());
+    let tr = app.tr();
     let Some(tab) = app.workspaces.get(key).and_then(|ws| ws.data().cloned()) else {
         return;
     };
@@ -48,19 +100,24 @@ where
     let mut open_ddl = false;
 
     // Atalhos, antes dos widgets e só na sub-aba Data (fora dela não são consumidos nem agem): ⌘S
-    // abre o Commit; ⌘Z descarta (sem campo em foco: dentro de um campo, ⌘Z é o desfazer do próprio
-    // campo); ⌫ sem campo em foco marca a seleção.
+    // abre a gravação; ⌘Z descarta (sem campo em foco: dentro de um campo, ⌘Z é o desfazer do
+    // próprio campo); ⌘R recarrega a página; ⌫ sem campo em foco marca a seleção.
     let in_data = tab.view == TabView::Data;
+    // Com um modal na tela (paleta, confirmação de fechar, gravação ou DDL), nenhum deles age.
+    let keys = in_data && !app.modal_open();
     let nothing_focused = ui.ctx().memory(|m| m.focused().is_none());
     let shortcut = |key: egui::Key| egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, key);
-    if in_data
+    // Célula aberta também trava: a página nova descartaria o que se digitou (achado do revisor).
+    let can_reload = !tab.loading && !locked && tab.commit.is_none() && tab.editing.is_none();
+    let mut reload = false;
+    if keys
         && locked
         && tab.commit.is_none()
         && ui.input_mut(|i| i.consume_shortcut(&shortcut(egui::Key::S)))
     {
         open_commit = true;
     }
-    if in_data
+    if keys
         && locked
         && tab.commit.is_none()
         && nothing_focused
@@ -68,7 +125,10 @@ where
     {
         discard = true;
     }
-    if in_data
+    if keys && can_reload && ui.input_mut(|i| i.consume_shortcut(&reload_shortcut())) {
+        reload = true;
+    }
+    if keys
         && editable
         && nothing_focused
         && tab.editing.is_none()
@@ -79,147 +139,120 @@ where
         toggle_delete = true;
     }
 
-    egui::Panel::bottom("data-footer").show(ui, |ui| {
-        ui.horizontal(|ui| {
-            // Sub-abas (FEAT-009): Data, Structure e Index, por aba de tabela.
-            for (view, label) in [
-                (TabView::Data, "Data"),
-                (TabView::Structure, "Structure"),
-                (TabView::Index, "Index"),
-            ] {
-                if ui.selectable_label(tab.view == view, label).clicked() && tab.view != view {
+    // A barra da aba: sub-abas (FEAT-009), a tabela com linhas e tamanho, e as ações da sub-aba.
+    egui::Panel::top(egui::Id::new(("data-toolbar", key)))
+        .exact_size(theme::size::BAR)
+        .resizable(false)
+        .frame(
+            egui::Frame::new()
+                .fill(tokens.bg)
+                .inner_margin(egui::Margin::symmetric(theme::space::M as i8, 0)),
+        )
+        .show(ui, |ui| {
+            ui.horizontal_centered(|ui| {
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+                let mut view = tab.view;
+                if widgets::segmented(
+                    ui,
+                    &mut view,
+                    &[
+                        (TabView::Data, tr.view_data()),
+                        (TabView::Structure, tr.view_structure()),
+                        (TabView::Index, tr.view_indexes()),
+                    ],
+                ) {
                     view_change = Some(view);
                 }
-            }
-            ui.separator();
-            if tab.view != TabView::Data {
-                if tab.view == TabView::Structure {
-                    ui.add_enabled(false, egui::Button::new("+ Column"))
-                        .on_disabled_hover_text("não disponível nesta versão");
-                    ui.add_enabled(false, egui::Button::new("Triggers"))
-                        .on_disabled_hover_text("em breve");
-                    if ui
-                        .add_enabled(tab.structure.is_some(), egui::Button::new("DDL"))
-                        .on_hover_text("O CREATE TABLE montado a partir do catálogo")
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if tab.view == TabView::Data {
+                        let reload_label = i18n::shortcut_label(ui.ctx(), &reload_shortcut());
+                        if widgets::icon_button_full(
+                            ui,
+                            can_reload,
+                            icon::REFRESH,
+                            tr.reload(),
+                            Some(&reload_label),
+                            if locked || tab.editing.is_some() {
+                                tr.lock_hint()
+                            } else {
+                                ""
+                            },
+                        )
+                        .clicked()
+                        {
+                            reload = true;
+                        }
+                    }
+                    if tab.view == TabView::Structure
+                        && widgets::button_enabled(
+                            ui,
+                            tab.structure.is_some(),
+                            widgets::ButtonKind::Normal,
+                            Some(icon::SQL),
+                            tr.view_ddl(),
+                            "",
+                        )
                         .clicked()
                     {
                         open_ddl = true;
                     }
-                }
-                return;
-            }
-            ui.add_enabled(false, egui::Button::new("+ Row"))
-                .on_disabled_hover_text("não disponível nesta versão");
-            let can_delete = editable && !tab.selected_rows.is_empty() && tab.commit.is_none();
-            if ui
-                .add_enabled(can_delete, egui::Button::new("Delete"))
-                .on_hover_text("Marca as linhas selecionadas para apagar (⌫); de novo desmarca")
-                .on_disabled_hover_text(if read_only {
-                    READ_ONLY_HINT
-                } else {
-                    "selecione linhas"
-                })
-                .clicked()
-            {
-                toggle_delete = true;
-            }
-            ui.add_enabled(false, egui::Button::new("Filters"))
-                .on_disabled_hover_text("em breve");
-            ui.add_enabled(false, egui::Button::new("Columns"))
-                .on_disabled_hover_text("em breve");
-            if locked {
-                ui.separator();
-                let (updates, deletes) = tab.change_counts();
-                let total = updates + deletes;
-                let chip = if total == 1 {
-                    "1 alteração".to_owned()
-                } else {
-                    format!("{total} alterações")
-                };
-                ui.label(egui::RichText::new(chip).strong().color(tokens.accent));
-                let idle = tab.commit.is_none();
-                if ui
-                    .add_enabled(idle, egui::Button::new("Commit"))
-                    .on_hover_text("Mostra o SQL e executa numa transação (⌘S)")
-                    .clicked()
-                {
-                    open_commit = true;
-                }
-                if ui
-                    .add_enabled(idle, egui::Button::new("Descartar"))
-                    .on_hover_text("Esquece as alterações; nada vai ao banco (⌘Z)")
-                    .clicked()
-                {
-                    discard = true;
-                }
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let shown = tab.rows.as_ref().map(|r| r.rows.len() as u64).unwrap_or(0);
-                let (limit, offset) = (u64::from(tab.page.limit), tab.page.offset);
-                let total = tab.stats.as_ref().map(|s| s.row_count);
-                // Sem total ainda, página cheia sugere que há mais.
-                let can_next = total.is_some_and(|t| offset + limit < t)
-                    || (total.is_none() && shown == limit);
-                let can_prev = offset > 0;
-                let free = !tab.loading && !locked;
-                let lock_hint = if locked { LOCK_HINT } else { "" };
-                if ui
-                    .add_enabled(can_next && free, egui::Button::new("›"))
-                    .on_disabled_hover_text(lock_hint)
-                    .clicked()
-                {
-                    next_page = Some(Page {
-                        offset: offset + limit,
-                        ..tab.page.clone()
+                    if tab.loading {
+                        ui.spinner();
+                    }
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        ui.add_space(theme::space::S);
+                        let name = ui.label(
+                            egui::RichText::new(format!("{}.{}", tab.schema, tab.table))
+                                .family(crate::fonts::strong(ui.ctx()))
+                                .color(tokens.text),
+                        );
+                        if let Some(comment) = tab.stats.as_ref().and_then(|s| s.comment.as_deref())
+                        {
+                            name.on_hover_text(comment);
+                        }
+                        if let Some(stats) = &tab.stats {
+                            ui.label(
+                                egui::RichText::new(
+                                    tr.table_summary(stats.row_count, &stats.total_size),
+                                )
+                                .size(theme::text_size::SMALL)
+                                .color(tokens.text_muted),
+                            )
+                            .on_hover_text(format!(
+                                "{} {} · {} {}",
+                                tr.view_data(),
+                                stats.data_size,
+                                tr.view_indexes(),
+                                stats.index_size
+                            ));
+                        }
+                        if read_only {
+                            ui.label(
+                                egui::RichText::new(tr.read_only_tag())
+                                    .size(theme::text_size::SMALL)
+                                    .color(tokens.text_faint),
+                            );
+                        }
                     });
-                }
-                if ui
-                    .add_enabled(can_prev && free, egui::Button::new("‹"))
-                    .on_disabled_hover_text(lock_hint)
-                    .clicked()
-                {
-                    next_page = Some(Page {
-                        offset: offset.saturating_sub(limit),
-                        ..tab.page.clone()
-                    });
-                }
-                let total_text = total.map_or_else(|| "…".to_owned(), |t| t.to_string());
-                let selected = tab.selected_rows.len();
-                let counter = if selected > 0 {
-                    format!("{selected} of {shown} rows selected")
-                } else if shown == 0 {
-                    format!("0 of {total_text} rows")
-                } else {
-                    format!("{}-{} of {total_text} rows", offset + 1, offset + shown)
-                };
-                ui.label(egui::RichText::new(counter).monospace());
-                ui.add_enabled_ui(free, |ui| {
-                    egui::ComboBox::from_id_salt("page-size")
-                        .selected_text(tab.page.limit.to_string())
-                        .show_ui(ui, |ui| {
-                            for size in PAGE_SIZES {
-                                if ui
-                                    .selectable_label(tab.page.limit == size, size.to_string())
-                                    .clicked()
-                                    && size != tab.page.limit
-                                {
-                                    next_page = Some(Page {
-                                        limit: size,
-                                        offset: 0,
-                                        ..tab.page.clone()
-                                    });
-                                }
-                            }
-                        });
                 });
-                ui.label(
-                    egui::RichText::new("por página")
-                        .small()
-                        .color(tokens.text_muted),
-                );
             });
         });
-    });
+
+    if in_data {
+        footer(
+            ui,
+            tr,
+            &tab,
+            editable,
+            read_only,
+            &mut FooterActions {
+                next_page: &mut next_page,
+                toggle_delete: &mut toggle_delete,
+                open_commit: &mut open_commit,
+                discard: &mut discard,
+            },
+        );
+    }
 
     match tab.view {
         TabView::Structure => crate::structure::show(app, ui, key),
@@ -235,235 +268,252 @@ where
         }
         return;
     }
-    egui::CentralPanel::default_margins().show(ui, |ui| {
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(format!("{}.{}", tab.schema, tab.table)).strong());
-            if read_only {
-                ui.label(
-                    egui::RichText::new(READ_ONLY_HINT)
-                        .small()
-                        .color(tokens.text_muted),
-                );
-            }
-            if let Some(stats) = &tab.stats {
-                ui.label(
-                    egui::RichText::new(format!(
-                        "{} rows · total {} · data {} · index {}",
-                        stats.row_count, stats.total_size, stats.data_size, stats.index_size
+    egui::CentralPanel::default()
+        .frame(egui::Frame::new().fill(tokens.bg))
+        .show(ui, |ui| {
+            if let Some(error) = &tab.error {
+                // O grid já carregado fica; o erro (página ou stats) vai numa faixa em cima dele.
+                let action = (!locked).then(|| tr.retry());
+                egui::Frame::new()
+                    .inner_margin(egui::Margin::symmetric(
+                        theme::space::M as i8,
+                        (theme::space::XS + theme::space::HAIR) as i8,
                     ))
-                    .small()
-                    .color(tokens.text_muted),
-                );
-            }
-            if locked {
-                ui.label(
-                    egui::RichText::new(LOCK_HINT)
-                        .small()
-                        .color(tokens.text_muted),
-                )
-                .on_hover_text(
-                    "Ordenar, paginar, recarregar e trocar de tabela esperam o Commit ou o Descartar",
-                );
-            }
-            if tab.loading {
-                ui.label(
-                    egui::RichText::new("carregando…")
-                        .small()
-                        .color(tokens.text_muted),
-                );
-            }
-        });
-        if let Some(comment) = tab.stats.as_ref().and_then(|s| s.comment.as_deref()) {
-            ui.add(
-                egui::Label::new(
-                    egui::RichText::new(comment)
-                        .small()
-                        .color(tokens.text_muted),
-                )
-                .wrap(),
-            );
-        }
-
-        if let Some(error) = &tab.error {
-            // O grid já carregado fica; o erro (página ou stats) vai numa faixa em cima dele.
-            ui.horizontal(|ui| {
-                ui.colored_label(theme::error_color(), error);
-                if ui
-                    .add_enabled(!locked, egui::Button::new("Tentar de novo").small())
-                    .on_disabled_hover_text(LOCK_HINT)
-                    .clicked()
-                {
-                    retry = true;
-                }
-            });
-            if tab.rows.is_none() {
-                return;
-            }
-        }
-        let Some(rows) = tab.rows.as_ref() else {
-            ui.label(egui::RichText::new("Carregando…").color(tokens.text_muted));
-            return;
-        };
-        let types: Vec<Option<String>> = app
-            .workspaces
-            .get(key)
-            .map(|ws| ws.catalog_columns(&tab.schema, &tab.table, &rows.columns))
-            .unwrap_or_default()
-            .into_iter()
-            .map(|c| c.map(|c| c.data_type.clone()))
-            .collect();
-        // Lidos antes de o TableBuilder tomar o `ui`: ⌘ alterna e ⇧ estende a seleção; Esc cancela a célula.
-        let modifiers = ui.input(|i| i.modifiers);
-        let escape = ui.input(|i| i.key_pressed(egui::Key::Escape));
-        // A Table do egui_extras só rola na vertical: com muitas colunas as da direita ficavam fora
-        // da tela sem jeito de alcançar. O ScrollArea horizontal por fora dá a barra de baixo; a
-        // rolagem vertical continua dentro da tabela (mesmo arranjo da demo oficial do egui).
-        egui::ScrollArea::horizontal()
-            .id_salt(("data-grid-hscroll", key, &tab.schema, &tab.table))
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                // Larguras de coluna e rolagem vertical são de cada tabela de cada banco, não da aba.
-                let mut builder = TableBuilder::new(ui)
-                    .id_salt(("data-table", key, &tab.schema, &tab.table))
-                    .striped(true)
-                    .resizable(true)
-                    .sense(egui::Sense::click())
-                    .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                    .column(TableColumn::exact(48.0));
-                for _ in &rows.columns {
-                    builder = builder.column(TableColumn::initial(140.0).at_least(60.0).clip(true));
-                }
-                builder
-                    .header(ROW_HEIGHT + 4.0, |mut header| {
-                        header.col(|ui| {
-                            ui.label(egui::RichText::new("#").small().color(tokens.text_muted));
-                        });
-                        for (i, name) in rows.columns.iter().enumerate() {
-                            header.col(|ui| {
-                                let current = tab
-                                    .page
-                                    .order
-                                    .as_ref()
-                                    .filter(|o| &o.column == name)
-                                    .map(|o| o.direction);
-                                let arrow = match current {
-                                    Some(Direction::Asc) => " ▲",
-                                    Some(Direction::Desc) => " ▼",
-                                    None => "",
-                                };
-                                let label = ui.add(
-                                    egui::Label::new(
-                                        egui::RichText::new(format!("{name}{arrow}")).strong(),
-                                    )
-                                    .sense(egui::Sense::click()),
-                                );
-                                if let Some(Some(ty)) = types.get(i) {
-                                    ui.label(egui::RichText::new(ty).small().color(tokens.text_muted));
-                                }
-                                if label.clicked() && !tab.loading && !locked {
-                                    // asc → desc → sem ordem
-                                    let order = match current {
-                                        None => Some(Order {
-                                            column: name.clone(),
-                                            direction: Direction::Asc,
-                                        }),
-                                        Some(Direction::Asc) => Some(Order {
-                                            column: name.clone(),
-                                            direction: Direction::Desc,
-                                        }),
-                                        Some(Direction::Desc) => None,
-                                    };
-                                    next_page = Some(Page {
-                                        order,
-                                        offset: 0,
-                                        ..tab.page.clone()
-                                    });
-                                }
-                                if locked {
-                                    label.on_hover_text(LOCK_HINT);
-                                }
-                            });
+                    .show(ui, |ui| {
+                        if widgets::banner(ui, widgets::BannerKind::Error, error, action) {
+                            retry = true;
                         }
+                    });
+                if tab.rows.is_none() {
+                    return;
+                }
+            }
+            let Some(rows) = tab.rows.as_ref() else {
+                ui.add_space(theme::space::L);
+                widgets::loading(ui, tr.loading());
+                return;
+            };
+            // (tipo, chave primária) de cada coluna, pelo catálogo.
+            let catalog: Vec<(Option<String>, bool)> = app
+                .workspaces
+                .get(key)
+                .map(|ws| ws.catalog_columns(&tab.schema, &tab.table, &rows.columns))
+                .unwrap_or_default()
+                .into_iter()
+                .map(|c| {
+                    c.map_or((None, false), |c| {
+                        (Some(c.data_type.clone()), c.is_primary_key)
                     })
-                    .body(|body| {
-                        body.rows(ROW_HEIGHT, rows.rows.len(), |mut row| {
-                            let index = row.index();
-                            let deleted = tab.deleted.contains(&index);
-                            row.set_selected(tab.selected_rows.contains(&index));
-                            row.col(|ui| {
-                                // O número da linha é o alvo de seleção; o resto da linha também seleciona.
-                                let number = (tab.page.offset + index as u64 + 1).to_string();
-                                let mut text = egui::RichText::new(number).small();
-                                if deleted {
-                                    text = text.strikethrough().color(theme::error_color());
+                })
+                .collect();
+            let numeric: Vec<bool> = catalog
+                .iter()
+                .map(|(ty, _)| ty.as_deref().is_some_and(is_numeric_type))
+                .collect();
+            // Lidos antes de o TableBuilder tomar o `ui`: ⌘ alterna e ⇧ estende a seleção; Esc cancela a célula.
+            let modifiers = ui.input(|i| i.modifiers);
+            let escape = ui.input(|i| i.key_pressed(egui::Key::Escape));
+            // A Table do egui_extras só rola na vertical: com muitas colunas as da direita ficavam fora
+            // da tela sem jeito de alcançar. O ScrollArea horizontal por fora dá a barra de baixo; a
+            // rolagem vertical continua dentro da tabela (mesmo arranjo da demo oficial do egui).
+            egui::ScrollArea::horizontal()
+                .id_salt(("data-grid-hscroll", key, &tab.schema, &tab.table))
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    // Larguras de coluna e rolagem vertical são de cada tabela de cada banco, não da aba.
+                    let mut builder = TableBuilder::new(ui)
+                        .id_salt(("data-table", key, &tab.schema, &tab.table))
+                        .striped(true)
+                        .resizable(true)
+                        .sense(egui::Sense::click())
+                        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                        .column(TableColumn::exact(crate::grid::NUMBER_WIDTH));
+                    for _ in &rows.columns {
+                        builder =
+                            builder.column(TableColumn::initial(140.0).at_least(60.0).clip(true));
+                    }
+                    builder
+                        .header(ROW_HEIGHT * 1.6, |mut header| {
+                            header.col(|ui| {
+                                ui.label(
+                                    egui::RichText::new("#")
+                                        .size(theme::text_size::SMALL)
+                                        .color(tokens.text_faint),
+                                );
+                            });
+                            for (i, name) in rows.columns.iter().enumerate() {
+                                header.col(|ui| {
+                                    let current = tab
+                                        .page
+                                        .order
+                                        .as_ref()
+                                        .filter(|o| &o.column == name)
+                                        .map(|o| o.direction);
+                                    let arrow = match current {
+                                        Some(Direction::Asc) => format!(" {}", icon::UP),
+                                        Some(Direction::Desc) => format!(" {}", icon::DOWN),
+                                        None => String::new(),
+                                    };
+                                    let (ty, primary) = catalog.get(i).cloned().unwrap_or_default();
+                                    let key_mark = if primary {
+                                        format!("{} ", icon::KEY)
+                                    } else {
+                                        String::new()
+                                    };
+                                    let mut label = None;
+                                    ui.vertical(|ui| {
+                                        ui.spacing_mut().item_spacing.y = 0.0;
+                                        label = Some(
+                                            ui.add(
+                                                egui::Label::new(
+                                                    egui::RichText::new(format!(
+                                                        "{key_mark}{name}{arrow}"
+                                                    ))
+                                                    .family(crate::fonts::strong(ui.ctx()))
+                                                    .color(tokens.text),
+                                                )
+                                                .selectable(false)
+                                                .sense(egui::Sense::click()),
+                                            ),
+                                        );
+                                        if let Some(ty) = &ty {
+                                            ui.add(
+                                                egui::Label::new(
+                                                    egui::RichText::new(ty)
+                                                        .size(theme::text_size::TINY)
+                                                        .color(tokens.text_faint),
+                                                )
+                                                .selectable(false),
+                                            );
+                                        }
+                                    });
+                                    let Some(label) = label else {
+                                        return;
+                                    };
+                                    if label.clicked() && !tab.loading && !locked {
+                                        // asc → desc → sem ordem
+                                        let order = match current {
+                                            None => Some(Order {
+                                                column: name.clone(),
+                                                direction: Direction::Asc,
+                                            }),
+                                            Some(Direction::Asc) => Some(Order {
+                                                column: name.clone(),
+                                                direction: Direction::Desc,
+                                            }),
+                                            Some(Direction::Desc) => None,
+                                        };
+                                        next_page = Some(Page {
+                                            order,
+                                            offset: 0,
+                                            ..tab.page.clone()
+                                        });
+                                    }
+                                    if locked {
+                                        label.on_hover_text(tr.lock_hint());
+                                    }
+                                });
+                            }
+                        })
+                        .body(|body| {
+                            body.rows(ROW_HEIGHT, rows.rows.len(), |mut row| {
+                                let index = row.index();
+                                let deleted = tab.deleted.contains(&index);
+                                row.set_selected(tab.selected_rows.contains(&index));
+                                row.col(|ui| {
+                                    // O número da linha é o alvo de seleção; o resto da linha também seleciona.
+                                    let number = (tab.page.offset + index as u64 + 1).to_string();
+                                    let mut text = egui::RichText::new(number)
+                                        .size(theme::text_size::SMALL)
+                                        .color(tokens.text_faint);
+                                    if deleted {
+                                        text = text.strikethrough().color(tokens.danger);
+                                    }
+                                    if ui
+                                        .selectable_label(tab.selected_rows.contains(&index), text)
+                                        .clicked()
+                                    {
+                                        select = Some((index, modifiers));
+                                    }
+                                });
+                                for col in 0..rows.columns.len() {
+                                    let editing_here = tab
+                                        .editing
+                                        .as_ref()
+                                        .is_some_and(|e| e.row == index && e.col == col);
+                                    let pending = rows
+                                        .columns
+                                        .get(col)
+                                        .is_some_and(|name| tab.is_pending(index, name));
+                                    let value =
+                                        tab.cell_value(index, col).flatten().map(str::to_owned);
+                                    let (_, response) = row.col(|ui| {
+                                        if editing_here {
+                                            let mut text = tab
+                                                .editing
+                                                .as_ref()
+                                                .map(|e| e.text.clone())
+                                                .unwrap_or_default();
+                                            let field = ui.add(
+                                                egui::TextEdit::singleline(&mut text)
+                                                    .font(egui::TextStyle::Monospace)
+                                                    .background_color(tokens.field)
+                                                    .desired_width(f32::INFINITY),
+                                            );
+                                            if tab.editing.as_ref().is_some_and(|e| e.focus_pending)
+                                            {
+                                                field.request_focus();
+                                            }
+                                            edit_text = Some(text);
+                                            // Enter e Esc soltam o foco sozinhos; clicar fora também confirma.
+                                            if field.lost_focus() {
+                                                finish_edit = Some(!escape);
+                                            }
+                                            return;
+                                        }
+                                        let (fill, ink) = cell_colors(&tokens, pending, deleted);
+                                        if let Some(fill) = fill {
+                                            ui.painter().rect_filled(ui.max_rect(), 0.0, fill);
+                                        }
+                                        let mut text = match &value {
+                                            Some(value) => {
+                                                egui::RichText::new(value).monospace().color(ink)
+                                            }
+                                            None => egui::RichText::new("NULL")
+                                                .italics()
+                                                .size(theme::text_size::SMALL)
+                                                .color(if pending {
+                                                    ink
+                                                } else {
+                                                    tokens.text_faint
+                                                }),
+                                        };
+                                        if deleted {
+                                            text = text.strikethrough();
+                                        }
+                                        // Número à direita, como numa planilha.
+                                        let layout = if numeric.get(col).copied().unwrap_or(false) {
+                                            egui::Layout::right_to_left(egui::Align::Center)
+                                        } else {
+                                            egui::Layout::left_to_right(egui::Align::Center)
+                                        };
+                                        // Sem seleção de texto na célula: o Label selecionável consome o clique e ele
+                                        // não chega à linha (só o número selecionava). Copiar é pelo painel.
+                                        ui.with_layout(layout, |ui| {
+                                            ui.add(egui::Label::new(text).selectable(false));
+                                        });
+                                    });
+                                    if response.double_clicked() && editable && !deleted {
+                                        start_edit = Some((index, col));
+                                    }
                                 }
-                                if ui
-                                    .selectable_label(tab.selected_rows.contains(&index), text)
-                                    .clicked()
-                                {
+                                if row.response().clicked() {
                                     select = Some((index, modifiers));
                                 }
                             });
-                            for col in 0..rows.columns.len() {
-                                let editing_here = tab
-                                    .editing
-                                    .as_ref()
-                                    .is_some_and(|e| e.row == index && e.col == col);
-                                let pending = rows
-                                    .columns
-                                    .get(col)
-                                    .is_some_and(|name| tab.is_pending(index, name));
-                                let value = tab.cell_value(index, col).flatten().map(str::to_owned);
-                                let (_, response) = row.col(|ui| {
-                                    if editing_here {
-                                        let mut text = tab
-                                            .editing
-                                            .as_ref()
-                                            .map(|e| e.text.clone())
-                                            .unwrap_or_default();
-                                        let field = ui.add(
-                                            egui::TextEdit::singleline(&mut text)
-                                                .font(egui::TextStyle::Monospace)
-                                                .desired_width(f32::INFINITY),
-                                        );
-                                        if tab.editing.as_ref().is_some_and(|e| e.focus_pending) {
-                                            field.request_focus();
-                                        }
-                                        edit_text = Some(text);
-                                        // Enter e Esc soltam o foco sozinhos; clicar fora também confirma.
-                                        if field.lost_focus() {
-                                            finish_edit = Some(!escape);
-                                        }
-                                        return;
-                                    }
-                                    if pending {
-                                        ui.painter()
-                                            .rect_filled(ui.max_rect(), 0.0, tokens.accent_soft);
-                                    }
-                                    let mut text = match &value {
-                                        Some(value) => egui::RichText::new(value).monospace(),
-                                        None => egui::RichText::new("NULL")
-                                            .italics()
-                                            .color(tokens.text_muted),
-                                    };
-                                    if deleted {
-                                        text = text.strikethrough().color(theme::error_color());
-                                    }
-                                    // Sem seleção de texto na célula: o Label selecionável consome o clique e ele
-                                    // não chega à linha (só o número selecionava). Copiar é pelo painel.
-                                    ui.add(egui::Label::new(text).selectable(false));
-                                });
-                                if response.double_clicked() && editable && !deleted {
-                                    start_edit = Some((index, col));
-                                }
-                            }
-                            if row.response().clicked() {
-                                select = Some((index, modifiers));
-                            }
                         });
-                    });
-            });
-    });
+                });
+        });
 
     if let Some(view) = view_change {
         app.set_view(key, view);
@@ -493,7 +543,228 @@ where
     }
     if retry {
         app.retry_data(key);
+    } else if reload {
+        app.reload_data(key);
     } else if let Some(page) = next_page {
         app.load_data_page(key, page);
+    }
+}
+
+/// O que o rodapé pede; o `show` age depois de desenhar.
+struct FooterActions<'a> {
+    next_page: &'a mut Option<Page>,
+    toggle_delete: &'a mut bool,
+    open_commit: &'a mut bool,
+    discard: &'a mut bool,
+}
+
+/// O rodapé da sub-aba Dados (telas 7 e 8): a dica de edição ou as pendências com Descartar e
+/// Revisar e gravar; à direita, linhas por página, o contador e a paginação.
+fn footer(
+    ui: &mut egui::Ui,
+    tr: i18n::Tr,
+    tab: &crate::app::DataTab,
+    editable: bool,
+    read_only: bool,
+    acts: &mut FooterActions<'_>,
+) {
+    let tokens = theme::current(ui.ctx());
+    let locked = tab.has_changes();
+    egui::Panel::bottom("data-footer")
+        .exact_size(theme::size::FOOTER)
+        .resizable(false)
+        .frame(
+            egui::Frame::new()
+                .fill(tokens.panel)
+                .inner_margin(egui::Margin::symmetric(theme::space::M as i8, 0)),
+        )
+        .show(ui, |ui| {
+            ui.horizontal_centered(|ui| {
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+                let idle = tab.commit.is_none();
+                if locked {
+                    let (updates, deletes) = tab.change_counts();
+                    widgets::pending_chip(ui, &tr.pending_chip(updates as u64, deletes as u64))
+                        .on_hover_text(tr.lock_detail());
+                    let z = i18n::shortcut_label(
+                        ui.ctx(),
+                        &egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Z),
+                    );
+                    if widgets::button_shortcut(
+                        ui,
+                        idle,
+                        widgets::ButtonKind::Ghost,
+                        Some(icon::UNDO),
+                        tr.discard(),
+                        &z,
+                        "",
+                    )
+                    .clicked()
+                    {
+                        *acts.discard = true;
+                    }
+                    let s = i18n::shortcut_label(
+                        ui.ctx(),
+                        &egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::S),
+                    );
+                    if widgets::button_shortcut(
+                        ui,
+                        idle,
+                        widgets::ButtonKind::Primary,
+                        None,
+                        tr.review_and_commit(),
+                        &s,
+                        "",
+                    )
+                    .clicked()
+                    {
+                        *acts.open_commit = true;
+                    }
+                } else if editable {
+                    ui.label(
+                        egui::RichText::new(tr.double_click_hint())
+                            .size(theme::text_size::SMALL)
+                            .color(tokens.text_faint),
+                    );
+                }
+                // Apagar pelo mouse: só com linha selecionada numa tabela que edita (⌫ faz o mesmo).
+                if editable && !tab.selected_rows.is_empty() && idle && !read_only {
+                    let response = widgets::button(
+                        ui,
+                        widgets::ButtonKind::Ghost,
+                        Some(icon::DELETE),
+                        tr.delete_rows(),
+                    )
+                    .on_hover_text(tr.delete_rows_hint());
+                    if response.clicked() {
+                        *acts.toggle_delete = true;
+                    }
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let shown = tab.rows.as_ref().map(|r| r.rows.len() as u64).unwrap_or(0);
+                    let (limit, offset) = (u64::from(tab.page.limit), tab.page.offset);
+                    let total = tab.stats.as_ref().map(|s| s.row_count);
+                    // Sem total ainda, página cheia sugere que há mais.
+                    let can_next = total.is_some_and(|t| offset + limit < t)
+                        || (total.is_none() && shown == limit);
+                    let can_prev = offset > 0;
+                    let free = !tab.loading && !locked;
+                    let lock_hint = if locked { tr.lock_hint() } else { "" };
+                    if widgets::icon_button_full(
+                        ui,
+                        can_next && free,
+                        icon::NEXT,
+                        tr.next_page(),
+                        None,
+                        lock_hint,
+                    )
+                    .clicked()
+                    {
+                        *acts.next_page = Some(Page {
+                            offset: offset + limit,
+                            ..tab.page.clone()
+                        });
+                    }
+                    if widgets::icon_button_full(
+                        ui,
+                        can_prev && free,
+                        icon::PREVIOUS,
+                        tr.previous_page(),
+                        None,
+                        lock_hint,
+                    )
+                    .clicked()
+                    {
+                        *acts.next_page = Some(Page {
+                            offset: offset.saturating_sub(limit),
+                            ..tab.page.clone()
+                        });
+                    }
+                    let selected = tab.selected_rows.len() as u64;
+                    let counter = if selected > 0 {
+                        tr.selected_rows(selected, shown)
+                    } else if shown == 0 {
+                        tr.page_range(0, 0, total)
+                    } else {
+                        tr.page_range(offset + 1, offset + shown, total)
+                    };
+                    ui.label(
+                        egui::RichText::new(counter)
+                            .monospace()
+                            .color(tokens.text_muted),
+                    );
+                    ui.add_enabled_ui(free, |ui| {
+                        egui::ComboBox::from_id_salt("page-size")
+                            .selected_text(tab.page.limit.to_string())
+                            .width(64.0)
+                            .show_ui(ui, |ui| {
+                                for size in PAGE_SIZES {
+                                    if ui
+                                        .selectable_label(tab.page.limit == size, size.to_string())
+                                        .clicked()
+                                        && size != tab.page.limit
+                                    {
+                                        *acts.next_page = Some(Page {
+                                            limit: size,
+                                            offset: 0,
+                                            ..tab.page.clone()
+                                        });
+                                    }
+                                }
+                            });
+                    })
+                    .response
+                    .on_disabled_hover_text(lock_hint);
+                    ui.label(
+                        egui::RichText::new(tr.rows_per_page())
+                            .size(theme::text_size::SMALL)
+                            .color(tokens.text_faint),
+                    );
+                });
+            });
+        });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pendencia_e_exclusao_pintam_a_celula_por_cima_da_selecao() {
+        for which in [egui::Theme::Light, egui::Theme::Dark] {
+            let t = Tokens::for_theme(which);
+            let selection = theme::visuals(which).selection.bg_fill;
+            let (fill, ink) = cell_colors(&t, true, false);
+            assert_eq!(fill, Some(t.pending));
+            assert_eq!(ink, t.pending_ink);
+            assert_ne!(fill, Some(selection), "pendência igual à seleção");
+            // Exclusão vence a pendência: a linha inteira vai sair.
+            assert_eq!(cell_colors(&t, true, true).0, Some(t.danger_soft));
+            assert_eq!(cell_colors(&t, false, false), (None, t.text));
+        }
+    }
+
+    #[test]
+    fn numeros_alinham_a_direita_pelo_tipo() {
+        for ty in [
+            "integer",
+            "bigint",
+            "numeric(12,2)",
+            "double precision",
+            " INT8 ",
+        ] {
+            assert!(is_numeric_type(ty), "{ty}");
+        }
+        for ty in [
+            "text",
+            "character varying(80)",
+            "timestamptz",
+            "uuid",
+            "",
+            "integer[]",
+            "numeric(12,2)[]",
+        ] {
+            assert!(!is_numeric_type(ty), "{ty}");
+        }
     }
 }

@@ -10,13 +10,14 @@ use std::time::{Duration, Instant};
 
 use hy_dbplus_engine::{
     ChangeSet, Column, ConnectionId, ConnectionStore, DatabaseInfo, Driver, Event, Function,
-    Outcome, Page, PostgresDriver, QueryStore, QueryTabId, RowUpdate, Schema, SecretStore,
-    Sessions, Table, TableStats, TableStructure, Template, TextRows, preview_sql, table_ddl,
-    template_sql,
+    Language, Outcome, Page, PostgresDriver, PreferenceStore, QueryStore, QueryTabId, RowUpdate,
+    Schema, SecretStore, Sessions, Table, TableStats, TableStructure, Template, TextRows,
+    preview_sql, table_ddl, template_sql,
 };
 
 use crate::connections::{ConnectionForm, Connections};
-use crate::theme;
+use crate::i18n::{self, Tr};
+use crate::{fonts, theme, widgets};
 
 /// O app com o driver PostgreSQL, como o binário o cria.
 pub type PgApp = App<PostgresDriver>;
@@ -27,6 +28,8 @@ pub struct Deps<D: Driver> {
     pub secrets: Box<dyn SecretStore>,
     /// As queries das abas SQL em arquivo (FEAT-011).
     pub queries: QueryStore,
+    /// As preferências (idioma da interface; FEAT-015).
+    pub preferences: PreferenceStore,
     pub sessions: Sessions<D>,
     pub events: Receiver<Event>,
 }
@@ -117,11 +120,11 @@ impl Tab {
     }
 
     /// O rótulo da aba: `tabela` (ou `schema.tabela` fora do schema atual) ou o título da SQL.
-    pub fn title(&self, current_schema: Option<&str>) -> String {
+    pub fn title(&self, current_schema: Option<&str>, tr: Tr) -> String {
         match self {
             Tab::Table(t) if current_schema == Some(t.schema.as_str()) => t.table.clone(),
             Tab::Table(t) => format!("{}.{}", t.schema, t.table),
-            Tab::Query(q) => q.title.clone(),
+            Tab::Query(q) => q.title(tr),
         }
     }
 
@@ -153,17 +156,18 @@ pub struct QueryResult {
     pub selected_row: Option<usize>,
 }
 
-/// Uma aba "SQL Query" (FEAT-010): o buffer, o limite, a execução em curso e os resultados.
+/// Uma aba de SQL, "Consulta N" (FEAT-010): o buffer, o limite, a execução em curso e os resultados.
 #[derive(Debug, Clone)]
 pub struct QueryTab {
     pub id: QueryTabId,
-    pub title: String,
     pub buffer: String,
     /// Cursor do editor, em caracteres (o egui conta assim); vira byte para `statement_at`.
     pub cursor: usize,
     pub limit: Option<usize>,
     pub running: bool,
     pub started: Option<Instant>,
+    /// Quantos statements a execução em curso manda (o `total` do `SqlStarted`): "consulta 2 de 3".
+    pub run_total: usize,
     pub results: Vec<QueryResult>,
     /// Número da última execução (de `App::run_counter`, um só por processo): entra no id da tabela e
     /// da rolagem dos resultados, para o grid de uma execução nova não herdar rolagem nem larguras
@@ -171,7 +175,10 @@ pub struct QueryTab {
     /// antigo ainda está na memória do egui.
     pub run_seq: u64,
     pub active_result: usize,
-    pub notice: Option<String>,
+    pub notice: Option<QueryNotice>,
+    /// O aviso da execução que acabou de ser pedida (statement incompleto): vira o `notice` no
+    /// `SqlStarted`, que limpa o aviso anterior.
+    pub run_notice: Option<QueryNotice>,
     /// O texto como está no arquivo (FEAT-011): só grava de novo quando o buffer mudou.
     pub saved: String,
     /// O texto cuja gravação falhou: o varrimento por frame não tenta de novo até ele mudar (sem
@@ -181,10 +188,55 @@ pub struct QueryTab {
     /// buffer e o cursor vai para ele); o editor consome, grava no estado do widget e pede o foco.
     pub pending_cursor: Option<usize>,
     /// A análise do buffer (tokens, statements, spans) do último frame; o editor refaz quando o
-    /// texto muda e o Run Current a reaproveita (FEAT-012).
+    /// texto muda e o Executar a reaproveita (FEAT-012).
     pub analysis: Option<hy_dbplus_sql::Analysis>,
     /// O popup de autocomplete aberto (FEAT-012): o que ele mostra e o item escolhido.
     pub completion: Option<CompletionState>,
+}
+
+/// Um aviso da aba SQL, traduzido na hora de mostrar (FEAT-015): o idioma pode mudar com ele na
+/// tela. Erro do sistema ou do servidor vem como o sistema devolve.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum QueryNotice {
+    Cancelled,
+    /// Outra execução roda neste banco (o engine recusou).
+    OtherRunning,
+    /// Esta aba já está executando.
+    AlreadyRunning,
+    NothingToRun,
+    /// Uma gravação do grid está em curso neste banco.
+    CommitRunning,
+    Incomplete,
+    /// Statement incompleto com `;` depois: não roda.
+    IncompleteSplit,
+    /// O COMMIT de uma transação abortada virou ROLLBACK.
+    CommitUndone,
+    /// O arquivo da consulta não foi salvo: o erro do sistema.
+    SaveFailed(String),
+    /// O SQL gerado não saiu: `schema.tabela: erro do servidor`.
+    Server(String),
+}
+
+impl QueryNotice {
+    pub fn text(&self, tr: Tr) -> String {
+        match self {
+            Self::Cancelled => tr.notice_cancelled().to_owned(),
+            Self::OtherRunning => tr.notice_other_running().to_owned(),
+            Self::AlreadyRunning => tr.notice_already_running().to_owned(),
+            Self::NothingToRun => tr.notice_nothing_to_run().to_owned(),
+            Self::CommitRunning => tr.notice_commit_running().to_owned(),
+            Self::Incomplete => tr.notice_incomplete().to_owned(),
+            Self::IncompleteSplit => tr.notice_incomplete_split().to_owned(),
+            Self::CommitUndone => tr.notice_commit_undone().to_owned(),
+            Self::SaveFailed(error) => tr.save_query_failed(tr.this_query(), error),
+            Self::Server(message) => message.clone(),
+        }
+    }
+
+    /// Erro (faixa vermelha) ou aviso (âmbar).
+    pub fn is_error(&self) -> bool {
+        matches!(self, Self::SaveFailed(_) | Self::Server(_))
+    }
 }
 
 /// O popup de autocomplete de uma aba (FEAT-012): o trecho a substituir e os itens vêm do motor
@@ -219,22 +271,28 @@ impl QueryTab {
     pub fn new(id: QueryTabId) -> Self {
         Self {
             id,
-            title: format!("SQL Query {id}"),
             buffer: String::new(),
             cursor: 0,
             limit: DEFAULT_LIMIT,
             running: false,
             started: None,
+            run_total: 0,
             results: Vec::new(),
             run_seq: 0,
             active_result: 0,
             notice: None,
+            run_notice: None,
             saved: String::new(),
             save_failed: None,
             pending_cursor: None,
             analysis: None,
             completion: None,
         }
+    }
+
+    /// O título na aba e nas confirmações: "Consulta 1".
+    pub fn title(&self, tr: Tr) -> String {
+        tr.query_title(u64::from(self.id))
     }
 
     /// Uma aba que volta do arquivo ao abrir o banco: o texto, sem resultados.
@@ -320,7 +378,7 @@ pub struct Workspace {
     /// Um `BEGIN` do editor sem `COMMIT`/`ROLLBACK`: a transação é da conexão do banco, não da
     /// aba; todas as abas SQL avisam e o Commit do grid espera.
     pub open_transaction: bool,
-    /// O último número de aba SQL deste banco (`SQL Query n`, arquivo `n.sql`): a numeração é por
+    /// O último número de aba SQL deste banco (`Consulta n`, arquivo `n.sql`): a numeração é por
     /// banco, para a aba e o arquivo casarem (FEAT-011).
     pub next_query_id: QueryTabId,
     /// Um erro dentro da transação aberta (qualquer um, inclusive cancel): o servidor a marca como
@@ -457,10 +515,6 @@ pub struct CommitDialog {
     pub failed: Option<usize>,
 }
 
-/// Aviso quando uma página nova chega com edição pendente (não deveria acontecer: a navegação trava).
-pub const DROPPED_HINT: &str =
-    "A página foi recarregada e as alterações pendentes foram descartadas";
-
 /// A aba Data de uma tabela (tela 3.4): página atual, ordenação, contagem, tamanhos, seleção e as
 /// edições pendentes (FEAT-007).
 #[derive(Debug, Clone)]
@@ -593,15 +647,16 @@ impl DataTab {
     }
 
     /// A página pedida chegou: troca as linhas e limpa a seleção. Pendência, edição ou caixa sobre
-    /// a página antiga são descartadas com aviso (os índices apontariam outras linhas); devolve
-    /// se descartou algo.
+    /// a página antiga são descartadas (os índices apontariam outras linhas); devolve se descartou
+    /// algo, e quem chama põe o aviso no idioma da interface (não deveria acontecer: a navegação
+    /// trava).
     pub fn accept_page(&mut self, page: Page, rows: TextRows) -> bool {
         let dropped = self.has_changes() || self.editing.is_some() || self.commit.is_some();
         self.page = page;
         self.requested = None;
         self.rows = Some(Arc::new(rows));
         self.loading = false;
-        self.error = dropped.then(|| DROPPED_HINT.to_owned());
+        self.error = None;
         self.selected_rows.clear();
         self.anchor = None;
         self.clear_changes();
@@ -665,11 +720,11 @@ pub struct Palette {
 }
 
 /// Por que o lote não pôde ser montado: sem chave, ou uma linha da página sem valor de chave.
-fn batch_error(keys: &[String]) -> &'static str {
+fn batch_error(tr: Tr, keys: &[String]) -> String {
     if keys.is_empty() {
-        "a tabela não tem chave primária: só leitura"
+        tr.edit_error(&hy_dbplus_engine::EditError::NoPrimaryKey)
     } else {
-        "não foi possível montar o lote: linha sem chave na página; descarte e recarregue"
+        tr.batch_missing_key().to_owned()
     }
 }
 
@@ -728,10 +783,6 @@ fn undoes_commit(effect: TxEffect, aborted: bool) -> bool {
     aborted && matches!(effect, TxEffect::Commits { .. })
 }
 
-/// Erro do Commit do grid quando o editor SQL do banco está executando.
-const SQL_RUNNING_ERROR: &str =
-    "há uma execução em curso no editor SQL deste banco: aguarde o resultado antes do Commit";
-
 pub struct App<D: Driver> {
     pub(crate) deps: Deps<D>,
     pub(crate) view: View,
@@ -756,6 +807,8 @@ pub struct App<D: Driver> {
     pub(crate) form: Option<ConnectionForm>,
     /// Último erro de arquivo ou chaveiro, mostrado no rodapé até o próximo sucesso.
     pub(crate) notice: Option<String>,
+    /// O idioma da interface (FEAT-015).
+    pub(crate) lang: Language,
 }
 
 impl<D> App<D>
@@ -763,13 +816,20 @@ where
     D: Driver + 'static,
     D::Conn: 'static,
 {
-    /// Cria o app e aplica o tema ao contexto do egui.
+    /// Cria o app, aplica o tema e as fontes ao contexto do egui e escolhe o idioma: o guardado
+    /// nas preferências ou, sem ele, o do sistema.
     pub fn new(cc: &eframe::CreationContext<'_>, deps: Deps<D>) -> Self {
         theme::apply(&cc.egui_ctx);
-        Self::with_deps(deps)
+        fonts::install(&cc.egui_ctx);
+        let lang = i18n::resolve(deps.preferences.language(), i18n::system_language);
+        let mut app = Self::with_deps(deps);
+        app.lang = lang;
+        app
     }
 
-    /// Sem o `CreationContext`: para testes e para o `egui_kittest`.
+    /// Sem o `CreationContext`: para testes e para o `egui_kittest`. O idioma fica fixo em
+    /// português, para os testes não dependerem da máquina; nem as preferências nem o sistema
+    /// são lidos.
     pub fn with_deps(deps: Deps<D>) -> Self {
         Self {
             deps,
@@ -788,6 +848,40 @@ where
             connections: Connections::default(),
             form: None,
             notice: None,
+            lang: Language::PtBr,
+        }
+    }
+
+    /// Os textos no idioma atual.
+    pub(crate) fn tr(&self) -> Tr {
+        Tr(self.lang)
+    }
+
+    /// O seletor PT | EN (tela de conexões e barra superior): troca o idioma no mesmo frame
+    /// seguinte e guarda a escolha.
+    pub(crate) fn language_switch(&mut self, ui: &mut egui::Ui) {
+        let mut lang = self.lang;
+        let hint = self.tr().language_hint();
+        ui.scope(|ui| {
+            let changed = widgets::segmented(
+                ui,
+                &mut lang,
+                &[(Language::PtBr, "PT"), (Language::En, "EN")],
+            );
+            if changed {
+                self.set_language(lang);
+            }
+        })
+        .response
+        .on_hover_text(hint);
+    }
+
+    /// Troca o idioma na hora e guarda a escolha. Erro ao gravar vira aviso; a troca vale na
+    /// sessão mesmo assim.
+    pub(crate) fn set_language(&mut self, lang: Language) {
+        self.lang = lang;
+        if self.deps.preferences.set_language(lang).is_err() {
+            self.notice = Some(self.tr().language_save_failed().to_owned());
         }
     }
 
@@ -801,7 +895,11 @@ where
     /// Aplica um evento do engine ao estado (separado para os testes injetarem eventos).
     pub(crate) fn apply_event(&mut self, event: Event) {
         let id = event.connection().clone();
+        let tr = self.tr();
         match event {
+            Event::TestFinished { result, .. } => {
+                crate::connections::test_finished(self, &id, result);
+            }
             Event::Connecting { .. } => {
                 self.status.insert(id, Status::Connecting);
             }
@@ -822,7 +920,8 @@ where
                 self.view = View::Workspace;
             }
             Event::Failed { error, .. } => {
-                self.status.insert(id, Status::Failed(error.to_string()));
+                self.status
+                    .insert(id, Status::Failed(tr.driver_error(&error)));
             }
             Event::Disconnected { .. } => {
                 // Conexão já removida da lista não volta ao mapa.
@@ -871,7 +970,7 @@ where
                         }
                         Err(e) => {
                             if let Some(state) = self.conn_state.get_mut(&id) {
-                                state.error = Some(format!("queries salvas: {e}"));
+                                state.error = Some(tr.saved_queries_failed(&tr.engine_error(&e)));
                             }
                         }
                     }
@@ -930,8 +1029,9 @@ where
                 if let Some(tab) = self
                     .data_tab_mut(&id, &database, &schema, &table)
                     .filter(|t| t.requested.as_ref() == Some(&page))
+                    && tab.accept_page(page, rows)
                 {
-                    tab.accept_page(page, rows);
+                    tab.error = Some(tr.page_dropped().to_owned());
                 }
             }
             Event::DataFailed {
@@ -946,7 +1046,7 @@ where
                 // fica: se a falha foi dos stats, a página em voo ainda chega; se foi dela, "Tentar de novo" a repete.
                 if let Some(tab) = self.data_tab_mut(&id, &database, &schema, &table) {
                     tab.loading = false;
-                    tab.error = Some(error.to_string());
+                    tab.error = Some(tr.driver_error(&error));
                 }
             }
             Event::StructureLoaded {
@@ -975,20 +1075,31 @@ where
                 // novo" delas pede a estrutura de novo.
                 if let Some(tab) = self.data_tab_mut(&id, &database, &schema, &table) {
                     tab.structure_requested = false;
-                    tab.structure_error = Some(error.to_string());
+                    tab.structure_error = Some(tr.driver_error(&error));
                 }
-                self.discard_pending_sql(&(id, database), &schema, &table, &error.to_string());
+                self.discard_pending_sql(
+                    &(id, database),
+                    &schema,
+                    &table,
+                    &tr.driver_error(&error),
+                );
             }
-            Event::SqlStarted { database, tab, .. } => {
+            Event::SqlStarted {
+                database,
+                tab,
+                total,
+                ..
+            } => {
                 self.run_counter = self.run_counter.wrapping_add(1);
                 let run_seq = self.run_counter;
                 if let Some(q) = self.query_tab_mut(&id, &database, tab) {
                     q.running = true;
                     q.started = Some(Instant::now());
                     q.run_seq = run_seq;
+                    q.run_total = total;
                     q.results.clear();
                     q.active_result = 0;
-                    q.notice = None;
+                    q.notice = q.run_notice.take();
                 }
             }
             Event::SqlResult {
@@ -1028,16 +1139,13 @@ where
                     q.results.push(QueryResult {
                         index,
                         sql,
-                        result: result.map_err(|e| e.to_string()),
+                        result: result.map_err(|e| tr.driver_error(&e)),
                         elapsed,
                         selected_row: None,
                     });
                     q.active_result = q.results.len() - 1;
                     if commit_undone {
-                        q.notice = Some(
-                            "A transação estava abortada: o COMMIT virou ROLLBACK, nada foi gravado"
-                                .into(),
-                        );
+                        q.notice = Some(QueryNotice::CommitUndone);
                     }
                 }
             }
@@ -1051,14 +1159,14 @@ where
                     q.running = false;
                     q.started = None;
                     if cancelled {
-                        q.notice = Some("Execução cancelada".into());
+                        q.notice = Some(QueryNotice::Cancelled);
                     }
                 }
             }
             Event::SqlBusy { database, tab, .. } => {
                 if let Some(q) = self.query_tab_mut(&id, &database, tab) {
-                    q.notice =
-                        Some("Outra execução ainda roda neste banco; aguarde ou cancele".into());
+                    q.run_notice = None;
+                    q.notice = Some(QueryNotice::OtherRunning);
                 }
             }
             Event::DatabaseClosed { database, .. } => {
@@ -1103,10 +1211,10 @@ where
                     match tab.commit.as_mut() {
                         Some(dialog) => {
                             dialog.running = false;
-                            dialog.error = Some(error);
+                            dialog.error = Some(tr.change_error(&error));
                             dialog.failed = position;
                         }
-                        None => tab.error = Some(error),
+                        None => tab.error = Some(tr.change_error(&error)),
                     }
                 }
             }
@@ -1117,7 +1225,7 @@ where
                 // aberto (schema que não carregou: vai à árvore dele).
                 if let Some(ws) = self.workspaces.get_mut(&(id.clone(), database.clone())) {
                     ws.loading = false;
-                    ws.error = Some(error.to_string());
+                    ws.error = Some(tr.driver_error(&error));
                     // O SQL do menu que esperava as colunas não vem mais; o erro já está na árvore.
                     ws.pending_sql = None;
                     // Popup de autocomplete em "carregando colunas…" também não.
@@ -1130,7 +1238,7 @@ where
                     if state.opening.as_deref() == Some(database.as_str()) {
                         state.opening = None;
                     }
-                    state.error = Some(format!("{database}: {error}"));
+                    state.error = Some(format!("{database}: {}", tr.driver_error(&error)));
                 }
             }
         }
@@ -1250,6 +1358,7 @@ where
     /// Grava o texto da aba SQL `index` se mudou desde o último salvamento (texto vazio apaga o
     /// arquivo). Falha vai ao aviso da aba e não trava nada.
     pub(crate) fn save_query_tab(&mut self, key: &DbKey, index: usize) -> Result<(), String> {
+        let tr = self.tr();
         let Some(q) = self
             .workspaces
             .get_mut(key)
@@ -1268,8 +1377,9 @@ where
                 Ok(())
             }
             Err(e) => {
-                let message = format!("não foi possível salvar a query {}: {e}", q.title);
-                q.notice = Some(message.clone());
+                let error = tr.engine_error(&e);
+                let message = tr.save_query_failed(&q.title(tr), &error);
+                q.notice = Some(QueryNotice::SaveFailed(error));
                 q.save_failed = Some(q.buffer.clone());
                 Err(message)
             }
@@ -1329,6 +1439,7 @@ where
     /// "Descartar e fechar" de uma aba SQL: apaga o arquivo dela e esvazia o buffer, para o
     /// fechamento não salvar de novo. Falha ao apagar deixa `saved` como estava: o arquivo ficou.
     fn discard_query_tab(&mut self, key: &DbKey, index: usize) {
+        let tr = self.tr();
         let Some(q) = self
             .workspaces
             .get_mut(key)
@@ -1342,7 +1453,7 @@ where
             Ok(()) => q.saved.clear(),
             Err(e) => {
                 if let Some(state) = self.conn_state.get_mut(&key.0) {
-                    state.error = Some(format!("não foi possível apagar a query salva: {e}"));
+                    state.error = Some(tr.delete_query_failed(&tr.engine_error(&e)));
                 }
             }
         }
@@ -1409,6 +1520,43 @@ where
             .load_page(id, database, schema, table, page);
     }
 
+    /// Há um diálogo da aba de tabela aberto (gravação ou DDL) no banco ativo. Com ele, os atalhos
+    /// do workspace (⌘K, ⌘T, ⌘W) não agem: abririam outro modal por cima ou trocariam a aba debaixo
+    /// dele (achado do revisor: com a paleta sobre a gravação, um Esc fechava as duas). Só conta o
+    /// banco ativo da conexão em foco, o único cujo diálogo está na tela.
+    pub(crate) fn table_dialog_open(&self) -> bool {
+        self.active
+            .as_ref()
+            .filter(|k| Some(&k.0) == self.focus.as_ref())
+            .and_then(|key| self.workspaces.get(key))
+            .and_then(|ws| ws.data())
+            .is_some_and(|tab| tab.commit.is_some() || tab.ddl_open)
+    }
+
+    /// Algum modal na tela: a paleta, a confirmação de fechar ou um diálogo da aba de tabela. Com
+    /// ele, os atalhos do workspace, da aba de dados e do editor não agem: abririam outro modal por
+    /// cima ou mudariam o que está debaixo dele (achado do revisor: ⌘S com a paleta aberta abria a
+    /// gravação por baixo dela, e o ⌘↩ seguinte ia para a paleta).
+    pub(crate) fn modal_open(&self) -> bool {
+        self.palette.is_some() || self.confirm_close.is_some() || self.table_dialog_open()
+    }
+
+    /// Recarregar (⌘R): a mesma página e os tamanhos de novo (o total do rodapé e a próxima página
+    /// dependem deles). Com pendência, nada sai (`load_tab_page` trava).
+    pub(crate) fn reload_data(&mut self, key: &DbKey) {
+        let Some(tab) = self.workspaces.get(key).and_then(|ws| ws.data()) else {
+            return;
+        };
+        if tab.has_changes() {
+            return;
+        }
+        let (schema, table, page) = (tab.schema.clone(), tab.table.clone(), tab.page.clone());
+        self.load_data_page(key, page);
+        self.deps
+            .sessions
+            .load_stats(&key.0, &key.1, &schema, &table);
+    }
+
     /// Repete a página pedida (ou a atual) e, se os tamanhos ainda não vieram, os stats.
     pub(crate) fn retry_data(&mut self, key: &DbKey) {
         let Some(ws) = self.workspaces.get(key) else {
@@ -1471,7 +1619,7 @@ where
         self.workspaces.iter().any(|(k, ws)| k.0 == id && ws.busy())
     }
 
-    /// **+ SQL** (⌘T): uma aba "SQL Query N" nova no banco, ativa.
+    /// **+ SQL** (⌘T): uma aba "Consulta N" nova no banco, ativa.
     pub(crate) fn open_query_tab(&mut self, key: &DbKey) {
         let Some(ws) = self.workspaces.get_mut(key) else {
             return;
@@ -1595,7 +1743,7 @@ where
         ws.pending_sql = None;
         let message = format!("{schema}.{table}: {error}");
         match query_target(ws).and_then(|i| ws.tabs.get_mut(i).and_then(Tab::query_mut)) {
-            Some(q) => q.notice = Some(message),
+            Some(q) => q.notice = Some(QueryNotice::Server(message)),
             None => {
                 if let Some(state) = self.conn_state.get_mut(&key.0) {
                     state.error = Some(message);
@@ -1605,7 +1753,7 @@ where
     }
 
     /// Põe o SQL no fim da aba SQL ativa (ou da última do banco, ou de uma nova), separado por uma
-    /// linha em branco, com o cursor no começo dele: Run Current roda exatamente ele.
+    /// linha em branco, com o cursor no começo dele: Executar roda exatamente ele.
     fn insert_sql(&mut self, key: &DbKey, sql: &str) {
         if self.workspaces.get(key).and_then(query_target).is_none() {
             self.open_query_tab(key);
@@ -1633,7 +1781,19 @@ where
         q.completion = None;
     }
 
-    /// Run Current (⌘↩): o statement sob o cursor.
+    /// "Executar ROLLBACK" da faixa de transação abortada (FEAT-015, AC-012): o `ROLLBACK` vai pela
+    /// mesma execução do editor, com as mesmas travas, e o estado da transação segue o resultado.
+    pub(crate) fn run_rollback(&mut self, key: &DbKey) {
+        if self
+            .workspaces
+            .get(key)
+            .is_some_and(|ws| ws.transaction_aborted)
+        {
+            self.run(key, vec!["ROLLBACK".to_owned()]);
+        }
+    }
+
+    /// Executar (⌘↩): o statement sob o cursor.
     pub(crate) fn run_current(&mut self, key: &DbKey) {
         let Some(q) = self.workspaces.get(key).and_then(|ws| ws.query()) else {
             return;
@@ -1646,22 +1806,23 @@ where
             // A cauda incompleta vai até o fim do buffer e pode levar statements inteiros que o
             // usuário não pediu (o tokenizador erra em sintaxe que o servidor aceita): não roda.
             if let Some(q) = self.workspaces.get_mut(key).and_then(|ws| ws.query_mut()) {
-                q.notice = Some(
-                    "Statement incompleto (string, $$ ou comentário sem fechar) com `;` depois: o \
-                     editor não sabe onde ele termina. Corrija, tire o `;` ou use Run All"
-                        .into(),
-                );
+                q.notice = Some(QueryNotice::IncompleteSplit);
             }
             return;
         }
         let incomplete = !statement.complete;
-        self.run(key, vec![statement.sql]);
-        if incomplete && let Some(q) = self.workspaces.get_mut(key).and_then(|ws| ws.query_mut()) {
-            q.notice = Some("Statement incompleto (string, $$ ou comentário sem fechar)".into());
+        let started = self.run(key, vec![statement.sql]);
+        // O `SqlStarted` limpa o aviso da aba: o desta execução vai junto com ele, senão sumia antes
+        // de aparecer (achado do revisor, fase E).
+        if started
+            && incomplete
+            && let Some(q) = self.workspaces.get_mut(key).and_then(|ws| ws.query_mut())
+        {
+            q.run_notice = Some(QueryNotice::Incomplete);
         }
     }
 
-    /// Run All (⌘⇧↩): todos os statements do buffer, em ordem; o engine para no primeiro erro.
+    /// Executar tudo (⌘⇧↩): todos os statements do buffer, em ordem; o engine para no primeiro erro.
     pub(crate) fn run_all(&mut self, key: &DbKey) {
         let Some(q) = self.workspaces.get(key).and_then(|ws| ws.query()) else {
             return;
@@ -1673,9 +1834,10 @@ where
         self.run(key, statements);
     }
 
-    fn run(&mut self, key: &DbKey, statements: Vec<String>) {
+    /// Manda os statements ao engine; `false` quando não mandou (o aviso da aba diz por quê).
+    fn run(&mut self, key: &DbKey, statements: Vec<String>) -> bool {
         let Some(ws) = self.workspaces.get_mut(key) else {
-            return;
+            return false;
         };
         // Commit do grid em curso neste banco: o editor esperaria o lock da conexão e um Cancelar
         // dele derrubaria o lote no servidor (o cancel é por conexão, não por statement).
@@ -1684,24 +1846,25 @@ where
             .iter()
             .any(|t| matches!(t, Tab::Table(t) if t.commit_running()));
         let Some(q) = ws.query_mut() else {
-            return;
+            return false;
         };
         if commit_running {
-            q.notice = Some("Há um Commit em curso neste banco; aguarde o resultado".into());
-            return;
+            q.notice = Some(QueryNotice::CommitRunning);
+            return false;
         }
         if q.running {
-            q.notice = Some("Já há uma execução em curso; aguarde ou cancele".into());
-            return;
+            q.notice = Some(QueryNotice::AlreadyRunning);
+            return false;
         }
         if statements.is_empty() {
-            q.notice = Some("Nada para executar".into());
-            return;
+            q.notice = Some(QueryNotice::NothingToRun);
+            return false;
         }
         let (id, limit) = (q.id, q.limit);
         self.deps
             .sessions
             .run_sql(&key.0, &key.1, id, statements, limit);
+        true
     }
 
     pub(crate) fn cancel_sql(&mut self, key: &DbKey) {
@@ -1715,7 +1878,7 @@ where
         }
     }
 
-    /// Beautify (⌘I): o buffer inteiro; `sql::beautify` devolve a entrada intacta se não puder.
+    /// Formatar (⌘I): o buffer inteiro; `sql::beautify` devolve a entrada intacta se não puder.
     pub(crate) fn beautify(&mut self, key: &DbKey) {
         if let Some(q) = self.workspaces.get_mut(key).and_then(|ws| ws.query_mut()) {
             let formatted = hy_dbplus_sql::beautify(&q.buffer);
@@ -1793,8 +1956,9 @@ where
             self.confirm_close = Some(CloseTarget::Database(key.clone()));
         } else if let Err(e) = self.save_workspace_queries(key) {
             // Não fecha sem o texto salvo: a aba fica na tela com o aviso.
+            let message = self.tr().database_still_open(&e);
             if let Some(state) = self.conn_state.get_mut(&key.0) {
-                state.error = Some(format!("o banco continua aberto: {e}"));
+                state.error = Some(message);
             }
         } else {
             self.deps.sessions.close_database(&key.0, &key.1);
@@ -1823,12 +1987,66 @@ where
         match first_error {
             // Não desconecta sem o texto salvo: a aba fica na tela com o aviso.
             Some(e) => {
+                let message = self.tr().connection_still_open(&e);
                 if let Some(state) = self.conn_state.get_mut(id) {
-                    state.error = Some(format!("a conexão continua aberta: {e}"));
+                    state.error = Some(message);
                 }
             }
             None => self.deps.sessions.disconnect(id),
         }
+    }
+
+    /// As abas de tabela com pendência que fechar o alvo perderia, na ordem da faixa e das abas.
+    pub(crate) fn pending_tabs(&self, target: &CloseTarget) -> Vec<(DbKey, usize)> {
+        let keys: Vec<DbKey> = match target {
+            CloseTarget::Tab(key, _) | CloseTarget::Database(key) => vec![key.clone()],
+            CloseTarget::Connection(id) => self.workspace_keys_of(id),
+        };
+        let mut found = Vec::new();
+        for key in keys {
+            let Some(ws) = self.workspaces.get(&key) else {
+                continue;
+            };
+            for (i, tab) in ws.tabs.iter().enumerate() {
+                if let CloseTarget::Tab(_, index) = target
+                    && *index != i
+                {
+                    continue;
+                }
+                if tab.table().is_some_and(DataTab::has_changes) {
+                    found.push((key.clone(), i));
+                }
+            }
+        }
+        found
+    }
+
+    /// (alterações, exclusões) pendentes que fechar o alvo perderia.
+    pub(crate) fn pending_counts(&self, target: &CloseTarget) -> (usize, usize) {
+        self.pending_tabs(target)
+            .iter()
+            .filter_map(|(key, i)| self.workspaces.get(key)?.tabs.get(*i)?.table())
+            .map(DataTab::change_counts)
+            .fold((0, 0), |(u, d), (a, b)| (u + a, d + b))
+    }
+
+    /// "Revisar e gravar" na confirmação de fechar: nada fecha; a primeira aba com pendência vira
+    /// a ativa, na sub-aba Data, e a caixa de gravação dela abre.
+    pub(crate) fn review_pending(&mut self) {
+        let Some(target) = self.confirm_close.take() else {
+            return;
+        };
+        let Some((key, index)) = self.pending_tabs(&target).into_iter().next() else {
+            return;
+        };
+        self.activate(&key);
+        if let Some(ws) = self.workspaces.get_mut(&key) {
+            ws.active_tab = Some(index);
+            if let Some(tab) = ws.tabs.get_mut(index).and_then(Tab::table_mut) {
+                tab.view = TabView::Data;
+            }
+        }
+        self.open_commit(&key);
     }
 
     /// "Descartar e fechar" na confirmação. Descartar uma aba SQL apaga o arquivo dela; descartar o
@@ -1984,6 +2202,7 @@ where
     /// Commit (botão ou ⌘S): confirma a célula em edição, monta o lote e abre a caixa com o SQL
     /// exato; o usuário executa.
     pub(crate) fn open_commit(&mut self, key: &DbKey) {
+        let tr = self.tr();
         self.finish_edit(key, true);
         let keys = self.key_columns(key);
         let open_transaction = self
@@ -2000,21 +2219,18 @@ where
         if sql_running {
             // Espelho de `run`: o lote esperaria o lock da conexão e um Cancelar do editor o
             // derrubaria no servidor (o cancel é por conexão).
-            tab.error = Some(SQL_RUNNING_ERROR.into());
+            tab.error = Some(tr.sql_running_before_commit().to_owned());
             return;
         }
         if open_transaction {
             // O lote faria BEGIN dentro da transação do editor e o COMMIT dele gravaria tudo junto.
-            tab.error = Some(
-                "há uma transação aberta no editor SQL deste banco: feche com COMMIT ou ROLLBACK antes"
-                    .into(),
-            );
+            tab.error = Some(tr.open_transaction_before_commit().to_owned());
             return;
         }
         let (updates, deletes) = tab.change_counts();
         let (schema, table) = (tab.schema.clone(), tab.table.clone());
         let Some(changes) = tab.change_set(&keys) else {
-            tab.error = Some(batch_error(&keys).to_owned());
+            tab.error = Some(batch_error(tr, &keys));
             return;
         };
         match preview_sql(&schema, &table, &changes) {
@@ -2028,7 +2244,7 @@ where
                     failed: None,
                 });
             }
-            Err(error) => tab.error = Some(error.to_string()),
+            Err(error) => tab.error = Some(tr.edit_error(&error)),
         }
     }
 
@@ -2043,10 +2259,11 @@ where
     }
 
     pub(crate) fn execute_changes(&mut self, key: &DbKey) {
+        let tr = self.tr();
         if self.sql_running(key) {
             if let Some(tab) = self.data_tab(key) {
                 tab.commit = None;
-                tab.error = Some(SQL_RUNNING_ERROR.into());
+                tab.error = Some(tr.sql_running_before_commit().to_owned());
             }
             return;
         }
@@ -2066,7 +2283,7 @@ where
             return;
         };
         let Some(changes) = changes else {
-            dialog.error = Some(batch_error(&keys).to_owned());
+            dialog.error = Some(batch_error(tr, &keys));
             return;
         };
         dialog.running = true;
@@ -2232,12 +2449,14 @@ pub(crate) mod tests {
             .join(format!("hy-dbplus-ui-{}", uuid_like()))
             .join("connections.toml");
         let queries = QueryStore::new(path.with_file_name("queries"));
+        let preferences = PreferenceStore::load(path.with_file_name("preferences.toml"));
         let store = ConnectionStore::load(path).unwrap();
         let (sessions, events) = Sessions::new(driver, rt.handle().clone(), || {});
         Deps {
             store,
             secrets: Box::new(MemorySecrets::default()),
             queries,
+            preferences,
             sessions,
             events,
         }
@@ -2321,5 +2540,49 @@ pub(crate) mod tests {
             db.into(),
             password.into(),
         )
+    }
+
+    #[test]
+    fn o_harness_fixa_portugues_e_o_seletor_troca_e_guarda_o_idioma() {
+        use egui_kittest::Harness;
+        use egui_kittest::kittest::Queryable;
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let app = App::with_deps(deps(PostgresDriver::default(), &rt));
+        let prefs = app.deps.preferences.path().to_path_buf();
+        assert_eq!(app.lang, Language::PtBr);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1400.0, 800.0))
+            .build_ui_state(|ui, app: &mut App<PostgresDriver>| app.ui(ui), app);
+        harness.run();
+        harness.get_by_label("EN").click();
+        harness.run();
+        assert_eq!(harness.state().lang, Language::En);
+        assert_eq!(PreferenceStore::load(&prefs).language(), Some(Language::En));
+        harness.get_by_label("PT").click();
+        harness.run();
+        assert_eq!(harness.state().lang, Language::PtBr);
+        assert_eq!(
+            PreferenceStore::load(&prefs).language(),
+            Some(Language::PtBr)
+        );
+        let _ = std::fs::remove_dir_all(prefs.parent().unwrap());
+    }
+
+    #[test]
+    fn falha_ao_guardar_o_idioma_avisa_e_a_troca_vale_na_sessao() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut d = deps(PostgresDriver::default(), &rt);
+        // O caminho das preferências é um diretório: a gravação falha.
+        let blocked = d.preferences.path().to_path_buf();
+        std::fs::create_dir_all(&blocked).unwrap();
+        d.preferences = PreferenceStore::load(&blocked);
+        let mut app = App::with_deps(d);
+        app.set_language(Language::En);
+        assert_eq!(app.lang, Language::En);
+        assert_eq!(
+            app.notice.as_deref(),
+            Some(Tr(Language::En).language_save_failed())
+        );
+        let _ = std::fs::remove_dir_all(blocked.parent().unwrap());
     }
 }

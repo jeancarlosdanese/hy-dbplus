@@ -1,0 +1,506 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hy-dbplus: protótipo do redesenho (FEAT-015)</title>
+<style>
+:root{
+  --bg:#E9EEEE;--panel:#F5F8F8;--surface:#FFFFFF;--field:#FFFFFF;
+  --ink:#12262B;--ink2:#4D6368;--ink3:#87999D;--line:#D8E0E2;--hover:#E4EBEC;--stripe:#F8FAFA;
+  --accent:#1C5F72;--accent-ink:#FFFFFF;--accent-soft:#D3E7EC;
+  --pending:#FBEBC2;--pending-ink:#7A5200;
+  --danger:#C4313F;--danger-soft:#F9DEE0;--ok:#22805A;--warn:#A96B08;--warn-soft:#FBEBC2;
+  --kw:#1C5F72;--str:#22805A;--num:#A9520F;--com:#87999D;
+  --local:#2B8A5F;--dev:#6A5AD1;--staging:#C98112;--prod:#D2453B;
+  --shadow:0 18px 50px rgba(7,37,46,.22);
+  --ui:"Inter",-apple-system,"Segoe UI",system-ui,sans-serif;
+  --mono:"JetBrains Mono","SF Mono",Menlo,Consolas,monospace;
+}
+[data-theme=dark]{
+  --bg:#081215;--panel:#0E1A1E;--surface:#142329;--field:#0A1518;
+  --ink:#E3ECEE;--ink2:#9DB0B5;--ink3:#667D83;--line:#21353B;--hover:#1A2D33;--stripe:#111F24;
+  --accent:#5DBBD0;--accent-ink:#06222A;--accent-soft:#173F4A;
+  --pending:#4A3A10;--pending-ink:#F3CE6B;
+  --danger:#F0707B;--danger-soft:#47202A;--ok:#5CC797;--warn:#E8B04A;--warn-soft:#4A3A10;
+  --kw:#5DBBD0;--str:#7FD3A6;--num:#E9A869;--com:#667D83;
+  --shadow:0 18px 50px rgba(0,0,0,.55);
+}
+*{box-sizing:border-box}
+body{margin:0;background:#C9D3D5;font:13px/1.35 var(--ui);color:#12262B}
+[data-theme=dark] body{background:#020607}
+/* barra do protótipo (fora do app) */
+.proto{display:flex;gap:16px;align-items:center;padding:10px 16px;background:#07252E;color:#DCE9EC;flex-wrap:wrap}
+.proto b{font-size:14px}
+.proto select,.proto button{font:13px var(--ui);padding:6px 10px;border-radius:6px;border:1px solid #2C5560;background:#0E3642;color:#fff;cursor:pointer}
+.proto .seg{display:flex}.proto .seg button{border-radius:0}.proto .seg button:first-child{border-radius:6px 0 0 6px}.proto .seg button:last-child{border-radius:0 6px 6px 0;border-left:0}
+.proto .seg button.on{background:#5DBBD0;color:#06222A;border-color:#5DBBD0}
+.proto .note{margin-left:auto;font-size:12px;color:#9DB9C0;max-width:520px}
+.stage{padding:24px;overflow:auto}
+/* janela do app */
+.win{width:1280px;height:800px;margin:0 auto;background:var(--bg);color:var(--ink);border-radius:10px;overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.35);display:flex;flex-direction:column;position:relative}
+.titlebar{height:28px;display:flex;align-items:center;gap:8px;padding:0 12px;background:var(--panel);border-bottom:1px solid var(--line);color:var(--ink3);font-size:12px;justify-content:center;position:relative;flex:none}
+.lights{position:absolute;left:12px;display:flex;gap:8px}.lights i{width:12px;height:12px;border-radius:50%;background:#FF5F57}.lights i:nth-child(2){background:#FEBC2E}.lights i:nth-child(3){background:#28C840}
+svg.ic{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;vertical-align:-3px}
+svg.ic.s{width:14px;height:14px}
+/* controles */
+.btn{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 13px var(--ui);white-space:nowrap}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.danger{background:var(--danger);border-color:var(--danger);color:#fff}
+[data-theme=dark] .btn.danger{color:#2A0A0E}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--ink2)}
+.btn.icon{width:28px;padding:0;justify-content:center}
+.btn.off{opacity:.45}
+.btn kbd,.kbd{font:11px var(--ui);color:inherit;opacity:.7;margin-left:2px}
+.seg{display:inline-flex;background:var(--hover);border-radius:7px;padding:2px;gap:2px}
+.seg span{padding:3px 10px;border-radius:5px;color:var(--ink2);font-weight:500}
+.seg.lang span{padding:3px 7px;font:600 11px var(--ui);cursor:pointer}
+.seg span.on{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.12)}
+.input{display:flex;align-items:center;gap:6px;height:28px;padding:0 8px;border:1px solid var(--line);border-radius:6px;background:var(--field);color:var(--ink3)}
+.input.focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft);color:var(--ink)}
+.input.err{border-color:var(--danger)}
+.select{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 8px;border:1px solid var(--line);border-radius:6px;background:var(--field);color:var(--ink)}
+.pill{display:inline-flex;align-items:center;height:18px;padding:0 7px;border-radius:9px;font:600 11px var(--ui);color:#fff;letter-spacing:.02em}
+.pill.local{background:var(--local)}.pill.dev{background:var(--dev)}.pill.staging{background:var(--staging)}.pill.prod{background:var(--prod)}
+.muted{color:var(--ink2)}.faint{color:var(--ink3)}.mono{font-family:var(--mono);font-size:12px}
+.sp{flex:1}
+.row{display:flex;align-items:center;gap:8px}
+/* tela de conexões */
+.conn{flex:1;display:flex;flex-direction:column;background:var(--panel);min-height:0}
+.conn-head{display:flex;align-items:center;gap:12px;padding:20px 32px 16px}
+.conn-head h1{font-size:20px;margin:0;font-weight:650;letter-spacing:-.01em}
+.mark{width:28px;height:28px;border-radius:7px;background:linear-gradient(160deg,#1C4F5E,#07252E);color:#fff;display:grid;place-items:center;font:700 13px var(--ui)}
+.conn-list{padding:0 32px;display:flex;flex-direction:column;gap:6px;overflow:auto}
+.crow{display:flex;align-items:center;gap:12px;height:56px;padding:0 12px 0 0;background:var(--surface);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.crow.sel{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft)}
+.crow .bar{width:4px;align-self:stretch}
+.dbtype{width:32px;height:32px;border-radius:7px;background:var(--hover);color:var(--ink2);display:grid;place-items:center;font:700 12px var(--ui)}
+.crow .nm{font-weight:600;font-size:14px}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--ok);display:inline-block}
+.conn-foot{margin-top:auto;padding:10px 32px;border-top:1px solid var(--line);color:var(--ink3);font-size:12px;display:flex;gap:18px}
+.empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--ink2);text-align:center}
+.empty .big{width:48px;height:48px;border-radius:12px;background:var(--hover);display:grid;place-items:center;color:var(--ink3)}
+.empty .big svg{width:24px;height:24px}
+.empty h3{margin:4px 0 0;font-size:15px;color:var(--ink)}
+/* workspace */
+.top{height:40px;display:flex;align-items:center;gap:10px;padding:0 10px;background:var(--panel);flex:none}
+.envline{height:3px;flex:none}
+.crumb{display:flex;align-items:center;gap:6px;font-weight:600}.crumb .sep{color:var(--ink3);font-weight:400}
+.body{flex:1;display:flex;min-height:0}
+.rail{width:64px;background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;gap:6px;padding:8px 0;flex:none}
+.ritem{width:52px;padding:6px 2px 5px;border-radius:8px;display:flex;flex-direction:column;align-items:center;gap:3px;color:var(--ink2);font-size:11px;position:relative}
+.ritem.on{background:var(--accent-soft);color:var(--ink);font-weight:600}
+.ritem.on:before{content:"";position:absolute;left:-6px;top:10px;bottom:10px;width:3px;border-radius:2px;background:var(--accent)}
+.ritem svg{width:20px;height:20px}
+.ritem span{max-width:50px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.side{width:248px;background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;flex:none;min-height:0}
+.side .pad{padding:8px}
+.tree{flex:1;overflow:hidden;padding:0 4px;font-size:13px}
+.grp{display:flex;align-items:center;gap:4px;padding:5px 6px;color:var(--ink2);font:600 12px var(--ui)}
+.grp .n{font-weight:400;color:var(--ink3)}
+.ti{display:flex;align-items:center;gap:6px;height:24px;padding:0 6px 0 22px;border-radius:5px;color:var(--ink)}
+.ti.on{background:var(--accent-soft);font-weight:600}
+.ti.col{padding-left:44px;color:var(--ink2);font-size:12px}
+.ti .ty{margin-left:auto;color:var(--ink3);font:11px var(--mono)}
+.ti svg{color:var(--ink3)}.ti.on svg{color:var(--accent)}
+.sidefoot{border-top:1px solid var(--line);padding:6px 8px;display:flex;align-items:center;gap:6px}
+.main{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--surface)}
+.tabs{height:34px;display:flex;align-items:flex-end;gap:2px;padding:0 6px;background:var(--panel);border-bottom:1px solid var(--line);flex:none}
+.tab{height:28px;display:flex;align-items:center;gap:6px;padding:0 8px 0 10px;border-radius:7px 7px 0 0;color:var(--ink2);border:1px solid transparent;border-bottom:0;margin-bottom:-1px}
+.tab.on{background:var(--surface);color:var(--ink);border-color:var(--line);font-weight:600}
+.tab .x{color:var(--ink3)}
+.dirty{width:7px;height:7px;border-radius:50%;background:var(--warn)}
+.tool{height:40px;display:flex;align-items:center;gap:8px;padding:0 10px;border-bottom:1px solid var(--line);flex:none}
+.status{height:32px;white-space:nowrap;display:flex;align-items:center;gap:10px;padding:0 10px;border-top:1px solid var(--line);background:var(--panel);color:var(--ink2);font-size:12px;flex:none}
+.status .btn{height:24px;font-size:12px}
+.chip{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 8px;border-radius:10px;background:var(--pending);color:var(--pending-ink);font-weight:600;font-size:12px}
+.chip.warn{background:var(--warn-soft);color:var(--pending-ink)}
+.gridwrap{flex:1;overflow:hidden;position:relative;min-height:0}
+table.g{border-collapse:collapse;font:12px var(--mono);white-space:nowrap}
+table.g th{position:sticky;top:0;text-align:left;height:30px;padding:0 10px;background:var(--panel);border-bottom:1px solid var(--line);border-right:1px solid var(--line);font:600 12px var(--ui);color:var(--ink)}
+table.g th small{font:400 11px var(--mono);color:var(--ink3);margin-left:6px}
+table.g td{height:24px;padding:0 10px;border-right:1px solid var(--line);max-width:260px;overflow:hidden;text-overflow:ellipsis}
+table.g tr:nth-child(even) td{background:var(--stripe)}
+table.g td.n,table.g th.n{color:var(--ink3);text-align:right;width:44px;font:11px var(--ui)}
+table.g td.null{color:var(--ink3);font-style:italic}
+table.g td.r{text-align:right}
+table.g tr.sel td{background:var(--accent-soft)}
+table.g td.pend{background:var(--pending)!important;color:var(--pending-ink);box-shadow:inset 2px 0 0 var(--warn)}
+table.g tr.del td{background:var(--danger-soft)!important;color:var(--danger);text-decoration:line-through}
+table.g td.fk{color:var(--accent)}
+table.g td.edit{padding:0}
+table.g td.edit div{height:22px;margin:0 1px;padding:0 9px;border:1.5px solid var(--accent);border-radius:3px;background:var(--field);color:var(--ink);line-height:19px}
+.hscroll{position:absolute;left:8px;right:8px;bottom:3px;height:6px;border-radius:3px;background:var(--hover)}.hscroll i{display:block;width:46%;height:100%;border-radius:3px;background:var(--ink3)}
+.rec{width:300px;border-left:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column;flex:none;min-height:0}
+.rec .hd{height:40px;display:flex;align-items:center;gap:8px;padding:0 10px;border-bottom:1px solid var(--line);font-weight:600}
+.fld{padding:8px 10px 0}
+.fld .lb{display:flex;align-items:center;gap:6px;font:600 12px var(--ui);color:var(--ink2);margin-bottom:3px}
+.fld .lb .ty{margin-left:auto;font:400 11px var(--mono);color:var(--ink3)}
+.fld .v{min-height:26px;padding:4px 8px;border:1px solid var(--line);border-radius:6px;background:var(--field);font:12px var(--mono);color:var(--ink)}
+.fld .v.pend{border-color:var(--warn);background:var(--pending);color:var(--pending-ink)}
+.fld .v.ro{background:transparent;border-style:dashed}
+.tag-ch{font:600 10px var(--ui);color:var(--pending-ink);background:var(--pending);padding:1px 6px;border-radius:8px}
+/* editor */
+.ed{flex:1;display:flex;font:13px/20px var(--mono);min-height:0;position:relative;background:var(--field)}
+.ed .ln{width:40px;text-align:right;padding:6px 8px 0 0;color:var(--ink3);border-right:1px solid var(--line);background:var(--panel);font-size:12px}
+.ed pre{margin:0;padding:6px 12px;font:inherit;flex:1}
+.ed .cur{background:var(--hover);display:block;margin:0 -12px;padding:0 12px;box-shadow:inset 2px 0 0 var(--accent)}
+.k{color:var(--kw);font-weight:600}.s{color:var(--str)}.nu{color:var(--num)}.c{color:var(--com);font-style:italic}
+.caret{display:inline-block;width:1.5px;height:16px;background:var(--accent);vertical-align:-3px}
+.ac{position:absolute;left:214px;top:112px;width:330px;background:var(--surface);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);padding:4px;font:12px var(--mono)}
+.ac div{display:flex;align-items:center;gap:8px;height:24px;padding:0 8px;border-radius:5px}
+.ac div.on{background:var(--accent-soft)}
+.ac div em{margin-left:auto;font:normal 11px var(--ui);color:var(--ink3)}
+.ac .ft{border-top:1px solid var(--line);margin-top:4px;border-radius:0;color:var(--ink3);font:11px var(--ui);gap:12px}
+.res{height:270px;border-top:1px solid var(--line);display:flex;flex-direction:column;flex:none}
+.rtabs{height:32px;display:flex;align-items:center;gap:4px;padding:0 8px;background:var(--panel);border-bottom:1px solid var(--line);font-size:12px}
+.rtab{display:flex;align-items:center;gap:5px;height:22px;padding:0 9px;border-radius:5px;color:var(--ink2)}
+.rtab.on{background:var(--surface);color:var(--ink);font-weight:600;box-shadow:0 0 0 1px var(--line)}
+.rtab.bad{color:var(--danger)}
+.banner{display:flex;align-items:flex-start;gap:8px;margin:10px;padding:8px 10px;border-radius:7px;background:var(--danger-soft);color:var(--danger);font-size:13px}
+.banner.warn{background:var(--warn-soft);color:var(--pending-ink)}
+.banner pre{margin:6px 0 0;font:12px var(--mono);color:var(--ink2);white-space:pre-wrap}
+/* estrutura */
+.sec{padding:14px 16px 4px;font:600 13px var(--ui)}
+table.t{border-collapse:collapse;width:calc(100% - 32px);margin:0 16px;font-size:12px}
+table.t th{text-align:left;font:600 11px var(--ui);color:var(--ink2);padding:6px 10px;border-bottom:1px solid var(--line);background:var(--panel)}
+table.t td{padding:5px 10px;border-bottom:1px solid var(--line);font-family:var(--mono)}
+table.t td.u{font-family:var(--ui)}
+/* modais */
+.scrim{position:absolute;inset:28px 0 0 0;background:rgba(7,37,46,.38);display:flex;align-items:center;justify-content:center;z-index:5}
+.scrim.topc{align-items:flex-start;padding-top:90px}
+.modal{background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);display:flex;flex-direction:column;max-height:86%}
+.modal .mh{padding:16px 20px 4px;font:650 16px var(--ui)}
+.modal .ms{padding:0 20px 10px;color:var(--ink2)}
+.modal .mb{padding:6px 20px 14px;overflow:hidden}
+.modal .mf{display:flex;align-items:center;gap:8px;padding:12px 20px;border-top:1px solid var(--line);background:var(--panel);border-radius:0 0 12px 12px}
+.code{background:var(--field);border:1px solid var(--line);border-radius:8px;padding:10px 12px;font:12px/19px var(--mono);white-space:pre;overflow:hidden}
+.form{display:grid;grid-template-columns:1fr 1fr;gap:12px 14px}
+.form label{display:flex;flex-direction:column;gap:4px;font:600 12px var(--ui);color:var(--ink2)}
+.form .full{grid-column:1/3}
+.form .input,.form .select{height:32px;font:13px var(--ui);color:var(--ink)}
+.hint{font:400 12px var(--ui);color:var(--ink3)}.hint.err{color:var(--danger)}.hint.ok{color:var(--ok)}
+.pal{width:520px}.pal .q{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line);font-size:15px}
+.pal .it{display:flex;align-items:center;gap:8px;height:32px;padding:0 10px;margin:0 6px;border-radius:6px}
+.pal .it.on{background:var(--accent-soft)}.pal .it em{margin-left:auto;font-style:normal;font-size:12px;color:var(--ink3)}
+.pal .gh{padding:8px 16px 4px;font:600 11px var(--ui);color:var(--ink3)}
+/* folha do sistema */
+.sheet{flex:1;overflow:auto;padding:20px 28px;background:var(--surface);display:grid;grid-template-columns:1fr 1fr;gap:18px 32px;align-content:start}
+.sheet h4{margin:0 0 8px;font-size:13px}
+.sw{display:flex;flex-wrap:wrap;gap:8px}.sw div{width:92px;font-size:11px;color:var(--ink2)}.sw i{display:block;height:34px;border-radius:6px;border:1px solid var(--line);margin-bottom:3px}
+.states{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+.states>div{border:1px solid var(--line);border-radius:8px;height:120px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:var(--ink2);font-size:12px;text-align:center;padding:8px}
+.spin{width:16px;height:16px;border-radius:50%;border:2px solid var(--line);border-top-color:var(--accent);animation:sp 1s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.spin{animation:none}}
+</style>
+</head>
+<body>
+<div class="proto">
+  <b>hy-dbplus · protótipo FEAT-015</b>
+  <select id="screen" aria-label="Tela"></select>
+  <button id="prev" aria-label="Tela anterior">←</button><button id="next" aria-label="Próxima tela">→</button>
+  <div class="seg" id="theme"><button data-v="light">Claro</button><button data-v="dark">Escuro</button></div>
+  <div class="seg" id="lang"><button data-v="pt">Português</button><button data-v="en">English</button></div>
+  <div class="note" id="note"></div>
+</div>
+<div class="stage"><div class="win" id="win"></div></div>
+<svg width="0" height="0" style="position:absolute"><defs>
+<symbol id="i-db" viewBox="0 0 24 24"><ellipse cx="12" cy="5.5" rx="7.5" ry="3"/><path d="M4.5 5.5v6.5c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3V5.5M4.5 12v6.5c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3V12"/></symbol>
+<symbol id="i-table" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M3.5 9.5h17M3.5 14.5h17M9.5 9.5v10"/></symbol>
+<symbol id="i-view" viewBox="0 0 24 24"><path d="M2.5 12s3.5-6.5 9.5-6.5 9.5 6.5 9.5 6.5-3.5 6.5-9.5 6.5S2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/></symbol>
+<symbol id="i-fn" viewBox="0 0 24 24"><path d="M15.5 4.5c-2.5-.6-4 .6-4.4 3l-1.7 9.5c-.4 2.2-1.8 3.1-3.9 2.6M7 10.5h8"/></symbol>
+<symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="M11 12l8.5-8.5M16 7l2.5 2.5"/></symbol>
+<symbol id="i-link" viewBox="0 0 24 24"><path d="M7 17L17 7M9 7h8v8"/></symbol>
+<symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="i-x" viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></symbol>
+<symbol id="i-right" viewBox="0 0 24 24"><path d="M9.5 6l6 6-6 6"/></symbol>
+<symbol id="i-down" viewBox="0 0 24 24"><path d="M6 9.5l6 6 6-6"/></symbol>
+<symbol id="i-left" viewBox="0 0 24 24"><path d="M14.5 6l-6 6 6 6"/></symbol>
+<symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
+<symbol id="i-play" viewBox="0 0 24 24"><path d="M7.5 5l11 7-11 7z"/></symbol>
+<symbol id="i-playall" viewBox="0 0 24 24"><path d="M4 5l8 7-8 7zM13 5l8 7-8 7z"/></symbol>
+<symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1.5"/></symbol>
+<symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 5v5h-5M4 19v-5h5"/><path d="M19.5 10A8 8 0 0 0 5.3 8M4.5 14a8 8 0 0 0 14.2 2"/></symbol>
+<symbol id="i-panel" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M14.5 4.5v15"/></symbol>
+<symbol id="i-plug" viewBox="0 0 24 24"><path d="M9 3.5v5M15 3.5v5M6.5 8.5h11v3a5.5 5.5 0 0 1-11 0zM12 17v3.5"/></symbol>
+<symbol id="i-unplug" viewBox="0 0 24 24"><path d="M15 4h4.5v16H15M10 12h9M10 12l3-3M10 12l3 3M4.5 4v16"/></symbol>
+<symbol id="i-pencil" viewBox="0 0 24 24"><path d="M4 20l1-4.5L16.5 4l3.5 3.5L8.5 19z"/></symbol>
+<symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 12.5h9l1-12.5"/></symbol>
+<symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M5.5 15.5h-1v-11h11v1"/></symbol>
+<symbol id="i-code" viewBox="0 0 24 24"><path d="M8.5 7l-5 5 5 5M15.5 7l5 5-5 5"/></symbol>
+<symbol id="i-wand" viewBox="0 0 24 24"><path d="M4 20L15 9M13 7l4 4M18 3v3M16.5 4.5h3M6 5v2M5 6h2M19 14v2M18 15h2"/></symbol>
+<symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4l9 15.5H3zM12 10v4.5M12 17v.3"/></symbol>
+<symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+<symbol id="i-undo" viewBox="0 0 24 24"><path d="M8 5L3.5 9.5 8 14"/><path d="M3.5 9.5H14a6 6 0 0 1 0 12h-3"/></symbol>
+<symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+</defs></svg>
+<script>
+let lang='pt', theme='light', cur=0;
+const t=(pt,en)=>lang==='en'?en:pt;
+const ic=(n,c='')=>`<svg class="ic ${c}"><use href="#i-${n}"/></svg>`;
+const kbd=k=>`<kbd>${k}</kbd>`;
+const langSw=()=>`<div class="seg lang" title="${t('Idioma da interface','Interface language')}"><span class="${lang==='pt'?'on':''}" onclick="setLang('pt')">PT</span><span class="${lang==='en'?'on':''}" onclick="setLang('en')">EN</span></div>`;
+function setLang(v){lang=v;render()}
+
+// ---------- peças ----------
+const titlebar=()=>`<div class="titlebar"><div class="lights"><i></i><i></i><i></i></div>hy-dbplus</div>`;
+const ENV={local:'LOCAL',dev:'DEV',staging:'STAGING',prod:'PROD'};
+function topbar(env='staging',db='loja'){
+  return `<div class="top">
+    <span class="btn ghost">${ic('left')}${t('Conexões','Connections')}</span>
+    <span class="pill ${env}">${ENV[env]}</span>
+    <span class="crumb">loja-homolog ${db?`<span class="sep">/</span> ${db}`:''}</span>
+    <span class="faint">PostgreSQL 17.2</span>
+    <span class="sp"></span>
+    <span class="input" style="width:220px">${ic('search','s')}${t('Ir para banco ou tabela','Go to database or table')}<span class="sp"></span>${kbd('⌘K')}</span>
+    ${langSw()}
+    <span class="btn icon ghost" title="${t('Painel de registro','Record panel')}">${ic('panel')}</span>
+    <span class="btn icon ghost" title="${t('Desconectar','Disconnect')}">${ic('unplug')}</span>
+  </div><div class="envline" style="background:var(--${env})"></div>`;
+}
+function rail(active='loja'){
+  const it=n=>`<div class="ritem ${n===active?'on':''}">${ic('db')}<span>${n}</span></div>`;
+  return `<div class="rail">${active?it('loja')+it('estoque')+it('fiscal'):''}
+    <div class="ritem" title="${t('Abrir outro banco','Open another database')}">${ic('plus')}</div></div>`;
+}
+function side(sel='pedidos',open=true){
+  const tb=(n,k='table',o=false)=>`<div class="ti ${n===sel?'on':''}">${ic(k,'s')}${n}</div>`;
+  const col=(n,ty,pk)=>`<div class="ti col">${pk?ic('key','s'):'<span style="width:14px"></span>'}${n}<span class="ty">${ty}</span></div>`;
+  return `<div class="side">
+    <div class="pad"><div class="seg" style="display:flex"><span class="on" style="flex:1;text-align:center">${t('Itens','Items')}</span><span style="flex:1;text-align:center">${t('Consultas','Queries')}</span><span style="flex:1;text-align:center">${t('Histórico','History')}</span></div></div>
+    <div class="pad" style="padding-top:0"><div class="input">${ic('search','s')}${t('Buscar tabela ou função','Search tables and functions')}</div></div>
+    <div class="tree">
+      <div class="grp">${ic('down','s')}${t('Tabelas','Tables')} <span class="n">7</span></div>
+      ${tb('clientes')}${tb('enderecos')}${tb('itens_pedido')}${tb('pedidos')}
+      ${open&&sel==='pedidos'?col('id','int8',1)+col('cliente_id','int8')+col('status','text')+col('total','numeric')+col('criado_em','timestamptz')+col('observacao','text'):''}
+      ${tb('produtos')}${tb('vw_vendas_mes','view')}${tb('usuarios')}
+      <div class="grp">${ic('right','s')}${t('Funções','Functions')} <span class="n">12</span></div>
+    </div>
+    <div class="sidefoot"><span class="faint" style="font-size:12px">Schema</span><span class="select" style="flex:1;height:24px;font-size:12px">public<span class="sp"></span>${ic('down','s')}</span><span class="btn icon ghost" style="height:24px;width:24px" title="${t('Recarregar o catálogo','Reload catalog')}">${ic('refresh','s')}</span></div>
+  </div>`;
+}
+function tabs(active='pedidos',dirty=false){
+  const tab=(n,k,on,d)=>`<div class="tab ${on?'on':''}">${ic(k,'s')}${n}${d?'<i class="dirty"></i>':''}<span class="x">${ic('x','s')}</span></div>`;
+  return `<div class="tabs">${tab('clientes','table',active==='clientes')}${tab('pedidos','table',active==='pedidos',dirty)}${tab(t('Consulta 1','Query 1'),'code',active==='sql')}
+    <span class="btn icon ghost" style="height:26px;margin-bottom:3px" title="${t('Nova consulta SQL','New SQL query')} ⌘T">${ic('plus','s')}</span></div>`;
+}
+function sub(on){
+  const s=(k,pt,en)=>`<span class="${on===k?'on':''}">${t(pt,en)}</span>`;
+  return `<div class="seg">${s('d','Dados','Data')}${s('s','Estrutura','Structure')}${s('i','Índices','Indexes')}</div>`;
+}
+const ROWS=[
+ [1041,318,'pago','1.249,90','2026-11-14 09:12:44-03',null],
+ [1042,77,'pago','89,00','2026-11-14 09:40:02-03','Entregar na portaria'],
+ [1043,512,'separando','432,10','2026-11-14 10:03:18-03',null],
+ [1044,318,'cancelado','59,90','2026-11-14 10:21:55-03','Cliente desistiu'],
+ [1045,9,'pago','3.870,00','2026-11-14 11:02:31-03',null],
+ [1046,204,'aguardando','214,45','2026-11-14 11:48:09-03',null],
+ [1047,77,'pago','1.020,00','2026-11-15 08:15:27-03','Nota em nome da empresa'],
+ [1048,640,'separando','76,30','2026-11-15 08:59:40-03',null],
+ [1049,131,'pago','540,00','2026-11-15 09:33:12-03',null],
+ [1050,512,'enviado','998,75','2026-11-15 10:07:51-03',null],
+ [1051,23,'pago','147,20','2026-11-15 10:44:06-03',null],
+ [1052,318,'aguardando','2.310,00','2026-11-15 11:20:38-03','Ligar antes'],
+ [1053,402,'enviado','65,00','2026-11-15 12:02:14-03',null],
+ [1054,88,'pago','389,90','2026-11-15 13:17:49-03',null],
+ [1055,9,'pago','1.115,60','2026-11-15 14:05:23-03',null],
+ [1056,271,'separando','270,00','2026-11-15 14:51:30-03',null],
+];
+function grid(mode){ // mode: '', 'edit'
+  const cell=(v,i,r)=>{
+    if(v===null) return `<td class="null">NULL</td>`;
+    let c=i===0||i===3?'r':''; if(i===1) c+=' fk';
+    if(mode==='edit'){
+      if(r===2&&i===2) return `<td class="pend">enviado</td>`;
+      if(r===2&&i===5) return `<td class="pend">Saiu 15/11</td>`;
+      if(r===5&&i===2) return `<td class="edit"><div>pago<span class="caret"></span></div></td>`;
+    }
+    return `<td class="${c}">${v}${i===1?' '+ic('link','s'):''}</td>`;
+  };
+  const rows=ROWS.map((row,r)=>`<tr class="${mode==='edit'&&r===2?'sel':''} ${mode==='edit'&&r===3?'del':''}"><td class="n">${r+1}</td>${row.map((v,i)=>cell(v,i,r)).join('')}</tr>`).join('');
+  return `<div class="gridwrap"><table class="g"><tr><th class="n">#</th>
+    <th>${ic('key','s')} id<small>int8</small></th><th>cliente_id<small>int8</small></th><th>status<small>text</small></th>
+    <th>total<small>numeric</small></th><th>criado_em ${ic('up','s')}<small>timestamptz</small></th><th style="width:260px">observacao<small>text</small></th></tr>${rows}</table></div>`;
+}
+function dataTool(on,extra=''){
+  return `<div class="tool">${sub(on)}<span class="muted" style="margin-left:6px"><b style="color:var(--ink)">public.pedidos</b> · 1.284 ${t('linhas','rows')} · 312 kB</span><span class="sp"></span>${extra}
+    <span class="btn icon ghost" title="${t('Recarregar','Reload')} ⌘R">${ic('refresh')}</span></div>`;
+}
+function pager(locked){
+  return `<span class="sp"></span>${locked?'':`<span>${t('Linhas por página','Rows per page')}</span><span class="select" style="height:22px;font-size:12px">100 ${ic('down','s')}</span>`}
+    <span class="mono">1–100 ${t('de','of')} 1.284</span><span class="btn icon ghost off" style="height:22px;width:22px">${ic('left','s')}</span><span class="btn icon ghost ${locked?'off':''}" style="height:22px;width:22px">${ic('right','s')}</span>`;
+}
+function rec(){
+  const f=(n,ty,v,cls='',ch=false)=>`<div class="fld"><div class="lb">${n}${ch?`<span class="tag-ch">${t('alterado','changed')}</span>`:''}<span class="ty">${ty}</span></div><div class="v ${cls}">${v}</div></div>`;
+  return `<div class="rec"><div class="hd">${t('Linha 3','Row 3')}<span class="sp"></span><div class="seg"><span class="on">${t('Campos','Fields')}</span><span>JSON</span></div></div>
+    ${f('id','int8','1043','ro')}${f('cliente_id','int8','512')}${f('status','text','enviado','pend',true)}${f('total','numeric','432,10')}${f('criado_em','timestamptz','2026-11-14 10:03:18-03')}${f('observacao','text','Saiu 15/11','pend',true)}
+    <div class="fld row" style="padding-top:12px"><span class="btn" style="height:24px;font-size:12px">${t('Definir NULL','Set NULL')}</span><span class="btn" style="height:24px;font-size:12px">${ic('undo','s')}${t('Reverter campo','Revert field')}</span></div></div>`;
+}
+const ws=(inner,o={})=>titlebar()+topbar(o.env||'staging',o.db===undefined?'loja':o.db)+`<div class="body">${rail(o.db===null?null:'loja')}${o.side||side(o.sel)}<div class="main">${o.tabs===false?'':tabs(o.tab||'pedidos',o.dirty)}${inner}</div>${o.rec||''}</div>${o.over||''}`;
+
+// ---------- telas ----------
+const connRow=(env,name,host,db,st)=>`<div class="crow ${st==='sel'?'sel':''}"><div class="bar" style="background:var(--${env})"></div><div class="dbtype">Pg</div>
+  <div><div class="row"><span class="nm">${name}</span><span class="pill ${env}">${ENV[env]}</span>${st==='on'?`<span class="row faint" style="gap:5px;font-size:12px"><i class="dot"></i>${t('conectado','connected')}</span>`:''}${st==='err'?`<span class="row" style="gap:5px;font-size:12px;color:var(--danger)">${ic('alert','s')}${t('senha recusada pelo servidor','password rejected by server')}</span>`:''}</div>
+  <div class="mono muted">${host} / ${db}</div></div><span class="sp"></span>
+  ${st==='sel'||st==='err'?`<span class="btn icon ghost" title="${t('Editar','Edit')}">${ic('pencil')}</span><span class="btn icon ghost" title="${t('Remover','Remove')}">${ic('trash')}</span>`:''}
+  <span class="btn ${st==='sel'?'primary':''}">${st==='on'?t('Abrir','Open'):t('Conectar','Connect')}</span></div>`;
+const connHead=()=>`<div class="conn-head"><div class="mark">hy</div><h1>${t('Conexões','Connections')}</h1><span class="sp"></span>
+  <span class="input" style="width:240px">${ic('search','s')}${t('Buscar conexão','Search connections')}</span>${langSw()}<span class="btn primary">${ic('plus')}${t('Nova conexão','New connection')}</span></div>`;
+const connFoot=()=>`<div class="conn-foot"><span>↑↓ ${t('navegar','navigate')}</span><span>↩ ${t('conectar','connect')}</span><span>⌘N ${t('nova conexão','new connection')}</span><span>⌘E ${t('editar','edit')}</span></div>`;
+function sConn(over=''){
+  return titlebar()+`<div class="conn">${connHead()}<div class="conn-list">
+    ${connRow('local','postgres local','localhost:5432','postgres','on')}
+    ${connRow('staging','loja-homolog','db-hml.exemplo.com.br:5432','loja','sel')}
+    ${connRow('dev','estoque-dev','10.0.4.21:5432','estoque')}
+    ${connRow('prod','loja-producao','db.exemplo.com.br:5432','loja','err')}
+  </div>${connFoot()}</div>`+over;
+}
+const sConnEmpty=()=>titlebar()+`<div class="conn">${connHead()}<div class="empty"><div class="big">${ic('plug')}</div><h3>${t('Nenhuma conexão ainda','No connections yet')}</h3>
+  <div>${t('Cadastre o primeiro servidor PostgreSQL. A senha fica no Keychain, nunca em arquivo.','Add your first PostgreSQL server. The password is stored in the Keychain, never in a file.')}</div>
+  <span class="btn primary" style="margin-top:6px">${ic('plus')}${t('Nova conexão','New connection')}</span></div></div>`;
+const sForm=()=>sConn(`<div class="scrim"><div class="modal" style="width:560px"><div class="mh">${t('Editar conexão','Edit connection')}</div><div class="ms">${t('A senha fica no Keychain do sistema.','The password is stored in the system Keychain.')}</div>
+  <div class="mb"><div class="form">
+   <label>${t('Nome','Name')}<span class="input focus">loja-homolog<span class="caret"></span></span></label>
+   <label>${t('Ambiente','Environment')}<span class="select"><span class="pill staging">STAGING</span><span class="sp"></span>${ic('down','s')}</span></label>
+   <label>Host<span class="input">db-hml.exemplo.com.br</span></label>
+   <label>${t('Porta','Port')}<span class="input err">54321x</span><span class="hint err">${t('Use um número de 1 a 65535.','Use a number from 1 to 65535.')}</span></label>
+   <label>${t('Usuário','User')}<span class="input">app_loja</span></label>
+   <label>${t('Senha','Password')}<span class="input">••••••••••</span><span class="hint">${t('Em branco mantém a senha atual.','Leave blank to keep the current password.')}</span></label>
+   <label>${t('Banco inicial','Initial database')}<span class="input">loja</span></label>
+   <label>TLS<span class="select">require<span class="sp"></span>${ic('down','s')}</span></label>
+  </div></div>
+  <div class="mf"><span class="btn">${ic('plug')}${t('Testar conexão','Test connection')}</span><span class="hint ok">${ic('check','s')} ${t('Conectou em 84 ms','Connected in 84 ms')}</span><span class="sp"></span><span class="btn">${t('Cancelar','Cancel')} ${kbd('esc')}</span><span class="btn primary">${t('Salvar','Save')} ${kbd('↩')}</span></div></div></div>`);
+const sRemove=()=>sConn(`<div class="scrim"><div class="modal" style="width:420px"><div class="mh">${t('Remover a conexão loja-homolog?','Remove the loja-homolog connection?')}</div>
+  <div class="mb muted">${t('A senha guardada no Keychain também é apagada. As consultas salvas desta conexão continuam no disco.','The password stored in the Keychain is deleted too. Saved queries for this connection stay on disk.')}</div>
+  <div class="mf"><span class="sp"></span><span class="btn">${t('Cancelar','Cancel')}</span><span class="btn danger">${ic('trash')}${t('Remover conexão','Remove connection')}</span></div></div></div>`);
+const palette=()=>`<div class="scrim topc"><div class="modal pal"><div class="q">${ic('search')}<span>est<span class="caret"></span></span><span class="sp"></span><span class="faint" style="font-size:12px">esc</span></div>
+  <div class="gh">${t('Bancos','Databases')}</div><div class="it on">${ic('db')}estoque<em>↩ ${t('abrir','open')}</em></div><div class="it">${ic('db')}estoque_arquivo</div>
+  <div class="gh">${t('Tabelas em loja','Tables in loja')}</div><div class="it">${ic('table')}estoque_movimentos<em>public</em></div><div class="it">${ic('table')}estoque_saldos<em>public</em></div>
+  <div style="height:8px"></div></div></div>`;
+const noDbSide=()=>`<div class="side"><div class="empty" style="padding:16px"><div class="big">${ic('db')}</div><h3>${t('Nenhum banco aberto','No database open')}</h3><div>${t('Escolha um banco para ver as tabelas.','Pick a database to see its tables.')}</div><span class="btn primary" style="margin-top:6px">${t('Escolher banco','Choose database')} ${kbd('⌘K')}</span></div></div>`;
+const sNoDb=()=>ws(`<div class="empty"><div class="big">${ic('table')}</div><h3>${t('Nada aberto','Nothing open')}</h3><div>${t('Abra um banco com ⌘K. Depois, clique numa tabela ou crie uma consulta com ⌘T.','Open a database with ⌘K. Then click a table or start a query with ⌘T.')}</div></div>`,{db:null,side:noDbSide(),tabs:false});
+const sPalette=()=>ws(`<div class="empty"></div>`,{db:null,side:noDbSide(),tabs:false,over:palette()});
+const sData=()=>ws(dataTool('d')+grid('')+`<div class="hscroll"></div><div class="status"><span>${t('Duplo clique edita a célula','Double-click to edit a cell')}</span>${pager(false)}</div>`);
+const sEdit=()=>ws(dataTool('d')+grid('edit')+`<div class="status"><span class="chip">${t('2 alterações, 1 exclusão','2 changes, 1 deletion')}</span><span class="btn ghost">${ic('undo','s')}${t('Descartar','Discard')} ${kbd('⌘Z')}</span><span class="btn primary">${t('Revisar e gravar','Review and commit')} ${kbd('⌘S')}</span>${pager(true)}</div>`,{dirty:true,rec:rec()});
+const sCommit=()=>ws(dataTool('d')+grid('edit')+`<div class="status"><span class="chip">${t('2 alterações, 1 exclusão','2 changes, 1 deletion')}</span>${pager(true)}</div>`,{dirty:true,over:`<div class="scrim"><div class="modal" style="width:600px"><div class="mh">${t('Gravar 2 alterações e 1 exclusão em pedidos','Commit 2 changes and 1 deletion to pedidos')}</div>
+  <div class="ms row"><span class="pill staging">STAGING</span>${t('Roda numa transação: ou grava tudo, ou não grava nada.','Runs in one transaction: everything is written, or nothing is.')}</div>
+  <div class="mb"><div class="code"><span class="k">UPDATE</span> public.pedidos <span class="k">SET</span> status = <span class="s">'enviado'</span>, observacao = <span class="s">'Saiu 15/11'</span> <span class="k">WHERE</span> id = <span class="nu">1043</span>;
+<span class="k">DELETE FROM</span> public.pedidos <span class="k">WHERE</span> id = <span class="nu">1044</span>;</div></div>
+  <div class="mf"><span class="btn">${ic('copy')}${t('Copiar SQL','Copy SQL')}</span><span class="sp"></span><span class="btn">${t('Cancelar','Cancel')} ${kbd('esc')}</span><span class="btn primary">${t('Gravar no banco','Commit to database')} ${kbd('⌘↩')}</span></div></div></div>`});
+const sStruct=()=>ws(dataTool('s',`<span class="btn">${ic('code')}${t('Ver DDL','View DDL')}</span>`)+`<div style="flex:1;overflow:hidden">
+  <div class="sec">${t('Colunas','Columns')}</div><table class="t"><tr><th>#</th><th>${t('Coluna','Column')}</th><th>${t('Tipo','Type')}</th><th>${t('Aceita nulo','Nullable')}</th><th>${t('Padrão','Default')}</th><th>${t('Comentário','Comment')}</th></tr>
+  <tr><td>1</td><td>${ic('key','s')} id</td><td>int8</td><td class="u">${t('não','no')}</td><td>nextval('pedidos_id_seq')</td><td class="u"></td></tr>
+  <tr><td>2</td><td>cliente_id</td><td>int8</td><td class="u">${t('não','no')}</td><td></td><td class="u">${t('Quem comprou','Buyer')}</td></tr>
+  <tr><td>3</td><td>status</td><td>text</td><td class="u">${t('não','no')}</td><td>'aguardando'</td><td class="u"></td></tr>
+  <tr><td>4</td><td>total</td><td>numeric(12,2)</td><td class="u">${t('não','no')}</td><td>0</td><td class="u"></td></tr>
+  <tr><td>5</td><td>criado_em</td><td>timestamptz</td><td class="u">${t('não','no')}</td><td>now()</td><td class="u"></td></tr>
+  <tr><td>6</td><td>observacao</td><td>text</td><td class="u">${t('sim','yes')}</td><td></td><td class="u"></td></tr></table>
+  <div class="sec">${t('Restrições','Constraints')}</div><table class="t"><tr><th>${t('Nome','Name')}</th><th>${t('Tipo','Type')}</th><th>${t('Colunas','Columns')}</th><th>${t('Definição','Definition')}</th></tr>
+  <tr><td>pedidos_pkey</td><td class="u">${t('Chave primária','Primary key')}</td><td>id</td><td></td></tr>
+  <tr><td>pedidos_cliente_fk</td><td class="u">${t('Chave estrangeira','Foreign key')}</td><td>cliente_id</td><td>${ic('link','s')} public.clientes(id) on delete restrict</td></tr>
+  <tr><td>pedidos_total_check</td><td class="u">Check</td><td>total</td><td>total >= 0</td></tr></table></div>
+  <div class="status"><span>6 ${t('colunas','columns')} · 3 ${t('restrições','constraints')}</span></div>`);
+const sIndex=()=>ws(dataTool('i')+`<div style="flex:1;overflow:hidden"><div class="sec">${t('Índices','Indexes')}</div>
+  <table class="t"><tr><th>${t('Nome','Name')}</th><th>${t('Método','Method')}</th><th>${t('Único','Unique')}</th><th>${t('Colunas','Columns')}</th><th>${t('Condição','Condition')}</th><th>${t('Comentário','Comment')}</th></tr>
+  <tr><td>pedidos_pkey</td><td>btree</td><td class="u">${t('sim','yes')}</td><td>id</td><td></td><td class="u"></td></tr>
+  <tr><td>pedidos_cliente_idx</td><td>btree</td><td class="u">${t('não','no')}</td><td>cliente_id</td><td></td><td class="u"></td></tr>
+  <tr><td>pedidos_abertos_idx</td><td>btree</td><td class="u">${t('não','no')}</td><td>criado_em</td><td>status <> 'cancelado'</td><td class="u">${t('Fila de separação','Picking queue')}</td></tr></table></div>
+  <div class="status"><span>3 ${t('índices','indexes')}</span></div>`);
+const sDdl=()=>ws(dataTool('s',`<span class="btn">${ic('code')}${t('Ver DDL','View DDL')}</span>`)+`<div style="flex:1"></div>`,{over:`<div class="scrim"><div class="modal" style="width:680px"><div class="mh">DDL: public.pedidos</div><div class="ms">${t('Montado a partir do catálogo. Só leitura.','Built from the catalog. Read-only.')}</div>
+  <div class="mb"><div class="code"><span class="k">CREATE TABLE</span> public.pedidos (
+    id          int8          <span class="k">NOT NULL DEFAULT</span> nextval(<span class="s">'pedidos_id_seq'</span>),
+    cliente_id  int8          <span class="k">NOT NULL</span>,
+    status      text          <span class="k">NOT NULL DEFAULT</span> <span class="s">'aguardando'</span>,
+    total       numeric(<span class="nu">12</span>,<span class="nu">2</span>) <span class="k">NOT NULL DEFAULT</span> <span class="nu">0</span>,
+    criado_em   timestamptz   <span class="k">NOT NULL DEFAULT</span> now(),
+    observacao  text,
+    <span class="k">CONSTRAINT</span> pedidos_pkey <span class="k">PRIMARY KEY</span> (id),
+    <span class="k">CONSTRAINT</span> pedidos_cliente_fk <span class="k">FOREIGN KEY</span> (cliente_id)
+        <span class="k">REFERENCES</span> public.clientes (id) <span class="k">ON DELETE RESTRICT</span>
+);</div></div><div class="mf"><span class="sp"></span><span class="btn">${t('Fechar','Close')} ${kbd('esc')}</span><span class="btn primary">${ic('copy')}${t('Copiar','Copy')}</span></div></div></div>`});
+function sqlTool(run){
+  return `<div class="tool"><span class="btn primary ${run?'off':''}">${ic('play','s')}${t('Executar','Run')} ${kbd('⌘↩')}</span><span class="btn ${run?'off':''}">${ic('playall','s')}${t('Executar tudo','Run all')} ${kbd('⌘⇧↩')}</span>
+   <span class="btn ${run?'':'off'}">${ic('stop','s')}${t('Cancelar','Cancel')}</span><span class="btn ghost">${ic('wand','s')}${t('Formatar','Format')} ${kbd('⌘I')}</span>
+   ${run?`<span class="row muted"><i class="spin"></i>${t('Executando','Running')} · 3,4 s</span>`:''}<span class="sp"></span>
+   <span class="chip warn" title="${t('O último BEGIN ainda não teve COMMIT nem ROLLBACK','The last BEGIN has no COMMIT or ROLLBACK yet')}">${ic('alert','s')}${t('Transação aberta','Open transaction')}</span>
+   <span class="muted">${t('Limite','Limit')}</span><span class="select">500 ${t('linhas','rows')} ${ic('down','s')}</span></div>`;
+}
+const edBody=ac=>`<div class="ed"><div class="ln">1<br>2<br>3<br>4<br>5<br>6<br>7<br>8<br>9<br>10</div><pre><span class="c">-- ${t('pedidos pagos por cliente','paid orders per customer')}</span>
+<span class="k">BEGIN</span>;
+
+<span class="cur"><span class="k">SELECT</span> c.nome, <span class="k">count</span>(*) <span class="k">AS</span> pedidos, <span class="k">sum</span>(p.total) <span class="k">AS</span> total</span><span class="cur"><span class="k">FROM</span> public.pedidos p</span><span class="cur"><span class="k">JOIN</span> public.clientes c <span class="k">ON</span> c.id = p.cli${ac?'<span class="caret"></span>':'ente_id'}</span><span class="cur"><span class="k">WHERE</span> p.status = <span class="s">'pago'</span></span><span class="cur"><span class="k">GROUP BY</span> c.nome <span class="k">ORDER BY</span> total <span class="k">DESC</span>;</span>
+<span class="k">UPDATE</span> pedidos <span class="k">SET</span> statuss = <span class="s">'pago'</span> <span class="k">WHERE</span> id = <span class="nu">1046</span>;</pre>
+${ac?`<div class="ac"><div class="on">${ic('table','s')}cliente_id<em>int8 · ${t('coluna de','column of')} p</em></div><div>${ic('table','s')}clientes<em>${t('tabela','table')} · public</em></div><div>${ic('fn','s')}clock_timestamp()<em>${t('função','function')}</em></div><div class="ft">↑↓ ${t('navegar','navigate')}<span>↩ / tab ${t('aceitar','accept')}</span><span>esc ${t('fechar','close')}</span></div></div>`:''}</div>
+<div class="status" style="border-top:1px solid var(--line)"><span class="mono">${t('Linha 6, coluna 43','Line 6, column 43')}</span><span class="sp"></span><span>${t('Salva sozinha ao sair do editor','Saved automatically when you leave the editor')}</span></div>`;
+const RES=[['Mercado Bom Preço','14','18.420,90'],['Ana Beatriz Lopes','9','6.115,00'],['Oficina Dois Irmãos','7','4.980,30'],['Carlos Menezes','4','1.249,90'],['Padaria Aurora','3','612,40']];
+const resOk=()=>`<div class="res"><div class="rtabs"><span class="rtab">${ic('check','s')}${t('Resultado 1','Result 1')}</span><span class="rtab on">${t('Resultado 2','Result 2')}</span><span class="rtab bad">${ic('alert','s')}${t('Resultado 3','Result 3')}</span><span class="sp"></span><span class="muted">5 ${t('linhas','rows')} · 12 ms</span></div>
+  <div class="gridwrap"><table class="g"><tr><th class="n">#</th><th>nome</th><th>pedidos</th><th>total</th></tr>${RES.map((r,i)=>`<tr><td class="n">${i+1}</td><td>${r[0]}</td><td class="r">${r[1]}</td><td class="r">${r[2]}</td></tr>`).join('')}</table></div></div>`;
+const resErr=()=>`<div class="res"><div class="rtabs"><span class="rtab">${ic('check','s')}${t('Resultado 1','Result 1')}</span><span class="rtab">${t('Resultado 2','Result 2')}</span><span class="rtab bad on">${ic('alert','s')}${t('Resultado 3','Result 3')}</span><span class="sp"></span><span class="muted">${t('falhou em','failed in')} 3 ms</span></div>
+  <div class="banner">${ic('alert')}<div><b>${t('A coluna "statuss" não existe na relação "pedidos"','Column "statuss" of relation "pedidos" does not exist')}</b><pre>UPDATE pedidos SET statuss = 'pago' WHERE id = 1046;</pre></div></div>
+  <div class="banner warn" style="margin-top:0">${ic('alert')}<div>${t('A transação foi abortada. Execute ROLLBACK antes de continuar.','The transaction was aborted. Run ROLLBACK before continuing.')}</div><span class="sp"></span><span class="btn" style="height:24px">${t('Executar ROLLBACK','Run ROLLBACK')}</span></div></div>`;
+const sSql=()=>ws(sqlTool(false)+edBody(false)+resOk(),{tab:'sql',sel:''});
+const sSqlAc=()=>ws(sqlTool(true)+edBody(true)+`<div class="res"><div class="rtabs"><span class="muted">${t('Resultados','Results')}</span></div><div class="empty"><i class="spin"></i><div>${t('Executando a consulta 2 de 3','Running query 2 of 3')}</div></div></div>`,{tab:'sql',sel:''});
+const sSqlErr=()=>ws(sqlTool(false)+edBody(false)+resErr(),{tab:'sql',sel:''});
+const sClose=()=>ws(dataTool('d')+grid('edit')+`<div class="status"><span class="chip">${t('2 alterações, 1 exclusão','2 changes, 1 deletion')}</span>${pager(true)}</div>`,{dirty:true,over:`<div class="scrim"><div class="modal" style="width:440px"><div class="mh">${t('Fechar a aba pedidos?','Close the pedidos tab?')}</div>
+  <div class="mb muted">${t('Há 2 alterações e 1 exclusão que ainda não foram gravadas. Se fechar, elas se perdem.','2 changes and 1 deletion have not been committed. Closing the tab discards them.')}</div>
+  <div class="mf"><span class="btn">${t('Revisar e gravar','Review and commit')}</span><span class="sp"></span><span class="btn">${t('Cancelar','Cancel')}</span><span class="btn danger">${t('Descartar e fechar','Discard and close')}</span></div></div></div>`});
+function sSheet(){
+  const sw=(n,v)=>`<div><i style="background:var(--${v})"></i>${n}</div>`;
+  return titlebar()+`<div class="sheet">
+  <div><h4>${t('Cores de base','Base colors')}</h4><div class="sw">${sw(t('fundo','background'),'bg')+sw(t('painel','panel'),'panel')+sw(t('superfície','surface'),'surface')+sw(t('linha','line'),'line')+sw(t('texto','text'),'ink')+sw(t('texto 2','text 2'),'ink2')+sw(t('texto 3','text 3'),'ink3')}</div></div>
+  <div><h4>${t('Cores com significado','Colors with meaning')}</h4><div class="sw">${sw(t('destaque','accent'),'accent')+sw(t('seleção','selection'),'accent-soft')+sw(t('alteração pendente','pending change'),'pending')+sw(t('erro e exclusão','error, deletion'),'danger')+sw(t('aviso','warning'),'warn')+sw('ok','ok')}</div></div>
+  <div><h4>${t('Ambientes','Environments')}</h4><div class="row"><span class="pill local">LOCAL</span><span class="pill dev">DEV</span><span class="pill staging">STAGING</span><span class="pill prod">PROD</span></div>
+   <p class="muted">${t('O ambiente aparece sempre como etiqueta com texto e como faixa sob a barra superior. Nenhuma cor de ambiente coincide com o destaque nem com o erro.','The environment always shows as a labeled pill and as a stripe under the top bar. No environment color matches the accent or the error color.')}</p></div>
+  <div><h4>${t('Botões','Buttons')}</h4><div class="row"><span class="btn primary">${t('Ação principal','Primary action')}</span><span class="btn">${t('Ação comum','Default action')}</span><span class="btn ghost">${t('Discreta','Quiet')}</span><span class="btn danger">${t('Destrutiva','Destructive')}</span><span class="btn icon">${ic('refresh')}</span></div>
+   <p class="muted">${t('Em todo diálogo: cancelar à esquerda da ação principal, as duas à direita. Só uma ação principal por tela.','In every dialog: cancel sits left of the primary action, both right-aligned. One primary action per screen.')}</p></div>
+  <div><h4>${t('Tipografia','Type')}</h4>
+   <div style="font:650 20px var(--ui)">${t('Título de tela','Screen title')} · 20</div><div style="font:650 16px var(--ui)">${t('Título de diálogo','Dialog title')} · 16</div><div style="font:13px var(--ui)">${t('Texto da interface','Interface text')} · 13</div><div style="font:12px var(--ui)" class="muted">${t('Texto de apoio','Supporting text')} · 12</div><div class="mono">${t('Dados e SQL em fonte de largura fixa','Data and SQL in a fixed-width face')} · 12</div></div>
+  <div><h4>${t('Espaçamento','Spacing')}</h4><div class="row" style="align-items:flex-end">${[4,8,12,16,24].map(n=>`<div style="text-align:center;font-size:11px" class="muted"><div style="width:${n}px;height:${n}px;background:var(--accent);border-radius:2px;margin:0 auto 4px"></div>${n}</div>`).join('')}</div>
+   <p class="muted">${t('Linha de grid 24, barras 40, rodapé 32, cantos 6 (controle), 8 (cartão), 12 (diálogo).','Grid row 24, bars 40, footer 32, corners 6 (control), 8 (card), 12 (dialog).')}</p></div>
+  <div style="grid-column:1/3"><h4>${t('Estados: um texto e um desenho para cada situação','States: one wording and one look per situation')}</h4><div class="states">
+   <div><i class="spin"></i>${t('Carregando','Loading')}</div>
+   <div><div class="empty" style="gap:4px">${ic('table')}<b style="color:var(--ink)">${t('Nenhum índice','No indexes')}</b>${t('Esta tabela não tem índices.','This table has no indexes.')}</div></div>
+   <div><span style="color:var(--danger)">${ic('alert')} ${t('Não foi possível carregar as linhas','Could not load rows')}</span><span class="btn" style="height:24px">${t('Tentar de novo','Try again')}</span></div>
+  </div></div></div>`;
+}
+const SCREENS=[
+ ['Conexões','Connections',sConn,'Linha inteira clicável, ↩ conecta, ações de editar e remover só na linha em foco. Erro aparece na própria linha.'],
+ ['Conexões: lista vazia','Connections: empty',sConnEmpty,'Estado vazio convida à ação em vez de só informar.'],
+ ['Formulário de conexão','Connection form',sForm,'Diálogo modal em duas colunas, com Testar conexão, erro junto do campo, ↩ salva e esc cancela.'],
+ ['Remover conexão','Remove connection',sRemove,'Ação destrutiva em vermelho, com o nome do que será removido no título.'],
+ ['Sem banco aberto','No database open',sNoDb,'Barra neutra com etiqueta e faixa do ambiente. Um único convite para abrir um banco.'],
+ ['Paleta ⌘K','Palette ⌘K',sPalette,'Modal com fundo escurecido. Bancos agora; tabelas entram com a busca do M7.'],
+ ['Dados','Data',sData,'Ações da tabela sobem para a barra de cima; o rodapé fica só com paginação. Botões sem função saem até existirem.'],
+ ['Dados: editando','Data: editing',sEdit,'Alteração pendente em âmbar, distinta da seleção. Exclusão em vermelho riscado. Painel de registro ao lado.'],
+ ['Gravar alterações','Commit changes',sCommit,'O título diz o que vai acontecer e a etiqueta lembra o ambiente antes de gravar.'],
+ ['Estrutura','Structure',sStruct,'Mesma barra da aba Dados. Tipos de restrição traduzidos.'],
+ ['Índices','Indexes',sIndex,''],
+ ['DDL','DDL',sDdl,''],
+ ['Editor SQL','SQL editor',sSql,'Executar é a ação principal. Transação aberta vira aviso âmbar, não vermelho.'],
+ ['Editor SQL: autocomplete e execução','SQL editor: autocomplete, running',sSqlAc,'O popup mostra as teclas. Durante a execução, só Cancelar fica ativo.'],
+ ['Editor SQL: erro','SQL editor: error',sSqlErr,'Erro em faixa vermelha com o SQL; transação abortada oferece o ROLLBACK.'],
+ ['Fechar com pendências','Close with pending changes',sClose,'A confirmação diz quanto se perde e oferece gravar.'],
+ ['Sistema visual','Visual system',sSheet,'Cores, tipos, espaçamentos e estados que valem para todas as telas.'],
+];
+function render(){
+  document.documentElement.dataset.theme=theme; document.documentElement.lang=lang==='en'?'en':'pt-BR';
+  const s=SCREENS[cur]; document.getElementById('win').innerHTML=s[2]();
+  document.getElementById('note').textContent=s[3];
+  const sel=document.getElementById('screen'); sel.innerHTML=SCREENS.map((x,i)=>`<option value="${i}">${i+1}. ${x[lang==='en'?1:0]}</option>`).join(''); sel.value=cur;
+  for(const [id,v] of [['theme',theme],['lang',lang]]) document.querySelectorAll(`#${id} button`).forEach(b=>b.classList.toggle('on',b.dataset.v===v));
+  history.replaceState(null,'',`#s=${cur+1}&t=${theme}&l=${lang}`);
+}
+const h=new URLSearchParams(location.hash.slice(1));
+if(h.get('s')) cur=Math.min(SCREENS.length-1,Math.max(0,+h.get('s')-1)); if(h.get('t')) theme=h.get('t'); if(h.get('l')) lang=h.get('l');
+document.getElementById('screen').onchange=e=>{cur=+e.target.value;render()};
+const step=d=>{cur=(cur+d+SCREENS.length)%SCREENS.length;render()};
+document.getElementById('prev').onclick=()=>step(-1); document.getElementById('next').onclick=()=>step(1);
+document.addEventListener('keydown',e=>{if(e.target.tagName==='SELECT')return; if(e.key==='ArrowRight')step(1); if(e.key==='ArrowLeft')step(-1)});
+document.querySelectorAll('#theme button').forEach(b=>b.onclick=()=>{theme=b.dataset.v;render()});
+document.querySelectorAll('#lang button').forEach(b=>b.onclick=()=>{lang=b.dataset.v;render()});
+render();
+</script>
+</body>
+</html>

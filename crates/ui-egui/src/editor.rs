@@ -1,16 +1,43 @@
-//! A aba "SQL Query" (FEAT-010, tela 3.7): barra com limite, Beautify ⌘I, Run Current ⌘↩, Run All
-//! ⌘⇧↩ e Cancelar; o editor com highlight (layouter sobre os spans da `sql::Analysis` da aba,
-//! refeita só quando o texto muda), gutter de linhas,
-//! fundo leve no statement sob o cursor e a barra de status `linha, coluna`; os resultados embaixo
+//! A aba de SQL (FEAT-010; telas 13 a 15 do protótipo da FEAT-015): a barra com Executar ⌘↩ (a
+//! ação principal), Executar tudo ⌘⇧↩, Cancelar e Formatar ⌘I, a etiqueta âmbar da transação aberta
+//! e o limite; os avisos da aba em faixa logo abaixo; o editor com o realce do tema (layouter sobre
+//! os spans da `sql::Analysis` da aba, refeita só quando o texto muda), os números de linha e o
+//! statement sob o cursor em destaque; o rodapé com `Linha, coluna`; os resultados embaixo
 //! (`results.rs`). O buffer é do `QueryTab`; o cursor é lido do estado do `TextEdit` a cada frame.
 
-use hy_dbplus_engine::Driver;
+use hy_dbplus_engine::{Driver, TableKind};
 use hy_dbplus_sql::{Analysis, CatalogView, ItemKind, Kind, Need, complete};
 
-use crate::app::{App, CompletionState, DbKey};
+use crate::app::{App, CompletionState, DbKey, QueryNotice};
+use crate::fonts::icon;
+use crate::i18n::{self, Tr};
+use crate::widgets::{self, BannerKind, ButtonKind};
 use crate::{results, theme};
 
 pub const LIMITS: [Option<usize>; 4] = [None, Some(100), Some(500), Some(1000)];
+
+/// Executar (⌘↩): o statement sob o cursor.
+pub fn run_shortcut() -> egui::KeyboardShortcut {
+    egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Enter)
+}
+
+/// Executar tudo (⌘⇧↩).
+pub fn run_all_shortcut() -> egui::KeyboardShortcut {
+    egui::KeyboardShortcut::new(
+        egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+        egui::Key::Enter,
+    )
+}
+
+/// Formatar (⌘I).
+pub fn format_shortcut() -> egui::KeyboardShortcut {
+    egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::I)
+}
+
+/// A largura da coluna dos números de linha.
+const GUTTER: f32 = 40.0;
+/// A largura do popup de sugestões.
+const POPUP_WIDTH: f32 = 330.0;
 
 /// O id do `TextEdit` da aba (a barra de abas o usa para deixar o ⌘W passar com o foco nele).
 pub fn editor_id(key: &DbKey, tab: hy_dbplus_engine::QueryTabId) -> egui::Id {
@@ -26,12 +53,8 @@ struct Header {
     limit: Option<usize>,
     running: bool,
     started: Option<std::time::Instant>,
-    notice: Option<String>,
+    notice: Option<QueryNotice>,
     pending_cursor: Option<usize>,
-}
-
-fn limit_label(limit: Option<usize>) -> String {
-    limit.map_or_else(|| "No limit".to_owned(), |n| n.to_string())
 }
 
 pub fn show<D>(app: &mut App<D>, ui: &mut egui::Ui, key: &DbKey)
@@ -40,6 +63,7 @@ where
     D::Conn: 'static,
 {
     let tokens = theme::current(ui.ctx());
+    let tr = app.tr();
     // Teclas do popup de autocomplete (FEAT-012), consumidas antes do TextEdit e só com o editor
     // focado no frame anterior (o Esc já tirou o foco neste; e sem foco as teclas são de outro
     // widget): com o popup aberto, ↑/↓ movem, Tab e Enter aceitam (quando há itens), Esc fecha;
@@ -98,7 +122,6 @@ where
         return;
     };
     let open_transaction = ws.open_transaction;
-    let transaction_aborted = ws.transaction_aborted;
     let Some(q) = ws.query().map(|q| Header {
         id: q.id,
         buffer: q.buffer.clone(),
@@ -124,194 +147,211 @@ where
     let mut cancel = false;
     let mut new_limit: Option<Option<usize>> = None;
 
-    // Atalhos, antes dos widgets (consumidos aqui, o TextEdit não os vê).
-    let cmd = |key: egui::Key| egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, key);
-    let cmd_shift = |key: egui::Key| {
-        egui::KeyboardShortcut::new(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, key)
-    };
+    let mut dismiss_notice = false;
+
+    // Atalhos, antes dos widgets (consumidos aqui, o TextEdit não os vê). Com a paleta ou a
+    // confirmação de fechar na tela, são delas.
+    let modal = app.modal_open();
     ui.input_mut(|i| {
-        if i.consume_shortcut(&cmd_shift(egui::Key::Enter)) {
+        if modal {
+            return;
+        }
+        if i.consume_shortcut(&run_all_shortcut()) {
             run_all = true;
-        } else if i.consume_shortcut(&cmd(egui::Key::Enter)) {
+        } else if i.consume_shortcut(&run_shortcut()) {
             run_current = true;
         }
-        if i.consume_shortcut(&cmd(egui::Key::I)) && !q.running {
+        if i.consume_shortcut(&format_shortcut()) && !q.running {
             beautify = true;
         }
     });
 
-    egui::Panel::top(egui::Id::new(("query-toolbar", key, q.id))).show(ui, |ui| {
-        ui.horizontal(|ui| {
-            egui::ComboBox::from_id_salt(("query-limit", key, q.id))
-                .selected_text(limit_label(q.limit))
-                .show_ui(ui, |ui| {
-                    for limit in LIMITS {
-                        if ui
-                            .selectable_label(q.limit == limit, limit_label(limit))
-                            .clicked()
-                            && limit != q.limit
-                        {
-                            new_limit = Some(limit);
-                        }
-                    }
-                });
-            ui.label(
-                egui::RichText::new("linhas")
-                    .small()
-                    .color(tokens.text_muted),
-            );
-            ui.separator();
-            if ui
-                .add_enabled(!q.running, egui::Button::new("Beautify ⌘I"))
-                .clicked()
-            {
-                beautify = true;
-            }
-            let has_text = !q.buffer.trim().is_empty();
-            if ui
-                .add_enabled(!q.running && has_text, egui::Button::new("Run Current ⌘↩"))
-                .on_hover_text("Executa o statement sob o cursor")
-                .clicked()
-            {
-                run_current = true;
-            }
-            if ui
-                .add_enabled(!q.running && has_text, egui::Button::new("Run All ⌘⇧↩"))
-                .on_hover_text("Executa todos os statements, parando no primeiro erro")
-                .clicked()
-            {
-                run_all = true;
-            }
-            if ui
-                .add_enabled(q.running, egui::Button::new("Cancelar"))
-                .clicked()
-            {
-                cancel = true;
-            }
-            if q.running {
-                let elapsed = q.started.map(|s| s.elapsed().as_secs_f32()).unwrap_or(0.0);
-                ui.label(
-                    egui::RichText::new(format!("executando… {elapsed:.1} s"))
-                        .small()
-                        .color(tokens.text_muted),
-                );
-                ui.ctx().request_repaint();
-            }
-            if transaction_aborted {
-                ui.label(
-                    egui::RichText::new("transação abortada")
-                        .small()
-                        .color(theme::error_color()),
-                )
-                .on_hover_text(
-                    "Um statement falhou dentro da transação: o servidor desfaz tudo no COMMIT. \
-                     Rode ROLLBACK e refaça.",
-                );
-            } else if open_transaction {
-                ui.label(
-                    egui::RichText::new("transação aberta")
-                        .small()
-                        .color(theme::error_color()),
-                )
-                .on_hover_text("O último BEGIN ainda não teve COMMIT nem ROLLBACK");
-            }
-            if let Some(notice) = &q.notice {
-                ui.label(egui::RichText::new(notice).small().color(tokens.text_muted));
-            }
-        });
-    });
+    toolbar(
+        ui,
+        tr,
+        key,
+        &q,
+        open_transaction,
+        &mut ToolbarActions {
+            run_current: &mut run_current,
+            run_all: &mut run_all,
+            beautify: &mut beautify,
+            cancel: &mut cancel,
+            new_limit: &mut new_limit,
+        },
+    );
+    // O aviso da aba (cancelada, statement incompleto, falha ao salvar…), na faixa sob a barra.
+    if let Some(notice) = &q.notice {
+        egui::Panel::top(egui::Id::new(("query-notice", key, q.id)))
+            .resizable(false)
+            .frame(
+                egui::Frame::new()
+                    .fill(tokens.bg)
+                    .inner_margin(egui::Margin::symmetric(
+                        theme::space::M as i8,
+                        theme::space::S as i8,
+                    )),
+            )
+            .show(ui, |ui| {
+                let kind = if notice.is_error() {
+                    BannerKind::Error
+                } else {
+                    BannerKind::Warning
+                };
+                dismiss_notice = widgets::banner(ui, kind, &notice.text(tr), Some(tr.close()));
+            });
+    }
 
     results::show(app, ui, key);
 
-    // O editor: gutter com os números de linha e o TextEdit com o layouter de highlight.
+    // O editor: os números de linha e o TextEdit com o layouter de realce.
     let mut buffer = q.buffer.clone();
     let cursor_byte = q.cursor_byte;
     let current = Analysis::refresh(&mut analysis, &buffer)
         .statement_at(cursor_byte)
         .map(|s| s.range.clone());
-    let font = egui::FontId::monospace(13.0);
-    let colors = Colors {
-        keyword: tokens.accent,
-        string: egui::Color32::from_rgb(0x3A, 0x8F, 0x5C),
-        number: egui::Color32::from_rgb(0xB0, 0x62, 0x1F),
-        comment: tokens.text_muted,
-        text: tokens.text,
-        current: tokens.hover,
-    };
+    let font = egui::FontId::monospace(theme::text_size::BODY);
+    let colors = Colors::of(&tokens);
     let editor_id = editor_id(key, q.id);
     let mut changed = false;
     let mut cursor_rect: Option<egui::Rect> = None;
-    egui::CentralPanel::default_margins().show(ui, |ui| {
-        egui::Panel::bottom(egui::Id::new(("query-status", key, q.id))).show(ui, |ui| {
-            let (line, column) = line_column(&buffer, cursor_byte);
-            ui.label(
-                egui::RichText::new(format!("linha {line}, coluna {column}"))
-                    .small()
-                    .color(tokens.text_muted),
-            );
-        });
-        egui::ScrollArea::both()
-            .id_salt(("sql-scroll", key, q.id))
-            .show(ui, |ui| {
-                ui.horizontal_top(|ui| {
-                    let row_height = ui.fonts_mut(|f| f.row_height(&font));
-                    ui.vertical(|ui| {
-                        ui.spacing_mut().item_spacing.y = 0.0;
-                        ui.add_space(4.0);
-                        let lines = buffer.split('\n').count().max(1);
-                        for n in 1..=lines {
-                            let (rect, _) = ui.allocate_exact_size(
-                                egui::vec2(36.0, row_height),
-                                egui::Sense::hover(),
-                            );
-                            ui.painter().text(
-                                rect.right_center(),
-                                egui::Align2::RIGHT_CENTER,
-                                n.to_string(),
-                                font.clone(),
-                                tokens.text_muted,
-                            );
-                        }
-                    });
-                    let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, _wrap: f32| {
-                        // O texto que o TextEdit passa já tem a tecla deste frame: a análise é
-                        // refeita só nesse caso, e fica guardada para os frames seguintes.
-                        let analysis = Analysis::refresh(&mut analysis, text.as_str());
-                        let job = layout(analysis, &font, &colors, current.clone());
-                        ui.fonts_mut(|f| f.layout_job(job))
-                    };
-                    // SQL gerado (FEAT-013): o cursor vai para o statement novo e o editor pega
-                    // o foco; o estado do widget é a fonte do cursor, então é ele que muda.
-                    if let Some(at) = q.pending_cursor {
-                        let mut state =
-                            egui::TextEdit::load_state(ui.ctx(), editor_id).unwrap_or_default();
-                        state
-                            .cursor
-                            .set_char_range(Some(egui::text::CCursorRange::one(
-                                egui::text::CCursor::new(at),
-                            )));
-                        state.store(ui.ctx(), editor_id);
-                        ui.memory_mut(|m| m.request_focus(editor_id));
-                    }
-                    let output = egui::TextEdit::multiline(&mut buffer)
-                        .id(editor_id)
-                        .code_editor()
-                        .lock_focus(true)
-                        .desired_width(f32::INFINITY)
-                        .desired_rows(12)
-                        .layouter(&mut layouter)
-                        .show(ui);
-                    changed = output.response.changed();
-                    // Onde o popup ancora: embaixo do cursor, em coordenadas de tela.
-                    cursor_rect = output.cursor_range.map(|r| {
-                        output
-                            .galley
-                            .pos_from_cursor(r.primary)
-                            .translate(output.galley_pos.to_vec2())
-                    });
+    egui::Panel::bottom(egui::Id::new(("query-status", key, q.id)))
+        .exact_size(theme::size::FOOTER)
+        .resizable(false)
+        .frame(
+            egui::Frame::new()
+                .fill(tokens.panel)
+                .inner_margin(egui::Margin::symmetric(theme::space::M as i8, 0)),
+        )
+        .show(ui, |ui| {
+            ui.horizontal_centered(|ui| {
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+                let (line, column) = line_column(&buffer, cursor_byte);
+                ui.label(
+                    egui::RichText::new(tr.line_column(line, column))
+                        .size(theme::text_size::SMALL)
+                        .color(tokens.text_muted),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(
+                        egui::RichText::new(tr.saved_on_leave())
+                            .size(theme::text_size::SMALL)
+                            .color(tokens.text_faint),
+                    );
                 });
             });
-    });
+        });
+    egui::CentralPanel::default()
+        .frame(egui::Frame::new().fill(tokens.field))
+        .show(ui, |ui| {
+            egui::ScrollArea::both()
+                .id_salt(("sql-scroll", key, q.id))
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.horizontal_top(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        let row_height = ui.fonts_mut(|f| f.row_height(&font));
+                        // O fundo da coluna entra antes dos números (o tamanho só se sabe depois).
+                        let gutter_bg = ui.painter().add(egui::Shape::Noop);
+                        let gutter = ui
+                            .vertical(|ui| {
+                                ui.spacing_mut().item_spacing.y = 0.0;
+                                ui.add_space(theme::space::XS);
+                                let lines = buffer.split('\n').count().max(1);
+                                for n in 1..=lines {
+                                    let (rect, _) = ui.allocate_exact_size(
+                                        egui::vec2(GUTTER, row_height),
+                                        egui::Sense::hover(),
+                                    );
+                                    ui.painter().text(
+                                        rect.right_center() - egui::vec2(theme::space::S, 0.0),
+                                        egui::Align2::RIGHT_CENTER,
+                                        n.to_string(),
+                                        egui::FontId::monospace(theme::text_size::SMALL),
+                                        tokens.text_faint,
+                                    );
+                                }
+                            })
+                            .response
+                            .rect;
+                        let column = egui::Rect::from_min_max(
+                            gutter.min,
+                            egui::pos2(gutter.max.x, gutter.max.y.max(ui.clip_rect().max.y)),
+                        );
+                        ui.painter().set(
+                            gutter_bg,
+                            egui::Shape::rect_filled(column, 0.0, tokens.panel),
+                        );
+                        ui.painter().vline(
+                            column.max.x,
+                            column.y_range(),
+                            egui::Stroke::new(1.0, tokens.border),
+                        );
+                        let mut layouter =
+                            |ui: &egui::Ui, text: &dyn egui::TextBuffer, _wrap: f32| {
+                                // O texto que o TextEdit passa já tem a tecla deste frame: a
+                                // análise é refeita só nesse caso, e fica guardada para os frames
+                                // seguintes.
+                                let analysis = Analysis::refresh(&mut analysis, text.as_str());
+                                let job = layout(analysis, &font, &colors, current.clone());
+                                ui.fonts_mut(|f| f.layout_job(job))
+                            };
+                        // SQL gerado (FEAT-013): o cursor vai para o statement novo e o editor
+                        // pega o foco; o estado do widget é a fonte do cursor, então é ele que muda.
+                        if let Some(at) = q.pending_cursor {
+                            let mut state =
+                                egui::TextEdit::load_state(ui.ctx(), editor_id).unwrap_or_default();
+                            state
+                                .cursor
+                                .set_char_range(Some(egui::text::CCursorRange::one(
+                                    egui::text::CCursor::new(at),
+                                )));
+                            state.store(ui.ctx(), editor_id);
+                            ui.memory_mut(|m| m.request_focus(editor_id));
+                        }
+                        let output = egui::TextEdit::multiline(&mut buffer)
+                            .id(editor_id)
+                            .code_editor()
+                            .frame(egui::Frame::NONE)
+                            .margin(egui::Margin::symmetric(
+                                theme::space::M as i8,
+                                theme::space::XS as i8,
+                            ))
+                            .lock_focus(true)
+                            .desired_width(f32::INFINITY)
+                            .desired_rows(12)
+                            .layouter(&mut layouter)
+                            .show(ui);
+                        changed = output.response.changed();
+                        // O statement sob o cursor ganha o traço de destaque na borda do editor.
+                        // Com o texto mudado neste frame, a faixa é do texto antigo: o traço volta
+                        // no frame seguinte, já com a análise nova.
+                        if !changed && let Some(range) = &current {
+                            let at = |byte: usize| {
+                                output
+                                    .galley
+                                    .pos_from_cursor(egui::text::CCursor::new(cursor_chars_of(
+                                        &buffer, byte,
+                                    )))
+                                    .translate(output.galley_pos.to_vec2())
+                            };
+                            let (top, bottom) = (at(range.start), at(range.end));
+                            ui.painter().vline(
+                                output.response.rect.left() + 1.0,
+                                top.top()..=bottom.bottom(),
+                                egui::Stroke::new(2.0, tokens.accent),
+                            );
+                        }
+                        // Onde o popup ancora: embaixo do cursor, em coordenadas de tela.
+                        cursor_rect = output.cursor_range.map(|r| {
+                            output
+                                .galley
+                                .pos_from_cursor(r.primary)
+                                .translate(output.galley_pos.to_vec2())
+                        });
+                    });
+                });
+        });
     // O cursor fica no estado do TextEdit; copiamos para a aba (statement do cursor, status).
     let cursor = egui::TextEdit::load_state(ui.ctx(), editor_id)
         .and_then(|state| state.cursor.char_range())
@@ -375,7 +415,7 @@ where
     }
     let mut clicked: Option<usize> = None;
     if let (Some(state), Some(rect)) = (&popup, cursor_rect) {
-        clicked = show_popup(ui.ctx(), editor_id, rect, state, &tokens, up || down);
+        clicked = show_popup(ui.ctx(), tr, editor_id, rect, state, up || down);
     }
     if let Some(q) = app.workspaces.get_mut(key).and_then(|ws| ws.query_mut()) {
         q.analysis = analysis;
@@ -387,6 +427,9 @@ where
         }
         if let Some(limit) = new_limit {
             q.limit = limit;
+        }
+        if dismiss_notice {
+            q.notice = None;
         }
         q.completion = popup;
         if let Some(index) = clicked {
@@ -415,81 +458,301 @@ where
     }
 }
 
-/// O popup de sugestões embaixo do cursor: até dez linhas visíveis com rolagem, o item escolhido
-/// realçado (e trazido à vista quando o teclado o moveu); clique aceita. Devolve o índice clicado.
+/// O que a barra pediu neste frame.
+struct ToolbarActions<'a> {
+    run_current: &'a mut bool,
+    run_all: &'a mut bool,
+    beautify: &'a mut bool,
+    cancel: &'a mut bool,
+    new_limit: &'a mut Option<Option<usize>>,
+}
+
+/// A barra do editor (tela 13): Executar (principal), Executar tudo, Cancelar (só durante a
+/// execução) e Formatar, cada um com o atalho; o tempo da execução em curso; à direita a etiqueta
+/// âmbar da transação aberta (aviso, não erro: AC-012) e o limite de linhas.
+fn toolbar(
+    ui: &mut egui::Ui,
+    tr: Tr,
+    key: &DbKey,
+    q: &Header,
+    open_transaction: bool,
+    actions: &mut ToolbarActions<'_>,
+) {
+    let tokens = theme::current(ui.ctx());
+    egui::Panel::top(egui::Id::new(("query-toolbar", key, q.id)))
+        .exact_size(theme::size::BAR)
+        .resizable(false)
+        .frame(
+            egui::Frame::new()
+                .fill(tokens.bg)
+                .inner_margin(egui::Margin::symmetric(theme::space::M as i8, 0)),
+        )
+        .show(ui, |ui| {
+            ui.horizontal_centered(|ui| {
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+                let idle = !q.running;
+                let has_text = !q.buffer.trim().is_empty();
+                let blocked = if q.running {
+                    tr.wait_for_run()
+                } else {
+                    tr.notice_nothing_to_run()
+                };
+                let run = i18n::shortcut_label(ui.ctx(), &run_shortcut());
+                if widgets::button_shortcut(
+                    ui,
+                    idle && has_text,
+                    ButtonKind::Primary,
+                    Some(icon::RUN),
+                    tr.run(),
+                    &run,
+                    blocked,
+                )
+                .on_hover_text(tr.run_hint())
+                .clicked()
+                {
+                    *actions.run_current = true;
+                }
+                let run_all = i18n::shortcut_label(ui.ctx(), &run_all_shortcut());
+                if widgets::button_shortcut(
+                    ui,
+                    idle && has_text,
+                    ButtonKind::Normal,
+                    Some(icon::RUN_ALL),
+                    tr.run_all(),
+                    &run_all,
+                    blocked,
+                )
+                .on_hover_text(tr.run_all_hint())
+                .clicked()
+                {
+                    *actions.run_all = true;
+                }
+                if widgets::button_enabled(
+                    ui,
+                    q.running,
+                    ButtonKind::Normal,
+                    Some(icon::STOP),
+                    tr.cancel(),
+                    tr.nothing_running(),
+                )
+                .clicked()
+                {
+                    *actions.cancel = true;
+                }
+                let format = i18n::shortcut_label(ui.ctx(), &format_shortcut());
+                if widgets::button_shortcut(
+                    ui,
+                    idle,
+                    ButtonKind::Ghost,
+                    Some(icon::FORMAT),
+                    tr.format_sql(),
+                    &format,
+                    tr.wait_for_run(),
+                )
+                .clicked()
+                {
+                    *actions.beautify = true;
+                }
+                if q.running {
+                    let elapsed = q.started.map_or(0.0, |s| s.elapsed().as_secs_f32());
+                    widgets::loading(ui, &tr.running_for(elapsed));
+                    ui.ctx().request_repaint();
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    egui::ComboBox::from_id_salt(("query-limit", key, q.id))
+                        .selected_text(tr.limit_rows(q.limit))
+                        .show_ui(ui, |ui| {
+                            for limit in LIMITS {
+                                if ui
+                                    .selectable_label(q.limit == limit, tr.limit_rows(limit))
+                                    .clicked()
+                                    && limit != q.limit
+                                {
+                                    *actions.new_limit = Some(limit);
+                                }
+                            }
+                        });
+                    ui.label(egui::RichText::new(tr.limit()).color(tokens.text_muted));
+                    if open_transaction {
+                        widgets::pending_chip(
+                            ui,
+                            &format!("{} {}", icon::WARNING, tr.open_transaction()),
+                        )
+                        .on_hover_text(tr.open_transaction_hint());
+                    }
+                });
+            });
+        });
+}
+
+/// O popup de sugestões embaixo do cursor (tela 14): até dez linhas visíveis com rolagem, cada
+/// uma com o ícone do tipo, o nome em fonte fixa e o tipo e o detalhe à direita; o item escolhido
+/// em destaque suave (e trazido à vista quando o teclado o moveu); o rodapé com as teclas. Clique
+/// aceita. Devolve o índice clicado.
 fn show_popup(
     ctx: &egui::Context,
+    tr: Tr,
     editor_id: egui::Id,
     cursor_rect: egui::Rect,
     state: &CompletionState,
-    tokens: &theme::Tokens,
     scroll_to_selected: bool,
 ) -> Option<usize> {
+    let tokens = theme::current(ctx);
     let mut clicked = None;
-    let row = 20.0;
+    let row = theme::size::ROW;
+    let mono = egui::FontId::monospace(theme::text_size::SMALL);
+    let small = |text: String| {
+        egui::RichText::new(text)
+            .size(theme::text_size::SMALL)
+            .color(tokens.text_faint)
+    };
     egui::Area::new(editor_id.with("completion"))
         .order(egui::Order::Foreground)
-        .fixed_pos(cursor_rect.left_bottom() + egui::vec2(0.0, 2.0))
+        .fixed_pos(cursor_rect.left_bottom() + egui::vec2(0.0, theme::space::XS))
         .show(ctx, |ui| {
-            egui::Frame::popup(ui.style()).show(ui, |ui| {
-                ui.set_min_width(260.0);
-                if state.items.is_empty() {
-                    ui.label(
-                        egui::RichText::new("carregando colunas…")
-                            .small()
-                            .color(tokens.text_muted),
-                    );
-                    return;
-                }
-                egui::ScrollArea::vertical()
-                    .max_height(row * 10.0)
-                    .show(ui, |ui| {
-                        for (i, item) in state.items.iter().enumerate() {
-                            let selected = i == state.selected;
-                            let response = ui
-                                .horizontal(|ui| {
-                                    ui.set_min_height(row);
-                                    let label = ui.selectable_label(
+            egui::Frame::popup(ui.style())
+                .fill(tokens.card)
+                .stroke(egui::Stroke::new(1.0, tokens.border))
+                .corner_radius(theme::radius::CARD)
+                .inner_margin(theme::space::XS)
+                .show(ui, |ui| {
+                    ui.set_width(POPUP_WIDTH);
+                    if state.items.is_empty() {
+                        widgets::loading(ui, tr.completion_loading());
+                        return;
+                    }
+                    egui::ScrollArea::vertical()
+                        .max_height(row * 10.0)
+                        .show(ui, |ui| {
+                            for (i, item) in state.items.iter().enumerate() {
+                                let selected = i == state.selected;
+                                let (rect, response) = ui.allocate_exact_size(
+                                    egui::vec2(ui.available_width(), row),
+                                    egui::Sense::click(),
+                                );
+                                let fill = if selected {
+                                    tokens.accent_soft
+                                } else if response.hovered() {
+                                    tokens.hover
+                                } else {
+                                    egui::Color32::TRANSPARENT
+                                };
+                                ui.painter().rect_filled(rect, theme::radius::CONTROL, fill);
+                                // Pintado direto (sem rótulos filhos): o nome acessível da
+                                // linha é só o do item, e o detalhe longo não empurra o nome.
+                                let detail = item_detail(tr, item);
+                                let inner = rect.shrink2(egui::vec2(theme::space::S, 0.0));
+                                let painter = ui.painter_at(inner);
+                                let detail = painter.layout_no_wrap(
+                                    detail,
+                                    egui::FontId::proportional(theme::text_size::SMALL),
+                                    tokens.text_faint,
+                                );
+                                let detail_left = inner.right() - detail.size().x;
+                                painter.galley(
+                                    egui::pos2(
+                                        detail_left,
+                                        inner.center().y - detail.size().y / 2.0,
+                                    ),
+                                    detail,
+                                    tokens.text_faint,
+                                );
+                                let icon = painter.text(
+                                    inner.left_center(),
+                                    egui::Align2::LEFT_CENTER,
+                                    kind_icon(item),
+                                    egui::FontId::proportional(theme::text_size::BODY),
+                                    tokens.text_muted,
+                                );
+                                let name_rect = egui::Rect::from_min_max(
+                                    egui::pos2(icon.right() + theme::space::S, inner.top()),
+                                    egui::pos2(detail_left - theme::space::S, inner.bottom()),
+                                );
+                                ui.painter_at(name_rect).text(
+                                    name_rect.left_center(),
+                                    egui::Align2::LEFT_CENTER,
+                                    &item.label,
+                                    mono.clone(),
+                                    tokens.text,
+                                );
+                                let response =
+                                    response.on_hover_cursor(egui::CursorIcon::PointingHand);
+                                response.widget_info(|| {
+                                    egui::WidgetInfo::selected(
+                                        egui::WidgetType::SelectableLabel,
+                                        true,
                                         selected,
-                                        egui::RichText::new(&item.label).monospace(),
-                                    );
-                                    ui.label(
-                                        egui::RichText::new(kind_tag(item.kind))
-                                            .small()
-                                            .color(tokens.text_muted),
-                                    );
-                                    if !item.detail.is_empty() {
-                                        ui.label(
-                                            egui::RichText::new(&item.detail)
-                                                .small()
-                                                .color(tokens.text_muted),
-                                        );
-                                    }
-                                    label
-                                })
-                                .inner;
-                            if response.clicked() {
-                                clicked = Some(i);
+                                        &item.label,
+                                    )
+                                });
+                                if response.clicked() {
+                                    clicked = Some(i);
+                                }
+                                if selected && scroll_to_selected {
+                                    response.scroll_to_me(None);
+                                }
                             }
-                            if selected && scroll_to_selected {
-                                response.scroll_to_me(None);
-                            }
-                        }
+                        });
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = theme::space::M;
+                        ui.label(small(format!("↑↓ {}", tr.hint_navigate())));
+                        ui.label(small(format!("↩ / tab {}", tr.hint_accept())));
+                        ui.label(small(format!("esc {}", tr.hint_close())));
                     });
-            });
+                });
         });
     clicked
 }
 
-fn kind_tag(kind: ItemKind) -> &'static str {
+/// O detalhe à direita da sugestão: os dados do banco (tipo, schema, assinatura) e a palavra do
+/// tipo no idioma, sem repetir: "integer · chave · coluna", "tabela · public", "schema".
+fn item_detail(tr: Tr, item: &hy_dbplus_sql::Item) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    let table_word = item.table_kind.map(|kind| match kind {
+        TableKind::Table => tr.kind_table(),
+        TableKind::View => tr.kind_view(),
+        TableKind::MaterializedView => tr.kind_materialized_view(),
+        TableKind::Foreign => tr.kind_foreign_table(),
+    });
+    if let Some(word) = table_word {
+        parts.push(word);
+    }
+    if !item.detail.is_empty() {
+        parts.push(&item.detail);
+    }
+    if item.primary_key {
+        parts.push(tr.kind_key());
+    }
+    if table_word.is_none() {
+        parts.push(kind_tag(tr, item.kind));
+    }
+    parts.join(" · ")
+}
+
+fn kind_tag(tr: Tr, kind: ItemKind) -> &'static str {
     match kind {
-        ItemKind::Column => "coluna",
-        ItemKind::Alias => "alias",
-        ItemKind::Keyword => "keyword",
-        ItemKind::Table => "tabela",
-        ItemKind::View => "view",
-        ItemKind::Schema => "schema",
-        ItemKind::Function => "função",
+        ItemKind::Column => tr.kind_column(),
+        ItemKind::Alias => tr.kind_alias(),
+        ItemKind::Keyword => tr.kind_keyword(),
+        ItemKind::Table => tr.kind_table(),
+        ItemKind::View => tr.kind_view(),
+        ItemKind::Schema => tr.kind_schema(),
+        ItemKind::Function => tr.kind_function(),
+    }
+}
+
+/// O ícone da sugestão: o mesmo da árvore para tabela, view e tabela estrangeira.
+fn kind_icon(item: &hy_dbplus_sql::Item) -> &'static str {
+    match (item.kind, item.table_kind) {
+        (_, Some(kind)) => icon::table_kind(kind),
+        (ItemKind::Column, _) => icon::COLUMN,
+        (ItemKind::Alias, _) => icon::ALIAS,
+        (ItemKind::Keyword, _) => icon::KEYWORD,
+        (ItemKind::Table, _) => icon::TABLE,
+        (ItemKind::View, _) => icon::VIEW,
+        (ItemKind::Schema, _) => icon::SCHEMA,
+        (ItemKind::Function, _) => icon::FUNCTION,
     }
 }
 
@@ -507,6 +770,18 @@ fn cursor_chars_of(buffer: &str, at: usize) -> usize {
     buffer.get(..at).map_or(0, |s| s.chars().count())
 }
 
+/// SQL só leitura com as cores do tema (gravação, DDL): o mesmo realce do editor, sem cursor.
+pub(crate) fn highlighted(
+    text: &str,
+    font: &egui::FontId,
+    tokens: &theme::Tokens,
+) -> egui::text::LayoutJob {
+    let colors = Colors::of(tokens);
+    let mut job = layout(&Analysis::new(text), font, &colors, None);
+    job.wrap.max_width = f32::INFINITY;
+    job
+}
+
 struct Colors {
     keyword: egui::Color32,
     string: egui::Color32,
@@ -514,6 +789,19 @@ struct Colors {
     comment: egui::Color32,
     text: egui::Color32,
     current: egui::Color32,
+}
+
+impl Colors {
+    fn of(tokens: &theme::Tokens) -> Self {
+        Self {
+            keyword: tokens.syntax_keyword,
+            string: tokens.syntax_string,
+            number: tokens.syntax_number,
+            comment: tokens.syntax_comment,
+            text: tokens.text,
+            current: tokens.hover,
+        }
+    }
 }
 
 /// O `LayoutJob` do buffer: cada span da análise com a sua cor, o resto na cor do texto, e o
@@ -575,6 +863,31 @@ fn line_column(buffer: &str, at: usize) -> (usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detalhe_da_sugestao_traduzido_e_sem_repetir_o_tipo() {
+        use crate::i18n::Language;
+        let item = |kind, detail: &str, primary_key, table_kind| hy_dbplus_sql::Item {
+            label: "x".into(),
+            kind,
+            detail: detail.into(),
+            primary_key,
+            table_kind,
+        };
+        let (pt, en) = (Tr(Language::PtBr), Tr(Language::En));
+        let table = item(ItemKind::Table, "public", false, Some(TableKind::Table));
+        assert_eq!(item_detail(pt, &table), "tabela · public");
+        assert_eq!(item_detail(en, &table), "table · public");
+        let matview = item(ItemKind::View, "", false, Some(TableKind::MaterializedView));
+        assert_eq!(item_detail(en, &matview), "materialized view");
+        let key = item(ItemKind::Column, "integer", true, None);
+        assert_eq!(item_detail(pt, &key), "integer · chave · coluna");
+        assert_eq!(item_detail(en, &key), "integer · key · column");
+        let schema = item(ItemKind::Schema, "", false, None);
+        assert_eq!(item_detail(pt, &schema), "schema");
+        let keyword = item(ItemKind::Keyword, "", false, None);
+        assert_eq!(item_detail(en, &keyword), "keyword");
+    }
 
     #[test]
     fn linha_e_coluna_contam_caracteres_a_partir_de_um() {

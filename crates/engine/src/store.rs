@@ -144,19 +144,7 @@ impl ConnectionStore {
             connections: self.connections.clone(),
         };
         let text = toml::to_string_pretty(&file).map_err(|e| EngineError::Config(e.to_string()))?;
-        if let Some(dir) = self.path.parent() {
-            create_private_dir(dir).map_err(|e| EngineError::io(dir, &e))?;
-        }
-        let tmp = self.path.with_extension("toml.tmp");
-        remove_if_exists(&tmp).map_err(|e| EngineError::io(&tmp, &e))?;
-        if let Err(e) = write_private(&tmp, text.as_bytes()) {
-            let _ = std::fs::remove_file(&tmp);
-            return Err(EngineError::io(&tmp, &e));
-        }
-        std::fs::rename(&tmp, &self.path).map_err(|e| {
-            let _ = std::fs::remove_file(&tmp);
-            EngineError::io(&self.path, &e)
-        })
+        save_toml(&self.path, &text)
     }
 }
 
@@ -182,6 +170,24 @@ pub(crate) fn config_dir_from(
             .join(".config"),
     };
     Ok(base.join("hy-dbplus"))
+}
+
+/// Grava um TOML do diretório de configuração de forma atômica: diretório 0700, arquivo 0600, por
+/// um `.tmp` renomeado. Um `.tmp` de uma falha anterior é apagado antes, e o desta falha, depois.
+pub(crate) fn save_toml(path: &Path, text: &str) -> Result<(), EngineError> {
+    if let Some(dir) = path.parent() {
+        create_private_dir(dir).map_err(|e| EngineError::io(dir, &e))?;
+    }
+    let tmp = path.with_extension("toml.tmp");
+    remove_if_exists(&tmp).map_err(|e| EngineError::io(&tmp, &e))?;
+    if let Err(e) = write_private(&tmp, text.as_bytes()) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(EngineError::io(&tmp, &e));
+    }
+    std::fs::rename(&tmp, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        EngineError::io(path, &e)
+    })
 }
 
 pub(crate) fn remove_if_exists(path: &Path) -> std::io::Result<()> {
