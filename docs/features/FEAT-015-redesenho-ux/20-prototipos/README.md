@@ -8,7 +8,7 @@ O endereço guarda a tela: `prototipo.html#s=8&t=dark&l=en`.
 
 | Fluxo | Artifact ou arquivo | Status |
 |---|---|---|
-| Todas as telas, claro e escuro, pt-BR e en | `prototipo.html` | aguardando a revisão do Jean (17/11/2026) |
+| Todas as telas, claro e escuro, pt-BR e en | `prototipo.html` | aprovado pelo Jean (17/11/2026); implementado nas fases B a E |
 
 ## Telas
 
@@ -32,7 +32,7 @@ O endereço guarda a tela: `prototipo.html#s=8&t=dark&l=en`.
 
 ## Decisões visuais
 
-Propostas em 17/11/2026, aguardando aprovação.
+Propostas e aprovadas em 17/11/2026.
 
 - **Destaque:** azul-petróleo da marca (`#1C5F72` no claro, `#5DBBD0` no escuro). Uma ação principal por tela.
 - **Ambiente:** a barra superior deixa de ser pintada inteira. O ambiente aparece como etiqueta com texto e como

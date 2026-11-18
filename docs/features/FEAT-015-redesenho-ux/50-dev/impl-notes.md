@@ -4,7 +4,7 @@
 
 > Protótipo aprovado pelo Jean em 17/11/2026 ("pode seguir"), como desenhado: ambiente em etiqueta e faixa fina.
 > Aceite e plano aprovados no mesmo dia ("pode seguir"). Fases A (e461e98), B (1406e00), C (43b7515) e D
-> (6c01cc4) e E (e11c7f3) commitadas.
+> (6c01cc4), E (e11c7f3) e F (902bbc3) commitadas.
 
 ## Decisões de implementação
 
@@ -185,7 +185,27 @@ Objetivo: barra do editor, autocomplete, resultados, erro e ROLLBACK (telas 13 a
 Objetivo: varredura de textos, cores e espaçamentos soltos; conferência nos dois temas e idiomas; `docs/BRIEF.md`
 e a linha "Padrão visual e protótipos" do `CLAUDE.md` atualizados.
 
-- [ ] F.0 Detalhar os passos da fase.
+- [x] F.0 Detalhar os passos da fase (18/11/2026).
+- [x] F.1 Textos soltos no `app.rs` para o catálogo (AC-004): página recarregada com pendências descartadas
+      (`DROPPED_HINT`), tabela sem chave primária, lote sem chave na página, editor rodando antes de gravar,
+      transação aberta no editor antes de gravar, falha ao ler, salvar ou apagar consulta salva, conexão que continua
+      aberta. Teste: os avisos seguem o idioma.
+- [x] F.2 Mensagens de erro do engine e do driver no idioma (decisão do Jean): hoje só em português ("não conectou
+      a…", "autenticação recusada…", "statement 2 do lote falhou…"), também no app em inglês. Proposta: a UI traduz
+      por variante do erro (`Tr::driver_error`, `Tr::engine_error`) e mantém a mensagem do servidor como vem; engine,
+      driver, CLI e MCP não mudam. Cerca de 26 pontos na UI.
+- [x] F.3 Licenças: tirar os `#[allow(dead_code)]` de `fonts`, `i18n` e `widgets` e apagar o que ficou sem uso
+      (ícone, texto, componente).
+- [x] F.4 Tokens (AC-015): as 21 margens e espaços soltos (conexões, dados, faixa, widgets, workspace, grid,
+      Índices, Estrutura, árvore) passam aos tokens `space`; as duas cores fixas fora do `theme.rs` (fundo do
+      logotipo nas conexões, texto sobre vermelho no escuro) viram tokens. A varredura por `grep` fica registrada.
+- [x] F.5 Teste instável: no portão da fase E falharam uma vez "recarregar com célula aberta" e "trocar o idioma
+      com tabelas abertas", sem repetir em 25 rodadas. Repetir sob carga, achar a causa e corrigir.
+- [x] F.6 Documentação: `docs/BRIEF.md` (padrão visual, idioma, tokens), a linha "Padrão visual e protótipos" do
+      `CLAUDE.md` apontando para o `theme.rs` e o protótipo, o README do protótipo e o checklist do aceite com o
+      que os testes cobrem.
+- [x] F.7 Testes, portão `--full` e revisor da fase; a revisão da branch inteira fica para o fechamento
+      (`feat-close`).
 
 ## Desvios do plano
 
@@ -229,8 +249,30 @@ e a linha "Padrão visual e protótipos" do `CLAUDE.md` atualizados.
 - **D.5, comando que falhou:** em vez de pintar o comando dentro do bloco de SQL, ele aparece em vermelho sob a
   faixa do erro, como no protótipo do editor.
 - **D.7, Copiar no DDL:** é a ação principal e não fecha o diálogo; Fechar e Esc fecham.
-- **Aviso de página descartada** (`DROPPED_HINT`, `app.rs`): ainda em português; vem de dentro do estado, sem o
-  idioma, e entra na varredura de textos da fase F.
+- **Aviso de página descartada:** saiu o `DROPPED_HINT`; o `accept_page` diz se descartou, e quem recebe o evento
+  põe o aviso no idioma (fase F).
+- **F.1 e F.2, quando traduz:** os avisos e erros guardados como texto (faixa da aba, da conexão, do diálogo de
+  gravação, `Status::Failed`) são escritos no idioma da hora em que chegam; trocar o idioma depois não reescreve
+  um erro já na tela. Os avisos do editor (fase E) são tipados e trocam na hora.
+- **F.2, evento da gravação tipado:** o `Event::ChangesFailed` do engine passou a levar `ChangeError` (o
+  `EditError` ou o `DriverError`) em vez do texto pronto; só a UI consome o evento. O `Display` dos erros do engine
+  e do driver não mudou (CLI e MCP seguem em português); a UI tem `Tr::driver_error`, `engine_error`,
+  `edit_error` e `change_error`, iguais ao `Display` em português, salvo a contagem de linhas, que ganhou o
+  plural. O detalhe que vem de dentro do driver ("host vazio") e a mensagem do servidor entram como vieram.
+- **F.3, sem uso:** com as licenças fora, sobraram o ícone de histórico, `widgets::env_stripe` e `widgets::dialog`
+  (o `dialog_full` cobre todos os diálogos); os três saíram. Nenhum texto do catálogo ficou sem uso.
+- **F.4, tokens:** entraram `space::PAGE` (32, a margem da tela de conexões no protótipo), `space::HAIR` (2, folga
+  do segmentado e dos chips), `radius::BADGE` (7) e `radius::PILL` (9), `theme::BRAND` e `theme::ON_SIGNAL` (marca
+  e texto sobre cor de sinal) e `Tokens::danger_ink`. As medidas que não caíam na escala (6, 10, 18, 20) viraram
+  soma de tokens, para não mudar o desenho aprovado; a etiqueta de ambiente passou de 7×1 para 8×2 de folga
+  (o protótipo tem 7; fica para a conferência visual). Na revisão entraram também `size::BADGE` (32, o selo da
+  conexão), `text_size::TINY` (11), `DOT` (10), `NAME` (14), `ICON` (18) e `ICON_LARGE` (32), e a linha dos grids passou a ser o `size::ROW` do tema
+  (24, como no protótipo; antes 22 nos grids e 24 no editor). Ficam como medida própria de componente, fora da
+  escala de espaço: a largura do campo ⌘K (220), a folga da paleta para a altura da janela (220 e 120) e o
+  deslocamento de 1 px do traço do statement no editor.
+- **F.5, testes instáveis:** a causa era a espera dos dois testes, não o app. "Recarregar com célula aberta"
+  esperava só os tamanhos e a página do recarregar chegava depois; "trocar o idioma" esperava o pedido das colunas
+  e não a chegada. Sob carga (seis suítes ao mesmo tempo) falhavam 7 em 18 e 3 em 24; com a espera certa, 0 em 36.
 - **Editor SQL:** o realce do editor usava as cores antigas até a fase E; agora usa as cores de sintaxe do tema,
   como a gravação e o DDL.
 - **E.5, faixa do ROLLBACK:** como no protótipo, fica sob o erro quando a sub-aba que falhou está ativa; com outra
@@ -286,6 +328,8 @@ e a linha "Padrão visual e protótipos" do `CLAUDE.md` atualizados.
 | D, 2ª | delta das correções | 2 baixos (a guarda dos atalhos olhava o banco ativo mesmo com outra conexão em foco e travava ⌘K, ⌘T e ⌘W sem diálogo na tela; comentário de `retry_data` fora do lugar) | ambos corrigidos, o primeiro com teste provado contra o código sem o filtro; sem nova passada, como a skill manda para baixo do delta |
 | E, 1ª | `git diff HEAD` (fase E) | 2 médios (detalhe do autocomplete em português no app em inglês e com o tipo repetido; o aviso de statement incompleto era apagado pelo `SqlStarted` e nunca aparecia, defeito anterior à fase); 5 baixos (traço do statement com a faixa do texto antigo ao digitar; `theme::error_color` sem uso; nomes antigos em comentários; margens e medidas soltas; Status da FEAT desatualizado e faixa do ROLLBACK acima do erro) | todos corrigidos; testes do detalhe traduzido e do aviso de incompleto, este provado contra o código sem o conserto |
 | E, 2ª | delta das correções | 1 baixo (a escolha do ícone por tipo de tabela ficou copiada na árvore e no autocomplete) | corrigido: `fonts::icon::table_kind` usado pelos dois; sem nova passada, como a skill manda para baixo do delta |
+| F, 1ª | `git diff HEAD` (fase F) | 5 baixos (medidas soltas que a varredura não pegou, entre elas a linha dos grids em 22 contra o `size::ROW` de 24; rótulo "Schema" fora do catálogo; doc do `widgets` citando a faixa removida; selo da conexão preso ao token de margem; BRIEF sem a dependência `sql` e sem a folga de 2) | todos corrigidos; a varredura foi refeita com padrão mais largo e as exceções ficaram nos desvios do F.4 |
+| F, 2ª | delta das correções | 2 baixos (três tamanhos de fonte fixos fora da varredura: nome da conexão, ícone da faixa, ícone do estado vazio; a linha de 24 nos grids faltava em "Não conferido") | ambos corrigidos (tokens `NAME`, `ICON`, `ICON_LARGE` e a linha nas notas); sem nova passada, como a skill manda para baixo do delta |
 
 ## Testes
 
@@ -360,6 +404,16 @@ Fase E (18/11/2026), por teste:
 - Editor em inglês: barra, rodapé, estado vazio, resultados, linhas afetadas, "failed in" e o aviso, que troca de
   idioma com ele na tela.
 - Rodapé do autocomplete com as teclas; detalhe da sugestão no idioma, sem repetir o tipo.
+
+Fase F (18/11/2026), por teste e varredura:
+- Erros do driver, do engine e da edição nos dois idiomas, e o português igual ao `Display` (CLI e MCP).
+- Pela interface em inglês: conexão que cai, gravação recusada sem chave, gravação com transação aberta no editor,
+  página que descarta pendências.
+- Os dois testes instáveis passam 36 vezes seguidas sob carga.
+- Varredura (AC-004): nenhum literal de interface fora do `i18n.rs` nos arquivos de tela, salvo nomes de tipo do
+  banco, `NULL`, palavras do SQL e ids de widget.
+- Varredura (AC-015): nenhuma margem, espaço, raio, tamanho de fonte ou cor fixa fora do `theme.rs` (só
+  `TRANSPARENT`, zeros e as medidas próprias de componente listadas nos desvios do F.4).
 - O aviso de statement incompleto aparece depois de rodar e some na execução seguinte (falha sem o conserto).
 
 **Não conferido:**
@@ -373,6 +427,8 @@ Fase E (18/11/2026), por teste:
 - Fase D no app: visual das telas 7 a 12 nos dois temas e idiomas; ⌘↩ gravando contra o banco local.
 - Fase E no app: visual das telas 13 a 15 nos dois temas e idiomas (cor âmbar da etiqueta, traço do statement
   atual, popup); ROLLBACK contra o banco local.
+- Fase F no app: a etiqueta de ambiente com a folga nova; a linha de 24 em todos os grids (Dados, com o cabeçalho
+  de 38, Estrutura, Índices e resultados; antes 22); as mensagens de erro em inglês contra um servidor real.
 
 ## Segurança (fechamento)
 

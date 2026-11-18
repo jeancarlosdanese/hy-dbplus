@@ -114,7 +114,7 @@ qualquer statement.
 | 8 | Editor SQL em abas: highlight, Run Current, Run All, limite de linhas, Beautify, resultado em grid, histórico | 3.7 |
 | 9 | Autocomplete por schema: keywords, tabelas, colunas, aliases do statement atual | 3.7 |
 | 10 | Navegação por FK no grid (clique na seta abre o registro referenciado) | 3.4 |
-| 11 | Tema claro e escuro | todas |
+| 11 | Tema claro e escuro; interface em português e inglês (FEAT-015) | todas |
 | 12 | CLI headless: `connections list`, `query`, `tables`; servidor MCP opt-in | — |
 
 ### Fora do MVP (próximas versões)
@@ -155,7 +155,7 @@ hy-dbplus/
 | `sql` | Divisão do buffer em statements com posição; statement sob o cursor; formatação; motor de autocomplete (contexto do cursor × catálogo). | `sqlparser`, `sqlformat`, `catalog` |
 | `engine` | API usada por todos os frontends: `Session`, `Workspace` (abas), `ConnectionStore` (arquivo TOML + Keychain), histórico de queries, eventos assíncronos para a UI. | `driver`, `catalog`, `sql`, `keyring`, `serde`, `toml` |
 | `automation` | Lista de tools (`connections.list`, `query.run`, `catalog.tables`, …) com schema JSON, usada pela CLI e exposta como servidor MCP opt-in. | `engine`, `serde_json` |
-| `ui-egui` | Widgets: lista de conexões, árvore, grid, abas, editor SQL com autocomplete, painel lateral, temas. Testável com `egui_kittest`. | `egui`, `eframe`, `egui_extras`, `engine` |
+| `ui-egui` | Widgets: lista de conexões, árvore, grid, abas, editor SQL com autocomplete, painel lateral, temas. Sistema visual em `theme.rs` (tokens de cor por papel, espaçamento, tipos, raios, alturas), `fonts.rs` (Inter, JetBrains Mono, ícones Phosphor), `widgets.rs` (botões, faixas, diálogos, estados) e textos em `i18n.rs` (pt-BR e en, inclusive as mensagens de erro do engine e do driver). Testável com `egui_kittest`. | `egui`, `eframe`, `egui_extras`, `egui-phosphor`, `sys-locale`, `engine`, `sql` |
 
 Regras de engenharia (never panic, layering, async fora da UI, segredos, Rust only, dependências) e o
 portão de qualidade têm um dono só: o [CLAUDE.md](../CLAUDE.md) da raiz. Este brief não as repete.
@@ -213,6 +213,7 @@ como a FEAT-001.
 | 4 | Web (WASM) | **Ignorar.** O navegador não abre conexão TCP com o banco; uma versão web exigiria um servidor intermediário, contra o princípio de ferramenta simples e local. | 2026-10-21 |
 | 5 | Plataformas | **macOS** é o alvo principal. **Linux** e **Windows** são builds secundários na CI, mesmo código via `egui`. | 2026-10-21 |
 | 6 | Edição de dados | **Update e Delete entram no MVP** (FEAT-007): só tabelas com chave primária; edições pendentes no grid, confirmadas em lote numa transação com o SQL à vista; Delete sobre a seleção, com confirmação. `+ Row` continua fora. | 2026-10-22 |
+| 7 | Sistema visual e idioma | **FEAT-015**: tokens de cor por papel (destaque azul-petróleo; pendência âmbar, separada da seleção; ambiente em etiqueta e faixa fina), escala de espaço 4/8/12/16/24 (32 na margem da tela de conexões; 2 de folga interna em controle pequeno), Inter na interface e JetBrains Mono em dados e SQL, ícones Phosphor, diálogos modais com o padrão único. Interface em pt-BR e en pelo idioma do sistema, com o seletor PT \| EN; nenhum texto de tela fora do catálogo. Protótipo de referência: `docs/features/FEAT-015-redesenho-ux/20-prototipos/prototipo.html`. | 2026-11-17 |
 
 ## 10. Próximos passos
 

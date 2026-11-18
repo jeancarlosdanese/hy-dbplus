@@ -101,25 +101,28 @@ Cenário: o que já funcionava continua funcionando
 
 ## Checklist
 
-- [ ] AC-001: idioma do sistema em pt abre em português; outro idioma ou ilegível abre em inglês, sem pânico.
+Marcados em 18/11/2026: cobertos por teste (e, no AC-004 e no AC-015, pela varredura da fase F, registrada
+nas notas). O AC-016 é a conferência visual do Jean.
+
+- [x] AC-001: idioma do sistema em pt abre em português; outro idioma ou ilegível abre em inglês, sem pânico.
       Verificar: teste.
-- [ ] AC-002: o seletor PT | EN troca os textos na hora e a escolha persiste. Verificar: teste.
-- [ ] AC-003: preferência inválida cai no idioma do sistema, sem erro. Verificar: teste.
-- [ ] AC-004: nenhum texto do app misturado: os dois catálogos têm as mesmas chaves, e nenhum literal de interface
+- [x] AC-002: o seletor PT | EN troca os textos na hora e a escolha persiste. Verificar: teste.
+- [x] AC-003: preferência inválida cai no idioma do sistema, sem erro. Verificar: teste.
+- [x] AC-004: nenhum texto do app misturado: os dois catálogos têm as mesmas chaves, e nenhum literal de interface
       fica fora do catálogo. Verificar: teste (paridade do catálogo) e varredura por `grep` no fechamento.
-- [ ] AC-005: rótulo de atalho mostra Ctrl fora do macOS. Verificar: teste.
-- [ ] AC-006: pendência e seleção têm cores diferentes e a pendência prevalece na célula. Verificar: teste dos
+- [x] AC-005: rótulo de atalho mostra Ctrl fora do macOS. Verificar: teste.
+- [x] AC-006: pendência e seleção têm cores diferentes e a pendência prevalece na célula. Verificar: teste dos
       tokens e conferência visual.
-- [ ] AC-007: título do diálogo de gravação com contagem e plural corretos nos dois idiomas. Verificar: teste.
-- [ ] AC-008: todos os diálogos são modais; Esc e clique fora cancelam, salvo durante a gravação. Verificar: teste.
-- [ ] AC-009: Enter salva o formulário válido; porta inválida não salva e mostra o erro no campo. Verificar: teste.
-- [ ] AC-010: Testar conexão mostra tempo ou erro, não salva nada e não expõe a senha. Verificar: teste com o
+- [x] AC-007: título do diálogo de gravação com contagem e plural corretos nos dois idiomas. Verificar: teste.
+- [x] AC-008: todos os diálogos são modais; Esc e clique fora cancelam, salvo durante a gravação. Verificar: teste.
+- [x] AC-009: Enter salva o formulário válido; porta inválida não salva e mostra o erro no campo. Verificar: teste.
+- [x] AC-010: Testar conexão mostra tempo ou erro, não salva nada e não expõe a senha. Verificar: teste com o
       driver falso.
-- [ ] AC-011: setas e Enter na lista de conexões. Verificar: teste.
-- [ ] AC-012: transação abortada oferece ROLLBACK; transação aberta é aviso. Verificar: teste.
-- [ ] AC-013: confirmação de fechar com a contagem e as três saídas. Verificar: teste.
-- [ ] AC-014: nenhum botão morto na tela. Verificar: teste.
-- [ ] AC-015: nenhuma cor nem espaçamento fora dos tokens em `crates/ui-egui/src/`, salvo o `theme.rs`.
+- [x] AC-011: setas e Enter na lista de conexões. Verificar: teste.
+- [x] AC-012: transação abortada oferece ROLLBACK; transação aberta é aviso. Verificar: teste.
+- [x] AC-013: confirmação de fechar com a contagem e as três saídas. Verificar: teste.
+- [x] AC-014: nenhum botão morto na tela. Verificar: teste.
+- [x] AC-015: nenhuma cor nem espaçamento fora dos tokens em `crates/ui-egui/src/`, salvo o `theme.rs`.
       Verificar: varredura por `grep` no fechamento.
 - [ ] AC-016: as 17 telas batem com o protótipo nos dois temas e nos dois idiomas. Verificar: conferência visual do
       Jean no app.
