@@ -1255,6 +1255,23 @@ mod tests {
         harness.get_by_label("Dados").click_accesskit();
         harness.step();
         harness.step();
+        // Com a paleta aberta, ⌘S não abre a gravação por baixo dela (achado do revisor no
+        // fechamento da FEAT-015); Esc fecha a paleta.
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::K);
+        harness.step();
+        harness.step();
+        assert!(harness.state().palette.is_some());
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::S);
+        harness.step();
+        harness.step();
+        assert!(
+            tab(harness.state()).commit.is_none(),
+            "⌘S abriu a gravação sob a paleta"
+        );
+        harness.key_press(egui::Key::Escape);
+        harness.step();
+        harness.step();
+        assert!(harness.state().palette.is_none());
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::S);
         harness.step();
         harness.step();
@@ -2398,8 +2415,41 @@ mod tests {
         );
         harness.get_by_label("Linha 3, coluna 9");
 
-        // Executar (⌘↩): só o statement do cursor, 3 linhas, uma sub-aba.
+        // Com a paleta aberta, ⌘⇧↩ não roda nada por baixo dela (achado do revisor no fechamento
+        // da FEAT-015); Esc fecha a paleta e devolve o foco ao editor.
         let before = queries.load(Ordering::SeqCst);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::K);
+        harness.step();
+        harness.step();
+        assert!(harness.state().palette.is_some());
+        harness.key_press_modifiers(
+            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+            egui::Key::Enter,
+        );
+        for _ in 0..4 {
+            harness.step();
+        }
+        assert_eq!(
+            queries.load(Ordering::SeqCst),
+            before,
+            "⌘⇧↩ rodou sob a paleta"
+        );
+        assert!(query(harness.state()).is_some_and(|q| !q.running && q.results.is_empty()));
+        // A paleta também não toma o ⌘⇧↩ como Enter (trocaria o banco por engano).
+        assert!(
+            harness.state().palette.is_some(),
+            "a paleta escolheu com ⌘⇧↩"
+        );
+        harness.key_press(egui::Key::Escape);
+        harness.step();
+        harness.step();
+        assert!(harness.state().palette.is_none());
+        harness
+            .get_by_role(egui::accesskit::Role::MultilineTextInput)
+            .focus();
+        harness.step();
+
+        // Executar (⌘↩): só o statement do cursor, 3 linhas, uma sub-aba.
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Enter);
         wait_for(&mut harness, "resultado", |app| {
             query(app).is_some_and(|q| !q.running && q.results.len() == 1)

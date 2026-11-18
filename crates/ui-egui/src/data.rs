@@ -103,19 +103,21 @@ where
     // abre a gravação; ⌘Z descarta (sem campo em foco: dentro de um campo, ⌘Z é o desfazer do
     // próprio campo); ⌘R recarrega a página; ⌫ sem campo em foco marca a seleção.
     let in_data = tab.view == TabView::Data;
+    // Com um modal na tela (paleta, confirmação de fechar, gravação ou DDL), nenhum deles age.
+    let keys = in_data && !app.modal_open();
     let nothing_focused = ui.ctx().memory(|m| m.focused().is_none());
     let shortcut = |key: egui::Key| egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, key);
     // Célula aberta também trava: a página nova descartaria o que se digitou (achado do revisor).
     let can_reload = !tab.loading && !locked && tab.commit.is_none() && tab.editing.is_none();
     let mut reload = false;
-    if in_data
+    if keys
         && locked
         && tab.commit.is_none()
         && ui.input_mut(|i| i.consume_shortcut(&shortcut(egui::Key::S)))
     {
         open_commit = true;
     }
-    if in_data
+    if keys
         && locked
         && tab.commit.is_none()
         && nothing_focused
@@ -123,10 +125,10 @@ where
     {
         discard = true;
     }
-    if in_data && can_reload && ui.input_mut(|i| i.consume_shortcut(&reload_shortcut())) {
+    if keys && can_reload && ui.input_mut(|i| i.consume_shortcut(&reload_shortcut())) {
         reload = true;
     }
-    if in_data
+    if keys
         && editable
         && nothing_focused
         && tab.editing.is_none()

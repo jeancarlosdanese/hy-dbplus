@@ -85,7 +85,9 @@ where
                     palette.selected = (palette.selected + matches.len() - 1) % matches.len();
                     moved = true;
                 }
-                if input.key_pressed(egui::Key::Enter) {
+                // Só o Enter puro escolhe: ⌘↩ e ⌘⇧↩ são atalhos de outras telas e não trocam o
+                // banco por engano (achado do revisor no fechamento da FEAT-015).
+                if input.key_pressed(egui::Key::Enter) && !input.modifiers.command {
                     chosen = matches.get(palette.selected).cloned();
                 }
             });

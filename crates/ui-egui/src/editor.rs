@@ -149,8 +149,13 @@ where
 
     let mut dismiss_notice = false;
 
-    // Atalhos, antes dos widgets (consumidos aqui, o TextEdit não os vê).
+    // Atalhos, antes dos widgets (consumidos aqui, o TextEdit não os vê). Com a paleta ou a
+    // confirmação de fechar na tela, são delas.
+    let modal = app.modal_open();
     ui.input_mut(|i| {
+        if modal {
+            return;
+        }
         if i.consume_shortcut(&run_all_shortcut()) {
             run_all = true;
         } else if i.consume_shortcut(&run_shortcut()) {

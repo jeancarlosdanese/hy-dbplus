@@ -1533,6 +1533,14 @@ where
             .is_some_and(|tab| tab.commit.is_some() || tab.ddl_open)
     }
 
+    /// Algum modal na tela: a paleta, a confirmação de fechar ou um diálogo da aba de tabela. Com
+    /// ele, os atalhos do workspace, da aba de dados e do editor não agem: abririam outro modal por
+    /// cima ou mudariam o que está debaixo dele (achado do revisor: ⌘S com a paleta aberta abria a
+    /// gravação por baixo dela, e o ⌘↩ seguinte ia para a paleta).
+    pub(crate) fn modal_open(&self) -> bool {
+        self.palette.is_some() || self.confirm_close.is_some() || self.table_dialog_open()
+    }
+
     /// Recarregar (⌘R): a mesma página e os tamanhos de novo (o total do rodapé e a próxima página
     /// dependem deles). Com pendência, nada sai (`load_tab_page` trava).
     pub(crate) fn reload_data(&mut self, key: &DbKey) {
