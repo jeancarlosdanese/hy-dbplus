@@ -625,17 +625,75 @@ mod tests {
         }
     }
 
-    /// Roda frames até a condição valer (os eventos chegam de outra thread).
+    /// O que o app tem na hora: tela, e por banco o estado do catálogo e da aba de tabela ativa.
+    /// Vai na mensagem do `wait_for` que estoura, para a falha que só aparece no CI dizer onde
+    /// parou (no Windows, 18/11/2026, `structure_index_e_ddl_de_uma_tabela` esperou o
+    /// `StructureFailed` até o fim sem reproduzir no Mac).
+    fn state_summary(app: &App<FakeDriver>) -> String {
+        let mut out = format!("view={:?}", app.view);
+        let mut keys: Vec<_> = app.workspaces.keys().collect();
+        keys.sort();
+        for key in keys {
+            let Some(ws) = app.workspaces.get(key) else {
+                continue;
+            };
+            out.push_str(&format!(
+                "; {}: loading={} error={:?} schemas_loaded={} tabs={} active={:?}",
+                key.1,
+                ws.loading,
+                ws.error,
+                ws.objects.len(),
+                ws.tabs.len(),
+                ws.active_tab
+            ));
+            if let Some(d) = ws.data() {
+                out.push_str(&format!(
+                    " tab={}.{} tab_view={:?} rows={} loading={} error={:?} changes={} editing={} \
+                     structure={} structure_requested={} structure_error={:?} commit={} ddl_open={}",
+                    d.schema,
+                    d.table,
+                    d.view,
+                    d.rows.is_some(),
+                    d.loading,
+                    d.error,
+                    d.has_changes(),
+                    d.editing.is_some(),
+                    d.structure.is_some(),
+                    d.structure_requested,
+                    d.structure_error,
+                    d.commit.is_some(),
+                    d.ddl_open
+                ));
+            }
+        }
+        out
+    }
+
+    /// Roda frames até a condição valer (os eventos chegam de outra thread). Estourou: a
+    /// mensagem traz o estado do app (`state_summary`).
     fn wait_for(
         harness: &mut Harness<'_, App<FakeDriver>>,
         what: &str,
         cond: impl Fn(&App<FakeDriver>) -> bool,
     ) {
+        wait_for_with(harness, what, cond, String::new);
+    }
+
+    /// `wait_for` com um dado a mais na mensagem do estouro (o contador de queries do driver
+    /// falso, por exemplo, que o `App` não alcança).
+    fn wait_for_with(
+        harness: &mut Harness<'_, App<FakeDriver>>,
+        what: &str,
+        cond: impl Fn(&App<FakeDriver>) -> bool,
+        extra: impl Fn() -> String,
+    ) {
         let started = Instant::now();
         while !cond(harness.state()) {
             assert!(
                 started.elapsed() < Duration::from_secs(3),
-                "esperando: {what}"
+                "esperando: {what}; estado: {}{}",
+                state_summary(harness.state()),
+                extra()
             );
             std::thread::sleep(Duration::from_millis(10));
             harness.step();
@@ -2326,11 +2384,24 @@ mod tests {
         // ↻ zera a estrutura; falha ao reler mostra o erro com "Tentar de novo" (sem "Carregando…"),
         // e o botão pede de novo quando o servidor volta.
         fail_structure.store(true, Ordering::SeqCst);
+        // Falhou uma vez no Windows (18/11/2026) sem reproduzir no Mac: o estouro diz se o pedido
+        // da estrutura saiu (queries depois do clique) além do estado da aba.
+        let before_refresh = queries.load(Ordering::SeqCst);
         harness.get_by_label("Recarregar o catálogo").click();
-        wait_for(&mut harness, "StructureFailed", |app| {
-            app.workspace_of(&id)
-                .is_some_and(|ws| ws.data().is_some_and(|d| d.structure_error.is_some()))
-        });
+        wait_for_with(
+            &mut harness,
+            "StructureFailed",
+            |app| {
+                app.workspace_of(&id)
+                    .is_some_and(|ws| ws.data().is_some_and(|d| d.structure_error.is_some()))
+            },
+            || {
+                format!(
+                    "; queries depois do clique: {}",
+                    queries.load(Ordering::SeqCst) - before_refresh
+                )
+            },
+        );
         harness.get_by_label_contains("permission denied");
         assert!(harness.query_by_label("Carregando estrutura…").is_none());
         fail_structure.store(false, Ordering::SeqCst);
