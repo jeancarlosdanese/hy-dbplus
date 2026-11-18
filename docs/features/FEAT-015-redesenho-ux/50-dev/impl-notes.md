@@ -330,6 +330,8 @@ e a linha "Padrão visual e protótipos" do `CLAUDE.md` atualizados.
 | E, 2ª | delta das correções | 1 baixo (a escolha do ícone por tipo de tabela ficou copiada na árvore e no autocomplete) | corrigido: `fonts::icon::table_kind` usado pelos dois; sem nova passada, como a skill manda para baixo do delta |
 | F, 1ª | `git diff HEAD` (fase F) | 5 baixos (medidas soltas que a varredura não pegou, entre elas a linha dos grids em 22 contra o `size::ROW` de 24; rótulo "Schema" fora do catálogo; doc do `widgets` citando a faixa removida; selo da conexão preso ao token de margem; BRIEF sem a dependência `sql` e sem a folga de 2) | todos corrigidos; a varredura foi refeita com padrão mais largo e as exceções ficaram nos desvios do F.4 |
 | F, 2ª | delta das correções | 2 baixos (três tamanhos de fonte fixos fora da varredura: nome da conexão, ícone da faixa, ícone do estado vazio; a linha de 24 nos grids faltava em "Não conferido") | ambos corrigidos (tokens `NAME`, `ICON`, `ICON_LARGE` e a linha nas notas); sem nova passada, como a skill manda para baixo do delta |
+| Fechamento, 1ª | `git diff main...HEAD` (branch inteira) | 2 baixos (⌘S abria a gravação sob a paleta ou a confirmação de fechar, e o ⌘↩ seguinte ia para a paleta e trocava o banco; BRIEF com rótulos que o app não tem mais) | ambos corrigidos: `App::modal_open` nas guardas do data, do editor e das abas, e a paleta só escolhe com o Enter puro, com testes provados contra o código sem cada conserto; BRIEF com os rótulos atuais e o `PreferenceStore` |
+| Fechamento, 2ª | delta das correções | 1 baixo (dois rótulos antigos no BRIEF: item 8 do MVP e a linha do `sqlformat` na stack) | corrigido; sem nova passada, como a skill manda para baixo do delta |
 
 ## Testes
 
@@ -415,6 +417,9 @@ Fase F (18/11/2026), por teste e varredura:
 - Varredura (AC-015): nenhuma margem, espaço, raio, tamanho de fonte ou cor fixa fora do `theme.rs` (só
   `TRANSPARENT`, zeros e as medidas próprias de componente listadas nos desvios do F.4).
 - O aviso de statement incompleto aparece depois de rodar e some na execução seguinte (falha sem o conserto).
+
+Fechamento (18/11/2026): portão completo verde na ponta da branch (fmt, clippy, camadas, testes, cargo-deny,
+coerência dos CLAUDE.md, gitleaks); verificador de estrutura da FEAT ok.
 
 **Não conferido:**
 - Nitidez da Inter em 12 e 13 px e o visual geral no app: a captura de tela não tem permissão nesta sessão. Fica

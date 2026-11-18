@@ -124,6 +124,7 @@ nas notas). O AC-016 é a conferência visual do Jean.
 - [x] AC-014: nenhum botão morto na tela. Verificar: teste.
 - [x] AC-015: nenhuma cor nem espaçamento fora dos tokens em `crates/ui-egui/src/`, salvo o `theme.rs`.
       Verificar: varredura por `grep` no fechamento.
-- [ ] AC-016: as 17 telas batem com o protótipo nos dois temas e nos dois idiomas. Verificar: conferência visual do
-      Jean no app.
-- [ ] AC-017: a suíte anterior passa com os rótulos novos; portão completo verde. Verificar: teste.
+- [ ] AC-016 (motivo: conferência do Jean): as 17 telas batem com o protótipo nos dois temas e nos dois idiomas.
+      Verificar: conferência visual do Jean no app. A captura de tela do app não tem permissão nas sessões da IA;
+      fica em "Cabe ao mantenedor" (context.index), e o que ele apontar vira correção.
+- [x] AC-017: a suíte anterior passa com os rótulos novos; portão completo verde. Verificar: teste.
