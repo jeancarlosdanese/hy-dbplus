@@ -75,7 +75,7 @@ Passos marcáveis, por fase. Cada fase fecha com teste, notas e o "pode commitar
       ```
       Saída esperada: os jobs `macos`, `linux` e `windows` verdes, com os pacotes nos artefatos do run e o
       `dpkg-deb --info` no log do Linux. O job `release` fica pulado (não é tag).
-- [ ] C.1 `.github/workflows/release.yml`: gatilhos `push` de tag `v*` e `pull_request` que toca `xtask/`,
+- [x] C.1 `.github/workflows/release.yml`: gatilhos `push` de tag `v*` e `pull_request` que toca `xtask/`,
       `packaging/`, `apps/hy-dbplus/` ou o próprio workflow; job `check` (`cargo xtask version --check` com o nome
       da tag, só na tag); jobs `macos` (`--universal`), `linux` (dependências do eframe, `.deb` e `.tar.gz`,
       `dpkg-deb --info` e `--contents`, e o `.deb` instalado por `apt install` num contêiner `debian:bookworm-slim`
@@ -84,14 +84,14 @@ Passos marcáveis, por fase. Cada fase fecha com teste, notas e o "pode commitar
       `dlopen`) e `windows`, cada um subindo os pacotes como artefato; job `release`, só na
       tag, com `contents: write`, que baixa os artefatos, gera o `SHA256SUMS` e roda `gh release create --draft
       --generate-notes`. `permissions: contents: read` no topo.
-- [ ] C.2 `.claude/process.json`: `version` (`file: VERSION`, `paths` com `^(apps|crates|xtask|packaging)/` e
+- [x] C.2 `.claude/process.json`: `version` (`file: VERSION`, `paths` com `^(apps|crates|xtask|packaging)/` e
       `^Cargo\.(toml|lock)$`, `tag: v{version}`) e `bump: cargo xtask version {version}`; o `comment` atualizado.
       Antes, conferir nos testes do plugin (`hooks/bash_guard_test.py`) o caminho "VERSION novo na `main` sem tag →
       commit da versão pela entrega → tag", para a primeira entrega não travar.
-- [ ] C.3 `CLAUDE.md`: a regra de versão ("FEAT sobe o minor, ajuste sem FEAT sobe o patch, a partir da
+- [x] C.3 `CLAUDE.md`: a regra de versão ("FEAT sobe o minor, ajuste sem FEAT sobe o patch, a partir da
       FEAT-016"), a frase da entrega sem o "até o M8", e os comandos `cargo xtask version` e o bundle das três
       plataformas. `docs/BRIEF.md`: o M8 com os instaladores.
-- [ ] C.4 Portão `--full`, revisor da fase e notas; depois, fechamento (`feat-close`) com a revisão da branch
+- [x] C.4 Portão `--full`, revisor da fase e notas (duas passadas); depois, fechamento (`feat-close`) com a revisão da branch
       inteira. Na entrega, a `0.2.0` e a tag `v0.2.0`; o push da tag, que cria a Release, é do Jean.
 
 ## Desvios do plano
@@ -124,6 +124,33 @@ Passos marcáveis, por fase. Cada fase fecha com teste, notas e o "pode commitar
   grava.
 - **B.3, `windows_subsystem` só no release:** o build de debug segue com console para os logs.
 
+- **C.2, a 0.2.0 sobe na branch, não depois do merge:** lendo a `version_gate` da trava, o commit da versão na
+  `main` seria recusado: ela exige que a versão do último commit (0.1.0, chegada com o merge) já tenha a tag
+  `v0.1.0`, que nunca existiu (os testes do plugin partem de uma versão já marcada). A trava prevê a outra forma:
+  "a tag que falta vai na ponta da principal (o commit da versão, ou o de merge quando a branch já subiu a
+  versão)". Por isso o `cargo xtask version 0.2.0` rodou na branch, e a entrega desta FEAT faz o merge e cria a
+  `v0.2.0` no commit de merge, sem tag `v0.1.0` artificial. Da próxima entrega em diante vale o fluxo normal
+  (merge, commit da versão, tag). O merge passa: antes dele a `main` não tem `VERSION`, e a trava não cobra nada.
+- **C.1, Linux no `ubuntu-22.04`:** montado no 24.04, o binário exigiria a glibc 2.39 e não abriria no Debian 12
+  (2.36) nem no Ubuntu 22.04; com a 2.35 roda de 2022 em diante.
+- **C.1, conferência do `.deb`:** num contêiner `debian:bookworm-slim`, `apt install` do `.deb` (prova que o
+  `Depends` se resolve), `hy-dbplus-cli --version` e o app aberto 15 s sob `xvfb-run`, com o Mesa fazendo o papel
+  do driver do desktop e a senha só em memória. Saída antes dos 15 s reprova.
+- **C.1, ações de artefato:** `upload-artifact@v7` e `download-artifact@v8` (as últimas, consultadas na API do
+  GitHub em 18/11/2026; Node 24, com `pattern` e `merge-multiple`); as outras seguem as do `quality-gate.yml`.
+- **C.1, notas da Release:** as geradas pelo GitHub, precedidas do aviso de pacotes sem assinatura, que manda
+  conferir pelo `SHA256SUMS` (anexo).
+- **C, achados do revisor (lote único, todos baixos):** o `CLAUDE.md` mandava subir a versão em toda entrega, mas a
+  trava recusa versão nova sem mudança nos `paths` desde a tag: a regra agora diz isso. O job `release`, reexecutado
+  depois de falha no meio, quebrava no `create` (o rascunho já existia): agora sobe os anexos por cima. As ações de
+  artefato estavam na v4 (Node 20). E o aceite e as notas diziam que esta entrega provava o commit da versão na
+  `main`, que ela não percorre: o revisor simulou com as funções da trava (merge desta FEAT, tag no commit de merge,
+  merge seguinte, `cargo xtask version 0.3.0`, commit e tag passam; commit na `main` antes da tag é recusado), e a
+  prova real fica para a próxima entrega.
+- **C, 2ª passada (um baixo, corrigido sem nova passada):** o reenvio por cima também regravaria os anexos de uma
+  Release já publicada (reexecução do run ou tag movida); agora só regrava rascunho, e publicada falha dizendo
+  que versão publicada não se regrava.
+
 ## Testes
 
 Fase A (18/11/2026), por teste e no repositório:
@@ -155,11 +182,17 @@ Fase B (18/11/2026), por teste e no Mac:
   assinatura ad hoc válida (`codesign -v`); argumento desconhecido recusado.
 - Portão completo verde.
 
-**Não conferido:** o `.deb`, o `.tar.gz` e o `.zip` montados de verdade (esta máquina é macOS; montam no CI, fase
+Fase C (18/11/2026), local:
+- `cargo xtask version 0.2.0` no repositório: 9 linhas do lock, 1 do `Cargo.toml` e o `VERSION`; portão completo
+  verde com a 0.2.0.
+- `release.yml` lido como YAML (Ruby): cinco jobs, escrita só no `release`.
+- `.claude/process.json` válido, com `version` e `bump`.
+
+**Não conferido:** o `release.yml` rodando (depende do push da branch, C.0); o `.deb`, o `.tar.gz` e o `.zip` montados de verdade (esta máquina é macOS; montam no CI, fase
 C); o `--universal` (falta o target x86_64 neste Mac; monta no CI); o checkout do Windows com o `.gitattributes` (o `VERSION` ainda não foi para o remoto; confere
 no CI do primeiro push da branch); a falha de gravação depois de truncar (disco cheio), que não se simula em
-teste: o teste cobre a falha no segundo arquivo, com o primeiro devolvido e sem temporário sobrando; a subida dentro da entrega, com a trava do plugin (é a da própria entrega desta FEAT, na fase
-C).
+teste: o teste cobre a falha no segundo arquivo, com o primeiro devolvido e sem temporário sobrando; a subida dentro da entrega, com a trava do plugin (esta entrega só faz o merge e a tag no commit de merge; o commit da
+versão na `main` foi conferido por simulação com as funções da trava e roda de verdade na próxima entrega).
 
 ## Segurança (fechamento)
 

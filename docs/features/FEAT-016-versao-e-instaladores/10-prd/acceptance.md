@@ -73,8 +73,10 @@ Cenário: nada de segredo
 - [ ] AC-001: `cargo xtask version` troca a versão nos três arquivos e só nas linhas da versão. Verificar: teste.
 - [ ] AC-002: versão inválida ou que não sobe é recusada sem mudar arquivo. Verificar: teste.
 - [ ] AC-003: `VERSION` e `Cargo.toml` diferentes reprovam o portão. Verificar: teste.
-- [ ] AC-004: `process.json` com `version` e `bump`, e a regra de versão no `CLAUDE.md`. Verificar: leitura e a
-      trava na entrega desta FEAT (a `0.2.0`).
+- [ ] AC-004: `process.json` com `version` e `bump`, e a regra de versão no `CLAUDE.md`. Verificar: leitura; a
+      trava na entrega desta FEAT (merge e a tag `v0.2.0` no commit de merge, porque a 0.2.0 subiu na branch) e,
+      por simulação com as funções da própria trava, o commit da versão na entrega seguinte (a prova real é a
+      dessa entrega).
 - [ ] AC-005: nomes dos pacotes, `control` do `.deb`, `.desktop` e árvore dos pacotes. Verificar: teste (em
       qualquer sistema).
 - [ ] AC-006: `.deb` e `.tar.gz` montados no Ubuntu. Verificar: CI (o `release.yml` também roda em
