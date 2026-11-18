@@ -57,7 +57,8 @@ cargo run -p hy-dbplus                  # app desktop (a partir do M0)
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo xtask layers                      # camadas do BRIEF §5 (xtask/src/layers.rs)
-cargo xtask bundle                      # hy-dbplus.app e .dmg em target/bundle/ (macOS; FEAT-014)
+cargo xtask bundle                      # pacote do sistema em target/bundle/: .dmg, .deb e .tar.gz, .zip
+cargo xtask version <x.y.z>             # sobe a versão (VERSION, Cargo.toml, Cargo.lock); o bump da entrega
 scripts/quality-gate.sh --fast          # fmt + clippy + layers + coerência dos CLAUDE.md
 scripts/quality-gate.sh --full          # + testes, cargo-deny, gitleaks
 scripts/quality-gate-tools.sh           # instala cargo-deny e gitleaks (uma vez por máquina)
@@ -79,9 +80,13 @@ delta, gravidade) e o critério de conclusão ficam na skill `process:quality` (
   na branch e o merge `--no-ff` na `main` (vale 30 minutos). Sem ela, o merge é recusado. A trava recusa o
   merge se a branch tem código sem revisão (ou alterado depois dela, teste incluído) ou sem o portão completo
   verde sobre a ponta da branch (comando `gate` do `.claude/process.json`, rodado pelo executor do plugin; a
-  saída fica na tela e o push vem depois, do Jean). Versão e tag entram na entrega quando o workspace tiver
-  `version` e `bump` no `process.json` (M8); até lá a IA não sobe versão nem cria tag na entrega (é conduta: sem
-  `version` a trava não confere a tag).
+  saída fica na tela e o push vem depois, do Jean). A entrega também faz versão e tag (FEAT-016) quando a branch
+  traz mudança nos `paths` do `version` no `process.json` (código, apps, xtask, empacotamento, manifestos, `release.yml`): depois
+  do merge, na `main`, a IA roda o `bump` (`cargo xtask version <nova>`), commita só a troca da versão e cria a tag
+  `v<versão>` nesse commit; quando a branch já subiu a versão, a tag vai no commit de merge. Depois da tag, monta o
+  `.dmg` (`cargo xtask bundle`, em `target/bundle/`). Tudo local, sem pull request nem CI antes. Sem essa mudança (só
+  docs, por exemplo), a entrega é só o merge: a trava recusa versão nova sem código versionado desde a tag.
+  O push da tag é do Jean e dispara o `release.yml`, que cria a Release em rascunho com os instaladores.
 - **Push e deploy:** sempre do Jean; a trava recusa.
 - **Revisor:** em toda branch com código, antes do merge: primeira passada sobre o diff inteiro, as seguintes
   só sobre o delta; liberada sem achado alto ou médio (`/code-review` não conta). Achado baixo também se
@@ -115,5 +120,6 @@ delta, gravidade) e o critério de conclusão ficam na skill `process:quality` (
   - **Backlog:** nenhum.
   - **Passos extras ao fechar:** nenhum.
   - **Teto de FEATs em andamento:** 15.
-  - **Versão:** padrão do plugin, a partir do M8 (antes disso o projeto não versiona).
+  - **Versão:** padrão do plugin: FEAT sobe o minor, ajuste sem FEAT sobe o patch. Arquivo `VERSION`, espelhado
+    no `[workspace.package]` do `Cargo.toml` (FEAT-016; a primeira foi a 0.2.0).
 - Padrão de engenharia completo: skill `/process:quality`.

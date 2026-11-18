@@ -1,6 +1,12 @@
 //! hy-dbplus: o app desktop. Cria o runtime, o engine e a janela (eframe); entrega o resto à
 //! `ui-egui`. Falha ao abrir a janela vira mensagem no stderr e saída 1.
 
+// No Windows, o build release é um programa gráfico: abre sem a janela de console (FEAT-016). O
+// stderr some nesse modo, então o erro que impede a abertura vai também para `error.log`, ao lado do
+// `connections.toml` (`report`); o build de debug segue com console.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
+use std::path::Path;
 use std::process::ExitCode;
 
 use eframe::egui;
@@ -20,9 +26,29 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("hy-dbplus: {e}");
+            report(&e);
             ExitCode::FAILURE
         }
     }
+}
+
+/// Windows release (sem console): o erro que impede a abertura fica em `error.log`, na pasta do
+/// `connections.toml`, para não sair calado (achado do revisor). Falha ao gravar não tem a quem
+/// avisar e é ignorada. Os erros deste caminho (runtime, arquivos de configuração, janela) não
+/// carregam senha: ela só existe no chaveiro.
+fn report(message: &str) {
+    if cfg!(all(windows, not(debug_assertions)))
+        && let Ok(path) = ConnectionStore::default_path()
+        && let Some(dir) = path.parent()
+    {
+        let _ = write_error_log(dir, message);
+    }
+}
+
+/// Grava `<dir>/error.log` com a mensagem, substituindo o anterior.
+fn write_error_log(dir: &Path, message: &str) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    std::fs::write(dir.join("error.log"), format!("hy-dbplus: {message}\n"))
 }
 
 fn run() -> Result<(), String> {
@@ -90,6 +116,17 @@ fn run() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn o_erro_de_abertura_vai_para_o_error_log() {
+        let dir = std::env::temp_dir().join(format!("hy-dbplus-error-log-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        super::write_error_log(&dir.join("sub"), "não consegui abrir a janela: sem OpenGL")
+            .unwrap();
+        let text = std::fs::read_to_string(dir.join("sub").join("error.log")).unwrap();
+        assert_eq!(text, "hy-dbplus: não consegui abrir a janela: sem OpenGL\n");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Fundo transparente fora do quadrado arredondado: o primeiro e o último pixel têm alfa 0
     /// (o `qlmanage` gerava fundo branco opaco e a Dock mostrava um quadrado branco).
     #[test]

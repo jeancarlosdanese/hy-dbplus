@@ -1,0 +1,5 @@
+# @file: .gitattributes
+# O VERSION (FEAT-016) fica em LF em todo checkout: o `cargo xtask version` recusa `\r\n`, porque a
+# trava do plugin só aceita o commit da versão se a única mudança for a versão. Sem isto, o checkout
+# do Windows (core.autocrlf=true nos runners do GitHub) quebrava o teste de compasso.
+VERSION text eol=lf
