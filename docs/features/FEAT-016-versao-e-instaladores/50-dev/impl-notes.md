@@ -205,7 +205,12 @@ Fase C (18/11/2026), local:
 - `release.yml` lido como YAML (Ruby): cinco jobs, escrita só no `release`.
 - `.claude/process.json` válido, com `version` e `bump`.
 
-**Não conferido:** o `release.yml` rodando (roda no push da `main` e da tag, do Jean, depois da entrega); o `.deb`, o `.tar.gz` e o `.zip` montados de verdade (esta máquina é macOS; montam no CI, fase
+Depois da entrega (18/11/2026): o push do Jean rodou o `release.yml` na `main` e na tag `v0.2.0`, os dois verdes:
+`.dmg` universal, `.deb` (Version 0.2.0, instalado num Debian 12 limpo, `hy-dbplus-cli 0.2.0`, app aberto 15 s sob
+Xvfb), `.tar.gz` com dono 0/0 e `.zip`; a Release `hy-dbplus 0.2.0` nasceu em rascunho com os cinco arquivos. O
+`.dmg` abriu no Mac do Jean. Na entrega do fix seguinte, a trava aceitou o commit só da versão (`d5a5f52`, 0.2.1).
+
+**Não conferido (antes da entrega; os itens de CI acima já foram conferidos):** o `release.yml` rodando (roda no push da `main` e da tag, do Jean, depois da entrega); o `.deb`, o `.tar.gz` e o `.zip` montados de verdade (esta máquina é macOS; montam no CI, fase
 C); o `--universal` (falta o target x86_64 neste Mac; monta no CI); o checkout do Windows com o `.gitattributes` (o `VERSION` ainda não foi para o remoto; confere
 no CI do push da `main`); a falha de gravação depois de truncar (disco cheio), que não se simula em
 teste: o teste cobre a falha no segundo arquivo, com o primeiro devolvido e sem temporário sobrando; a subida dentro da entrega, com a trava do plugin (esta entrega só faz o merge e a tag no commit de merge; o commit da
